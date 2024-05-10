@@ -1,8 +1,8 @@
 module gitea.narnian.us/lordwelch/image-hasher
 
-go 1.21
+go 1.22.1
 
-toolchain go1.22.0
+toolchain go1.22.2
 
 require (
 	gitea.narnian.us/lordwelch/goimagehash v0.0.0-20240502010648-cb5a8237c420
@@ -30,8 +30,8 @@ require (
 	github.com/gorilla/securecookie v1.1.1 // indirect
 	golang.org/x/crypto v0.21.0 // indirect
 	golang.org/x/net v0.22.0 // indirect
-	golang.org/x/oauth2 v0.6.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/oauth2 v0.7.0 // indirect
+	golang.org/x/text v0.14.0
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/protobuf v1.30.0 // indirect
 	gopkg.in/square/go-jose.v2 v2.6.0 // indirect

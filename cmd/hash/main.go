@@ -7,20 +7,57 @@ import (
 	"image/draw"
 	_ "image/gif"
 	_ "image/jpeg"
+
+	// "github.com/pixiv/go-libjpeg/jpeg"
 	"image/png"
 	"log"
 	"os"
 	"strings"
 
-	_ "github.com/spakin/netpbm"
-
 	"gitea.narnian.us/lordwelch/goimagehash"
+	"gitea.narnian.us/lordwelch/goimagehash/transforms"
 	"github.com/anthonynsimon/bild/transform"
 	_ "github.com/gen2brain/avif"
+	_ "github.com/spakin/netpbm"
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 )
+
+func init() {
+	// image.RegisterFormat("jpeg", "\xff\xd8", func(r io.Reader) (image.Image, error){return jpeg.Decode(r, &jpeg.DecoderOptions{
+	// 	DisableFancyUpsampling: false,
+	// 	DisableBlockSmoothing: false,
+	// 	DCTMethod: jpeg.DCTFloat,
+	// })}, jpeg.DecodeConfig)
+
+}
+
+func ToGray(img image.Image) *image.Gray {
+	gray := image.NewGray(image.Rect(0, 0, img.Bounds().Dx(), img.Bounds().Dy()))
+	gray.Pix = transforms.Rgb2Gray(img)
+	return gray
+}
+
+func resize(img image.Image, w, h int) *image.Gray {
+	resized := transform.Resize(img, w, h, transform.Lanczos)
+	r_gray := image.NewGray(image.Rect(0, 0, resized.Bounds().Dx(), resized.Bounds().Dy()))
+	draw.Draw(r_gray, resized.Bounds(), resized, resized.Bounds().Min, draw.Src)
+	return r_gray
+}
+
+func save_image(im image.Image, name string) {
+	file, err := os.Create(name)
+	if err != nil {
+		log.Printf("Failed to open file %s: %s", "tmp.png", err)
+		return
+	}
+	err = png.Encode(file, im)
+	if err != nil {
+		panic(err)
+	}
+	file.Close()
+}
 
 func fmtImage(im image.Image) string {
 	gray, ok := im.(*image.Gray)
@@ -34,10 +71,7 @@ func fmtImage(im image.Image) string {
 			} else {
 				col := im.At(x, y)
 				r, g, b, _ := col.RGBA()
-				if uint8(r) == 0x0015 && uint8(g) == 0x0013 && uint8(b) == 0x0012 {
-					fmt.Fprintf(os.Stderr, "RGB: { %04x, %04x, %04x }\n", uint8(r), uint8(g), uint8(b))
-				}
-				fmt.Fprintf(str, "{ %04x, %04x, %04x }, ", uint8(r), uint8(g), uint8(b))
+				fmt.Fprintf(str, "{ %03d, %03d, %03d }, ", uint8(r>>8), uint8(g>>8), uint8(b>>8))
 			}
 		}
 		str.WriteString("]\n")
@@ -46,19 +80,18 @@ func fmtImage(im image.Image) string {
 }
 
 func debugImage(im image.Image, width, height int) {
-	// gray := image.NewGray(image.Rect(0, 0, im.Bounds().Dx(), im.Bounds().Dy()))
-	// gray.Pix = transforms.Rgb2Gray(im)
-	// i_resize := imaging.Resize(im, width, height, imaging.Linear)
-	resized := transform.Resize(im, 8, 8, transform.Lanczos)
-	r_gray := image.NewGray(image.Rect(0, 0, resized.Bounds().Dx(), resized.Bounds().Dy()))
-	draw.Draw(r_gray, resized.Bounds(), resized, resized.Bounds().Min, draw.Src)
+	gray := ToGray(im)
+	resized := resize(gray, width, height)
 
-	// fmt.Fprintln(os.Stderr, "rgb")
-	// fmt.Println(fmtImage(im))
-	// fmt.Fprintln(os.Stderr, "grayscale")
-	// fmt.Println(fmtImage(gray))
-	// fmt.Println("resized")
-	fmt.Println(fmtImage(r_gray))
+	fmt.Println("rgb")
+	fmt.Println(fmtImage(im))
+	save_image(im, "go.rgb.png")
+	fmt.Println("gray")
+	fmt.Println(fmtImage(gray))
+	save_image(gray, "go.gray.png")
+	fmt.Println("resized")
+	fmt.Println(fmtImage(resized))
+	save_image(resized, "go.resized.png")
 }
 
 func main() {
@@ -86,6 +119,8 @@ func main() {
 		im = goimagehash.FancyUpscale(im.(*image.YCbCr))
 	}
 
+	debugImage(im, 8, 8)
+
 	var (
 		ahash *goimagehash.ImageHash
 		dhash *goimagehash.ImageHash
@@ -98,32 +133,22 @@ func main() {
 		log.Println(msg)
 		return
 	}
+
 	dhash, err = goimagehash.DifferenceHash(im)
 	if err != nil {
-		msg := fmt.Sprintf("Failed to dhash Image: %s", err)
+		msg := fmt.Sprintf("Failed to ahash Image: %s", err)
 		log.Println(msg)
 		return
 	}
+
 	phash, err = goimagehash.PerceptionHash(im)
 	if err != nil {
-		msg := fmt.Sprintf("Failed to phash Image: %s", err)
+		msg := fmt.Sprintf("Failed to ahash Image: %s", err)
 		log.Println(msg)
 		return
 	}
-	gray := goimagehash.ToGray(im)
-	file2, err := os.Create("tmp.png")
-	if err != nil {
-		log.Printf("Failed to open file %s: %s", "tmp.png", err)
-		return
-	}
-	err = png.Encode(file2, gray)
-	if err != nil {
-		panic(err)
-	}
-	file2.Close()
-	debugImage(gray, 9, 8)
 
-	fmt.Fprintf(os.Stderr, "ahash: %s\n", ahash.String())
-	fmt.Fprintf(os.Stderr, "dhash: %s\n", dhash.String())
-	fmt.Fprintf(os.Stderr, "phash: %s\n", phash.String())
+	fmt.Println("ahash: ", ahash.BinString())
+	fmt.Println("dhash: ", dhash.BinString())
+	fmt.Println("phash: ", phash.BinString())
 }
