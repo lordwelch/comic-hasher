@@ -36,21 +36,21 @@ def bin_str(hash):
     return ''.join(str(b) for b in 1 * hash.hash.flatten())
 
 
-print("rgb")
-print_image(image)
-print()
+# print("rgb")
+# print_image(image)
+# print()
 image.save("py.rgb.png")
 
-print("gray")
-print_image(gray)
+# print("gray")
+# print_image(gray)
 gray.save("py.gray.png")
-print()
+# print()
 
-print("resized")
-print_image(resized)
+# print("resized")
+# print_image(resized)
 resized.save("py.resized.png")
-print()
+# print()
 
-print('ahash: ', bin_str(imagehash.average_hash(image)))
-print('dhash: ', bin_str(imagehash.dhash(image)))
-print('phash: ', bin_str(imagehash.phash(image)))
+print(str(imagehash.average_hash(image)))
+print(str(imagehash.dhash(image)))
+print(str(imagehash.phash(image)))

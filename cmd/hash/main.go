@@ -17,6 +17,7 @@ import (
 	"gitea.narnian.us/lordwelch/goimagehash"
 	"gitea.narnian.us/lordwelch/goimagehash/transforms"
 	"github.com/anthonynsimon/bild/transform"
+	ih "gitea.narnian.us/lordwelch/image-hasher"
 	_ "github.com/gen2brain/avif"
 	_ "github.com/spakin/netpbm"
 	_ "golang.org/x/image/bmp"
@@ -33,9 +34,17 @@ func init() {
 
 }
 
-func ToGray(img image.Image) *image.Gray {
-	gray := image.NewGray(image.Rect(0, 0, img.Bounds().Dx(), img.Bounds().Dy()))
-	gray.Pix = transforms.Rgb2Gray(img)
+func ToGray(img image.Image, pix []uint8) *image.Gray {
+	c := img.Bounds().Dx() * img.Bounds().Dy()
+	if cap(pix) < c {
+		pix = append([]byte(nil), make([]byte, c)...)
+	}
+	pix = pix[:c]
+	gray := &image.Gray{
+		Pix:    transforms.Rgb2Gray(img, pix),
+		Stride: img.Bounds().Dx(),
+		Rect:   img.Bounds(),
+	}
 	return gray
 }
 
@@ -80,17 +89,17 @@ func fmtImage(im image.Image) string {
 }
 
 func debugImage(im image.Image, width, height int) {
-	gray := ToGray(im)
+	gray := ToGray(im, nil)
 	resized := resize(gray, width, height)
 
-	fmt.Println("rgb")
-	fmt.Println(fmtImage(im))
+	log.Println("rgb")
+	log.Println(fmtImage(im))
 	save_image(im, "go.rgb.png")
-	fmt.Println("gray")
-	fmt.Println(fmtImage(gray))
+	log.Println("gray")
+	log.Println(fmtImage(gray))
 	save_image(gray, "go.gray.png")
-	fmt.Println("resized")
-	fmt.Println(fmtImage(resized))
+	log.Println("resized")
+	log.Println(fmtImage(resized))
 	save_image(resized, "go.resized.png")
 }
 

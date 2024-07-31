@@ -1,30 +1,36 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"time"
 
-	"golang.org/x/image/bmp"
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/vp8"
 	_ "golang.org/x/image/vp8l"
 	_ "golang.org/x/image/webp"
 
-	"github.com/corona10/goimagehash"
+	"gitea.narnian.us/lordwelch/goimagehash"
 	"github.com/google/uuid"
 
-	"github.com/disintegration/imaging"
 	"github.com/zitadel/oidc/pkg/client/rp"
 	httphelper "github.com/zitadel/oidc/pkg/http"
 	"github.com/zitadel/oidc/pkg/oidc"
@@ -62,26 +68,53 @@ type Cover map[string][]string // IDs is a map of domain to ID eg IDs['comicvine
 // }
 
 type Server struct {
-	httpServer *http.Server
-	mux        *http.ServeMux
-	BaseURL    *url.URL
-	token      chan<- *oidc.Tokens
-	ahash      [8]map[uint8]uint32
-	dhash      [8]map[uint8]uint32
-	phash      [8]map[uint8]uint32
-	fAhash     map[uint64]uint32
-	fDhash     map[uint64]uint32
-	fPhash     map[uint64]uint32
-	IDToCover  map[string]uint32 // IDToCover is a map of domain:id to an index to covers eg IDToCover['comicvine.gamespot.com:12345'] = 0
-	covers     []Cover
+	httpServer   *http.Server
+	mux          *http.ServeMux
+	BaseURL      *url.URL
+	token        chan<- *oidc.Tokens
+	ahash        [8]map[uint8]string
+	dhash        [8]map[uint8]string
+	phash        [8]map[uint8]string
+	fAhash       map[uint64]string
+	fDhash       map[uint64]string
+	fPhash       map[uint64]string
+	IDToCover    map[string]string // IDToCover is a map of domain:id to an index to covers eg IDToCover['comicvine.gamespot.com:12345'] = 0
+	covers       []Cover
+	hashingQueue chan im
+	mappingQueue chan hash
 	// hashes are a uint64 split into 8 pieces or a unint64 for quick lookup, the value is an index to covers
+}
+
+type im struct {
+	im     image.Image
+	format string
+	domain string
+	id     string
+}
+
+type hash struct {
+	ahash  *goimagehash.ImageHash
+	dhash  *goimagehash.ImageHash
+	phash  *goimagehash.ImageHash
+	domain string
+	id     string
 }
 
 var key = []byte(uuid.New().String())[:16]
 
 func main() {
 	// mustDropPrivileges()
-	startServer()
+	cover_path := flag.String("cover_path", "", "path to covers to add to hash database")
+	flag.Parse()
+	if *cover_path == "" {
+		log.Fatal("You must supply a path")
+	}
+	st, err := os.Stat(*cover_path)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(st)
+	startServer(*cover_path)
 }
 
 func (s *Server) authenticated(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -160,14 +193,15 @@ func (s *Server) get_cover(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No domain Provided", http.StatusBadRequest)
 		return
 	}
-	if index, ok := s.IDToCover[domain+":"+id]; ok {
-		covers, err := json.Marshal(s.covers[index])
-		if err == nil {
-			w.Header().Add("Content-Type", "application/json")
-			w.Write(covers)
-			return
-		}
-	}
+	// if index, ok := s.IDToCover[domain+":"+id]; ok {
+	// 	covers, err := json.Marshal(s.covers[index])
+	// 	if err == nil {
+	// 		w.Header().Add("Content-Type", "application/json")
+	// 		w.Write(covers)
+	// 		return
+	// 	}
+	// }
+	fmt.Fprintln(w, "Not implemented")
 }
 
 func (s *Server) match_cover_hash(w http.ResponseWriter, r *http.Request) {
@@ -201,28 +235,50 @@ func (s *Server) match_cover_hash(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "parse fail", http.StatusBadRequest)
 		return
 	}
+	type res struct {
+		Domain string
+		Id     string
+	}
 	if index, ok := s.fAhash[ahash]; ok {
-		covers, err := json.Marshal(s.covers[index])
+		covers, err := json.Marshal(res{
+			strings.Split(index, ":")[0],
+			strings.Split(index, ":")[1],
+		})
 		if err == nil {
 			w.Header().Add("Content-Type", "application/json")
 			w.Write(covers)
+			w.Write([]byte{'\n'})
 			return
+		} else {
+			fmt.Println(err)
 		}
 	}
 	if index, ok := s.fDhash[dhash]; ok {
-		covers, err := json.Marshal(s.covers[index])
+		covers, err := json.Marshal(res{
+			strings.Split(index, ":")[0],
+			strings.Split(index, ":")[1],
+		})
 		if err == nil {
 			w.Header().Add("Content-Type", "application/json")
 			w.Write(covers)
+			w.Write([]byte{'\n'})
 			return
+		} else {
+			fmt.Println(err)
 		}
 	}
 	if index, ok := s.fPhash[phash]; ok {
-		covers, err := json.Marshal(s.covers[index])
+		covers, err := json.Marshal(res{
+			strings.Split(index, ":")[0],
+			strings.Split(index, ":")[1],
+		})
 		if err == nil {
 			w.Header().Add("Content-Type", "application/json")
 			w.Write(covers)
+			w.Write([]byte{'\n'})
 			return
+		} else {
+			fmt.Println(err)
 		}
 	}
 	w.Header().Add("Content-Type", "application/json")
@@ -250,7 +306,7 @@ func (s *Server) add_cover(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No domain Provided", http.StatusBadRequest)
 		return
 	}
-	im, format, err := image.Decode(r.Body)
+	i, format, err := image.Decode(r.Body)
 	if err != nil {
 		msg := fmt.Sprintf("Failed to decode Image: %s", err)
 		log.Println(msg)
@@ -258,80 +314,123 @@ func (s *Server) add_cover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("Decoded %s image from %s", format, user)
-	im = &goimagehash.YCbCr{YCbCr: im.(*image.YCbCr)}
-	i := imaging.Resize(im, 9, 8, imaging.Linear)
-	bmp.Encode(w, i)
-	fmt.Println(im.Bounds())
-
-	var (
-		ahash *goimagehash.ImageHash
-		dhash *goimagehash.ImageHash
-		phash *goimagehash.ImageHash
-	)
-
-	ahash, err = goimagehash.AverageHash(im)
-	if err != nil {
-		msg := fmt.Sprintf("Failed to ahash Image: %s", err)
-		log.Println(msg)
-		http.Error(w, msg, http.StatusInternalServerError)
-		return
-	}
-	dhash, err = goimagehash.DifferenceHash(im)
-	if err != nil {
-		msg := fmt.Sprintf("Failed to dhash Image: %s", err)
-		log.Println(msg)
-		http.Error(w, msg, http.StatusInternalServerError)
-		return
-	}
-	phash, err = goimagehash.PerceptionHash(im)
-	if err != nil {
-		msg := fmt.Sprintf("Failed to phash Image: %s", err)
-		log.Println(msg)
-		http.Error(w, msg, http.StatusInternalServerError)
-		return
-	}
-	fmt.Printf("%#064b\n", ahash.GetHash())
-	fmt.Printf("%#064b\n", dhash.GetHash())
-	fmt.Printf("%#064b\n", phash.GetHash())
-
-	s.covers = append(s.covers, make(Cover))
-
-	s.covers[len(s.covers)-1][domain] = append(s.covers[len(s.covers)-1][domain], id)
-
-	s.IDToCover[domain+":"+id] = uint32(len(s.covers) - 1)
-
-	s.mapHashes(uint32(len(s.covers)-1), ahash, dhash, phash)
+	s.hashingQueue <- im{i, format, domain, id}
+	fmt.Fprintln(w, "Success")
 }
 
-func (s *Server) mapHashes(index uint32, ahash, dhash, phash *goimagehash.ImageHash) {
-	s.fAhash[ahash.GetHash()] = index
-	s.fDhash[dhash.GetHash()] = index
-	s.fPhash[phash.GetHash()] = index
+func (s *Server) mapHashes(id string, ahash, dhash, phash *goimagehash.ImageHash) {
+	s.fAhash[ahash.GetHash()] = id
+	s.fDhash[dhash.GetHash()] = id
+	s.fPhash[phash.GetHash()] = id
 	for i, partial_hash := range SplitHash(ahash.GetHash()) {
-		s.ahash[i][partial_hash] = index
+		s.ahash[i][partial_hash] = id
 	}
 	for i, partial_hash := range SplitHash(dhash.GetHash()) {
-		s.dhash[i][partial_hash] = index
+		s.dhash[i][partial_hash] = id
 	}
 	for i, partial_hash := range SplitHash(phash.GetHash()) {
-		s.phash[i][partial_hash] = index
+		s.phash[i][partial_hash] = id
 	}
 }
 
 func (s *Server) initHashes() {
 	for i := range s.ahash {
-		s.ahash[i] = make(map[uint8]uint32)
+		s.ahash[i] = make(map[uint8]string)
 	}
 	for i := range s.dhash {
-		s.dhash[i] = make(map[uint8]uint32)
+		s.dhash[i] = make(map[uint8]string)
 	}
 	for i := range s.phash {
-		s.phash[i] = make(map[uint8]uint32)
+		s.phash[i] = make(map[uint8]string)
 	}
-	s.fAhash = make(map[uint64]uint32)
-	s.fDhash = make(map[uint64]uint32)
-	s.fPhash = make(map[uint64]uint32)
-	s.IDToCover = make(map[string]uint32)
+	s.fAhash = make(map[uint64]string)
+	s.fDhash = make(map[uint64]string)
+	s.fPhash = make(map[uint64]string)
+	s.IDToCover = make(map[string]string)
+}
+func MemStats() uint64 {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return m.Alloc
+}
+func (s *Server) mapper() {
+	var total uint64 = 0
+	for {
+		select {
+		case hash := <-s.mappingQueue:
+			if total%1000 == 0 {
+				mem := MemStats()
+				if mem > 10*1024*1024*1024 {
+					fmt.Println("Forcing gc", mem, "G")
+					runtime.GC()
+				}
+			}
+			total++
+
+			s.mapHashes(hash.domain+":"+hash.id, hash.ahash, hash.dhash, hash.phash)
+		}
+	}
+}
+
+func hashImage(i im) hash {
+	if i.format == "webp" {
+		i.im = goimagehash.FancyUpscale(i.im.(*image.YCbCr))
+	}
+
+	var (
+		err   error = nil
+		ahash *goimagehash.ImageHash
+		dhash *goimagehash.ImageHash
+		phash *goimagehash.ImageHash
+	)
+
+	ahash, err = goimagehash.AverageHash(i.im)
+	if err != nil {
+		msg := fmt.Sprintf("Failed to ahash Image: %s", err)
+		log.Println(msg)
+		return hash{}
+	}
+	dhash, err = goimagehash.DifferenceHash(i.im)
+	if err != nil {
+		msg := fmt.Sprintf("Failed to dhash Image: %s", err)
+		log.Println(msg)
+		return hash{}
+	}
+	phash, err = goimagehash.PerceptionHash(i.im)
+	if err != nil {
+		msg := fmt.Sprintf("Failed to phash Image: %s", err)
+		log.Println(msg)
+		return hash{}
+	}
+	return hash{
+		ahash:  ahash,
+		dhash:  dhash,
+		phash:  phash,
+		domain: i.domain,
+		id:     i.id,
+	}
+}
+
+func (s *Server) hasher(workerID int) {
+	for {
+		select {
+		case i := <-s.hashingQueue:
+			start := time.Now()
+
+			hash := hashImage(i)
+			if hash.domain ==""{
+				continue
+			}
+
+			s.mappingQueue <- hash
+			t := time.Now()
+			elapsed := t.Sub(start)
+			// fmt.Printf("%#064b\n", ahash.GetHash())
+			// fmt.Printf("%#064b\n", dhash.GetHash())
+			// fmt.Printf("%#064b\n", phash.GetHash())
+			fmt.Printf("Hashing took %v: worker: %v\n", elapsed, workerID)
+		}
+	}
 }
 
 func SplitHash(hash uint64) [8]uint8 {
@@ -354,11 +453,17 @@ func SplitHash(hash uint64) [8]uint8 {
 func (s *Server) FindHashes() {
 }
 
-func startServer() {
+func startServer(cover_path string) {
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+	fmt.Println("Fuck")
 	mux := http.NewServeMux()
 	server := Server{
-		token: make(chan *oidc.Tokens),
-		mux:   mux,
+		token:        make(chan *oidc.Tokens),
+		hashingQueue: make(chan im, 5000),
+		mappingQueue: make(chan hash, 5000000),
+		mux:          mux,
 		httpServer: &http.Server{
 			Addr:           ":8080",
 			Handler:        mux,
@@ -367,11 +472,68 @@ func startServer() {
 			MaxHeaderBytes: 1 << 20,
 		},
 	}
+	fmt.Println("init hashes")
 	server.initHashes()
 	// server.setupOauthHandlers()
+	fmt.Println("init handlers")
 	server.setupAppHandlers()
+	fmt.Println("init hashers")
+	go server.hasher(1)
+	go server.hasher(2)
+	go server.hasher(3)
+	go server.hasher(4)
+	go server.hasher(5)
+	go server.hasher(6)
+	go server.hasher(7)
+	go server.hasher(8)
+	go server.hasher(9)
+	go server.hasher(10)
+
+	fmt.Println("init mapper")
+	go server.mapper()
+
+	fmt.Println("Starting local hashing go routine")
+	go func() {
+		fmt.Println("Hashing covers at ", cover_path)
+		err := filepath.WalkDir(cover_path, func(path string, d fs.DirEntry, err error) error {
+			select {
+			case s := <-sig:
+				server.httpServer.Shutdown(context.TODO())
+				return fmt.Errorf("Signal: %v", s)
+			default:
+			}
+			if d.IsDir() {
+				return nil
+			}
+			file, err := os.Open(path)
+			if err != nil {
+				panic(err)
+			}
+			i, format, err := image.Decode(bufio.NewReader(file))
+			if err != nil {
+				return nil // skip this image
+			}
+			file.Close()
+			// fmt.Println("Hashing", path)
+			server.hashingQueue <- im{i, format, "comicvine.gamespot.com", filepath.Base(filepath.Dir(path))}
+			return nil
+		})
+		fmt.Println(err)
+	}()
+	fmt.Println("Listening on ", server.httpServer.Addr)
 	err := server.httpServer.ListenAndServe()
 	if err != nil {
-		panic(err)
+		fmt.Println(err)
+	}
+	f, er := os.Create("memprofile")
+	if er != nil {
+		fmt.Println("Error in creating file for writing memory profile to: ", er)
+		return
+	}
+	defer f.Close()
+	runtime.GC()
+	if e := pprof.WriteHeapProfile(f); e != nil {
+		fmt.Println("Error in writing memory profile: ", e)
+		return
 	}
 }
