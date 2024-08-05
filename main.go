@@ -34,6 +34,10 @@ const (
 	Shift7
 )
 
+const (
+	ComicVine Source = "comicvine.gamespot.com"
+)
+
 type Source string
 
 type Match struct {

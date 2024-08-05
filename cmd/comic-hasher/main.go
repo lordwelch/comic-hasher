@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
@@ -20,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -129,8 +131,8 @@ func (s *Server) authenticated(w http.ResponseWriter, r *http.Request) (string, 
 // }
 
 func (s *Server) setupAppHandlers() {
-	s.mux.HandleFunc("/add_cover", s.addCover)
-	s.mux.HandleFunc("/get_cover", s.getCover)
+	// s.mux.HandleFunc("/add_cover", s.addCover)
+	// s.mux.HandleFunc("/get_cover", s.getCover)
 	s.mux.HandleFunc("/match_cover_hash", s.matchCoverHash)
 }
 
@@ -211,6 +213,44 @@ func (s *Server) getMatches(ahash, dhash, phash uint64) []ch.Result {
 	return foundMatches
 }
 
+type SimpleResult struct {
+	Distance int
+	IDList   ch.IDList
+}
+
+func getSimpleResults(fullResults []ch.Result) []SimpleResult {
+	simpleMap := make(map[string]int, len(fullResults))
+	slices.SortFunc(fullResults, func(a, b ch.Result) int {
+		return cmp.Compare(a.Distance, b.Distance)
+	})
+
+	for _, fullResult := range fullResults {
+		for _, id := range fullResult.IDs[ch.ComicVine] {
+			simpleDistance, ok := simpleMap[id]
+			if !ok {
+				simpleDistance = 99
+			}
+			if simpleDistance > fullResult.Distance {
+				simpleMap[id] = fullResult.Distance
+			}
+		}
+	}
+	simpleList := make([]SimpleResult, 0, len(simpleMap))
+
+	distanceMap := make(map[int][]string)
+	for id, distance := range simpleMap {
+		distanceMap[distance] = ch.Insert(distanceMap[distance], id)
+	}
+	for distance, idlist := range distanceMap {
+		simpleList = append(simpleList, SimpleResult{
+			Distance: distance,
+			IDList:   ch.IDList{ch.ComicVine: idlist},
+		})
+	}
+	fmt.Println(simpleList)
+	return simpleList
+}
+
 func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	user, authed := s.authenticated(w, r)
 	if !authed || user == "" {
@@ -222,6 +262,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		ahashStr = strings.TrimSpace(values.Get("ahash"))
 		dhashStr = strings.TrimSpace(values.Get("dhash"))
 		phashStr = strings.TrimSpace(values.Get("phash"))
+		simple   = strings.ToLower(strings.TrimSpace(values.Get("simple"))) == "true"
 		ahash    uint64
 		dhash    uint64
 		phash    uint64
@@ -244,7 +285,13 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 	matches := s.getMatches(ahash, dhash, phash)
 	if len(matches) > 0 {
-		covers, err := json.Marshal(matches)
+		var covers []byte
+		if simple {
+			covers, err = json.Marshal(getSimpleResults(matches))
+		} else {
+			covers, err = json.Marshal(matches)
+		}
+
 		log.Println(err)
 		w.Header().Add("Content-Type", "application/json")
 		w.Write(covers)
@@ -379,7 +426,7 @@ func (s *Server) reader(workerID int) {
 		}
 		file.Close()
 
-		im := ch.Im{Im: i, Format: format, Domain: "comicvine.gamespot.com", ID: filepath.Base(filepath.Dir(path)), Path: path}
+		im := ch.Im{Im: i, Format: format, Domain: ch.ComicVine, ID: filepath.Base(filepath.Dir(path)), Path: path}
 		s.hashingQueue <- im
 	}
 }
@@ -451,12 +498,12 @@ func startServer(coverPath string) {
 		start := time.Now()
 		err := filepath.WalkDir(coverPath, func(path string, d fs.DirEntry, err error) error {
 			select {
-			case s := <-sig:
+			case signal := <-sig:
 				server.httpServer.Shutdown(context.TODO())
-				return fmt.Errorf("signal: %v", s)
+				return fmt.Errorf("signal: %v", signal)
 			default:
 			}
-			if d.IsDir() {
+			if d.IsDir() || !strings.Contains(path, "thumb") {
 				return nil
 			}
 			fmt.Println(len(server.readerQueue))

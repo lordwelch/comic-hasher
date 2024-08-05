@@ -106,7 +106,7 @@ func main() {
 		debugImage(debugim, 8, 8)
 	}
 
-	hash := ch.HashImage(ch.Im{Im: im, Format: format, Domain: ch.Source("comicvine.gamespot.com"), ID: "nothing"})
+	hash := ch.HashImage(ch.Im{Im: im, Format: format, Domain: ch.Source(ch.ComicVine), ID: "nothing"})
 
 	fmt.Println("ahash: ", hash.Ahash.BinString())
 	fmt.Println("dhash: ", hash.Dhash.BinString())
