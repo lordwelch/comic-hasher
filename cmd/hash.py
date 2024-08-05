@@ -1,10 +1,11 @@
 from typing import Collection, Sequence
 from PIL import Image
-import argparse,pathlib,numpy,imagehash
+import argparse,pathlib,numpy,imagehash,sys
 
 ap = argparse.ArgumentParser()
 
 ap.add_argument("--file", type=pathlib.Path)
+ap.add_argument("--debug", action='store_true')
 
 opts = ap.parse_args()
 opts.file = pathlib.Path(opts.file)
@@ -18,39 +19,42 @@ resized = gray.copy().resize((hash_size, hash_size), Image.Resampling.LANCZOS)
 
 def print_image(image: Image.Image) -> None:
     for row in numpy.asarray(image):
-        print('[ ', end='')
+        print('[ ', end='', file=sys.stderr)
         for i in row:
             if isinstance(i, Collection):
-                print('{ ', end='')
+                print('{ ', end='', file=sys.stderr)
                 for idx, x in enumerate(i):
                     if idx == len(i)-1:
-                        print(f'{int(x):03d} ', end='')
+                        print(f'{int(x):03d} ', end='', file=sys.stderr)
                     else:
-                        print(f'{int(x):03d}, ', end='')
-                print('}, ', end='')
+                        print(f'{int(x):03d}, ', end='', file=sys.stderr)
+                print('}, ', end='', file=sys.stderr)
             else:
-                print(f'{int(i):03d}, ', end='')
-        print(']')
+                print(f'{int(i):03d}, ', end='', file=sys.stderr)
+        print(']', file=sys.stderr)
 
 def bin_str(hash):
     return ''.join(str(b) for b in 1 * hash.hash.flatten())
 
 
-# print("rgb")
-# print_image(image)
-# print()
-image.save("py.rgb.png")
+if opts.debug:
+    image.save("py.rgb.png")
+    print("rgb", file=sys.stderr)
+    print_image(image)
+    print(file=sys.stderr)
 
-# print("gray")
-# print_image(gray)
-gray.save("py.gray.png")
-# print()
+if opts.debug:
+    gray.save("py.gray.png")
+    print("gray", file=sys.stderr)
+    print_image(gray)
+    print(file=sys.stderr)
 
-# print("resized")
-# print_image(resized)
-resized.save("py.resized.png")
-# print()
+if opts.debug:
+    resized.save("py.resized.png")
+    print("resized", file=sys.stderr)
+    print_image(resized)
+    print(file=sys.stderr)
 
-print(str(imagehash.average_hash(image)))
-print(str(imagehash.dhash(image)))
-print(str(imagehash.phash(image)))
+print('ahash: ', bin_str(imagehash.average_hash(image)))
+print('dhash: ', bin_str(imagehash.dhash(image)))
+print('phash: ', bin_str(imagehash.phash(image)))
