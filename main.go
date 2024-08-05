@@ -13,25 +13,25 @@ import (
 )
 
 const (
-	H_0 uint64 = 0b11111111 << (8 * iota)
-	H_1
-	H_2
-	H_3
-	H_4
-	H_5
-	H_6
-	H_7
+	H0 uint64 = 0b11111111 << (8 * iota)
+	H1
+	H2
+	H3
+	H4
+	H5
+	H6
+	H7
 )
 
 const (
-	Shift_0 = (8 * iota)
-	Shift_1
-	Shift_2
-	Shift_3
-	Shift_4
-	Shift_5
-	Shift_6
-	Shift_7
+	Shift0 = (8 * iota)
+	Shift1
+	Shift2
+	Shift3
+	Shift4
+	Shift5
+	Shift6
+	Shift7
 )
 
 type Source string
@@ -67,20 +67,20 @@ type ImageHash struct {
 	Kind goimagehash.Kind
 }
 
-func Atleast(maxDistance int, search_hash uint64, hashes []uint64) []Match {
-	matching_hashes := make([]Match, 0, len(hashes)/2) // hope that we don't need all of them
-	for _, stored_hash := range hashes {
-		distance := bits.OnesCount64(search_hash ^ stored_hash)
+func Atleast(maxDistance int, searchHash uint64, hashes []uint64) []Match {
+	matchingHashes := make([]Match, 0, len(hashes)/2) // hope that we don't need all of them
+	for _, storedHash := range hashes {
+		distance := bits.OnesCount64(searchHash ^ storedHash)
 		if distance <= maxDistance {
-			matching_hashes = append(matching_hashes, Match{distance, stored_hash})
+			matchingHashes = append(matchingHashes, Match{distance, storedHash})
 		}
 	}
-	return matching_hashes
+	return matchingHashes
 }
 
 func Insert[S ~[]E, E cmp.Ordered](slice S, item E) S {
-	index, item_found := slices.BinarySearch(slice, item)
-	if item_found {
+	index, itemFound := slices.BinarySearch(slice, item)
+	if itemFound {
 		return slice
 	}
 	return slices.Insert(slice, index, item)
@@ -133,14 +133,14 @@ func HashImage(i Im) Hash {
 
 func SplitHash(hash uint64) [8]uint8 {
 	return [8]uint8{
-		uint8((hash & H_7) >> Shift_7),
-		uint8((hash & H_6) >> Shift_6),
-		uint8((hash & H_5) >> Shift_5),
-		uint8((hash & H_4) >> Shift_4),
-		uint8((hash & H_3) >> Shift_3),
-		uint8((hash & H_2) >> Shift_2),
-		uint8((hash & H_1) >> Shift_1),
-		uint8((hash & H_0) >> Shift_0),
+		uint8((hash & H7) >> Shift7),
+		uint8((hash & H6) >> Shift6),
+		uint8((hash & H5) >> Shift5),
+		uint8((hash & H4) >> Shift4),
+		uint8((hash & H3) >> Shift3),
+		uint8((hash & H2) >> Shift2),
+		uint8((hash & H1) >> Shift1),
+		uint8((hash & H0) >> Shift0),
 	}
 }
 

@@ -23,10 +23,9 @@ func init() {
 	// 	DisableBlockSmoothing: false,
 	// 	DCTMethod: jpeg.DCTFloat,
 	// })}, jpeg.DecodeConfig)
-
 }
 
-func save_image(im image.Image, name string) {
+func saveImage(im image.Image, name string) {
 	file, err := os.Create(name)
 	if err != nil {
 		log.Printf("Failed to open file %s: %s", "tmp.png", err)
@@ -63,18 +62,17 @@ func debugImage(im image.Image, width, height int) {
 	gray := goimagehash.ToGray(im, nil)
 	resized := goimagehash.Resize(gray, width, height, nil)
 
-	save_image(im, "go.rgb.png")
+	saveImage(im, "go.rgb.png")
 	log.Println("rgb")
 	log.Println(fmtImage(im))
 
-	save_image(gray, "go.gray.png")
+	saveImage(gray, "go.gray.png")
 	log.Println("gray")
 	log.Println(fmtImage(gray))
 
-	save_image(resized, "go.resized.png")
+	saveImage(resized, "go.resized.png")
 	log.Println("resized")
 	log.Println(fmtImage(resized))
-
 }
 
 func main() {

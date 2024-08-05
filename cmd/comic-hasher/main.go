@@ -43,12 +43,12 @@ type Server struct {
 	mux        *http.ServeMux
 	BaseURL    *url.URL
 	// token         chan<- *oidc.Tokens
-	Partial_ahash [8]map[uint8][]uint64 // Maps partial hashes to their potential full hashes
-	Partial_dhash [8]map[uint8][]uint64 // Maps partial hashes to their potential full hashes
-	Partial_phash [8]map[uint8][]uint64 // Maps partial hashes to their potential full hashes
-	Full_ahash    map[uint64]ch.IDList  // Maps ahash's to lists of ID's
-	Full_dhash    map[uint64]ch.IDList  // Maps dhash's to lists of ID's
-	Full_phash    map[uint64]ch.IDList  // Maps phash's to lists of ID's
+	PartialAhash [8]map[uint8][]uint64 // Maps partial hashes to their potential full hashes
+	PartialDhash [8]map[uint8][]uint64 // Maps partial hashes to their potential full hashes
+	PartialPhash [8]map[uint8][]uint64 // Maps partial hashes to their potential full hashes
+	FullAhash    map[uint64]ch.IDList  // Maps ahash's to lists of ID's
+	FullDhash    map[uint64]ch.IDList  // Maps dhash's to lists of ID's
+	FullPhash    map[uint64]ch.IDList  // Maps phash's to lists of ID's
 	// IDToCover     map[string]string // IDToCover is a map of domain:ID to an index to covers eg IDToCover['comicvine.gamespot.com:12345'] = 0
 	// covers       []ch.Cover
 	readerQueue  chan string
@@ -66,17 +66,17 @@ func main() {
 	}()
 
 	// mustDropPrivileges()
-	cover_path := flag.String("cover_path", "", "path to covers to add to hash database")
+	coverPath := flag.String("cover_path", "", "path to covers to add to hash database")
 	flag.Parse()
-	if *cover_path == "" {
+	if *coverPath == "" {
 		log.Fatal("You must supply a path")
 	}
-	st, err := os.Stat(*cover_path)
+	st, err := os.Stat(*coverPath)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(st)
-	startServer(*cover_path)
+	startServer(*coverPath)
 }
 
 func (s *Server) authenticated(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -129,21 +129,21 @@ func (s *Server) authenticated(w http.ResponseWriter, r *http.Request) (string, 
 // }
 
 func (s *Server) setupAppHandlers() {
-	s.mux.HandleFunc("/add_cover", s.add_cover)
-	s.mux.HandleFunc("/get_cover", s.get_cover)
-	s.mux.HandleFunc("/match_cover_hash", s.match_cover_hash)
+	s.mux.HandleFunc("/add_cover", s.addCover)
+	s.mux.HandleFunc("/get_cover", s.getCover)
+	s.mux.HandleFunc("/match_cover_hash", s.matchCoverHash)
 }
 
-func (s *Server) get_cover(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getCover(w http.ResponseWriter, r *http.Request) {
 	user, authed := s.authenticated(w, r)
 	if !authed || user == "" {
 		http.Error(w, "Invalid Auth", http.StatusForbidden)
 		return
 	}
 	var (
-		values url.Values = r.URL.Query()
-		domain            = strings.TrimSpace(values.Get("domain"))
-		ID                = strings.TrimSpace(values.Get("id"))
+		values = r.URL.Query()
+		domain = strings.TrimSpace(values.Get("domain"))
+		ID     = strings.TrimSpace(values.Get("id"))
 	)
 	if ID == "" {
 		log.Println("No ID Provided")
@@ -167,17 +167,16 @@ func (s *Server) get_cover(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getMatches(ahash, dhash, phash uint64) []ch.Result {
-
 	var foundMatches []ch.Result
 
-	if matchedResults, ok := s.Full_ahash[ahash]; ok {
-		foundMatches = append(foundMatches, ch.Result{matchedResults, 0, ch.ImageHash{ahash, goimagehash.AHash}})
+	if matchedResults, ok := s.FullAhash[ahash]; ok {
+		foundMatches = append(foundMatches, ch.Result{IDs: matchedResults, Distance: 0, Hash: ch.ImageHash{Hash: ahash, Kind: goimagehash.AHash}})
 	}
-	if matchedResults, ok := s.Full_dhash[dhash]; ok {
-		foundMatches = append(foundMatches, ch.Result{matchedResults, 0, ch.ImageHash{ahash, goimagehash.DHash}})
+	if matchedResults, ok := s.FullDhash[dhash]; ok {
+		foundMatches = append(foundMatches, ch.Result{IDs: matchedResults, Distance: 0, Hash: ch.ImageHash{Hash: ahash, Kind: goimagehash.DHash}})
 	}
-	if matchedResults, ok := s.Full_phash[phash]; ok {
-		foundMatches = append(foundMatches, ch.Result{matchedResults, 0, ch.ImageHash{ahash, goimagehash.PHash}})
+	if matchedResults, ok := s.FullPhash[phash]; ok {
+		foundMatches = append(foundMatches, ch.Result{IDs: matchedResults, Distance: 0, Hash: ch.ImageHash{Hash: ahash, Kind: goimagehash.PHash}})
 	}
 
 	// If we have exact matches don't bother with other matches
@@ -185,26 +184,26 @@ func (s *Server) getMatches(ahash, dhash, phash uint64) []ch.Result {
 		return foundMatches
 	}
 
-	for i, partial_hash := range ch.SplitHash(ahash) {
-		for _, match := range ch.Atleast(8, ahash, s.Partial_ahash[i][partial_hash]) {
-			if matchedResults, ok := s.Full_ahash[match.Hash]; ok {
-				foundMatches = append(foundMatches, ch.Result{matchedResults, match.Distance, ch.ImageHash{match.Hash, goimagehash.AHash}})
+	for i, partialHash := range ch.SplitHash(ahash) {
+		for _, match := range ch.Atleast(8, ahash, s.PartialAhash[i][partialHash]) {
+			if matchedResults, ok := s.FullAhash[match.Hash]; ok {
+				foundMatches = append(foundMatches, ch.Result{IDs: matchedResults, Distance: match.Distance, Hash: ch.ImageHash{Hash: match.Hash, Kind: goimagehash.AHash}})
 			}
 		}
 	}
 
-	for i, partial_hash := range ch.SplitHash(dhash) {
-		for _, match := range ch.Atleast(8, dhash, s.Partial_dhash[i][partial_hash]) {
-			if matchedResults, ok := s.Full_dhash[match.Hash]; ok {
-				foundMatches = append(foundMatches, ch.Result{matchedResults, match.Distance, ch.ImageHash{match.Hash, goimagehash.DHash}})
+	for i, partialHash := range ch.SplitHash(dhash) {
+		for _, match := range ch.Atleast(8, dhash, s.PartialDhash[i][partialHash]) {
+			if matchedResults, ok := s.FullDhash[match.Hash]; ok {
+				foundMatches = append(foundMatches, ch.Result{IDs: matchedResults, Distance: match.Distance, Hash: ch.ImageHash{Hash: match.Hash, Kind: goimagehash.DHash}})
 			}
 		}
 	}
 
-	for i, partial_hash := range ch.SplitHash(phash) {
-		for _, match := range ch.Atleast(8, phash, s.Partial_phash[i][partial_hash]) {
-			if matchedResults, ok := s.Full_phash[match.Hash]; ok {
-				foundMatches = append(foundMatches, ch.Result{matchedResults, match.Distance, ch.ImageHash{match.Hash, goimagehash.PHash}})
+	for i, partialHash := range ch.SplitHash(phash) {
+		for _, match := range ch.Atleast(8, phash, s.PartialPhash[i][partialHash]) {
+			if matchedResults, ok := s.FullPhash[match.Hash]; ok {
+				foundMatches = append(foundMatches, ch.Result{IDs: matchedResults, Distance: match.Distance, Hash: ch.ImageHash{Hash: match.Hash, Kind: goimagehash.PHash}})
 			}
 		}
 	}
@@ -212,7 +211,7 @@ func (s *Server) getMatches(ahash, dhash, phash uint64) []ch.Result {
 	return foundMatches
 }
 
-func (s *Server) match_cover_hash(w http.ResponseWriter, r *http.Request) {
+func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	user, authed := s.authenticated(w, r)
 	if !authed || user == "" {
 		http.Error(w, "Invalid Auth", http.StatusForbidden)
@@ -257,7 +256,7 @@ func (s *Server) match_cover_hash(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "{\"msg\":\"No hashes found\"}")
 }
 
-func (s *Server) add_cover(w http.ResponseWriter, r *http.Request) {
+func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 	user, authed := s.authenticated(w, r)
 	if !authed || user == "" {
 		http.Error(w, "Invalid Auth", http.StatusForbidden)
@@ -291,118 +290,104 @@ func (s *Server) add_cover(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mapHashes(hash ch.Hash) {
-	_, ahash_ok := s.Full_ahash[hash.Ahash.GetHash()]
-	if !ahash_ok {
-		s.Full_ahash[hash.Ahash.GetHash()] = make(ch.IDList)
+	if _, ok := s.FullAhash[hash.Ahash.GetHash()]; !ok {
+		s.FullAhash[hash.Ahash.GetHash()] = make(ch.IDList)
 	}
-	s.Full_ahash[hash.Ahash.GetHash()][hash.Domain] = ch.Insert(s.Full_ahash[hash.Ahash.GetHash()][hash.Domain], hash.ID)
-	_, dhash_ok := s.Full_dhash[hash.Dhash.GetHash()]
-	if !dhash_ok {
-		s.Full_dhash[hash.Dhash.GetHash()] = make(ch.IDList)
-	}
-	s.Full_dhash[hash.Dhash.GetHash()][hash.Domain] = ch.Insert(s.Full_dhash[hash.Dhash.GetHash()][hash.Domain], hash.ID)
-	_, phash_ok := s.Full_phash[hash.Phash.GetHash()]
-	if !phash_ok {
-		s.Full_phash[hash.Phash.GetHash()] = make(ch.IDList)
-	}
-	s.Full_phash[hash.Phash.GetHash()][hash.Domain] = ch.Insert(s.Full_phash[hash.Phash.GetHash()][hash.Domain], hash.ID)
+	s.FullAhash[hash.Ahash.GetHash()][hash.Domain] = ch.Insert(s.FullAhash[hash.Ahash.GetHash()][hash.Domain], hash.ID)
 
-	for i, partial_hash := range ch.SplitHash(hash.Ahash.GetHash()) {
-		s.Partial_ahash[i][partial_hash] = ch.Insert(s.Partial_ahash[i][partial_hash], hash.Ahash.GetHash())
+	if _, ok := s.FullDhash[hash.Dhash.GetHash()]; !ok {
+		s.FullDhash[hash.Dhash.GetHash()] = make(ch.IDList)
 	}
-	for i, partial_hash := range ch.SplitHash(hash.Dhash.GetHash()) {
-		s.Partial_dhash[i][partial_hash] = ch.Insert(s.Partial_dhash[i][partial_hash], hash.Dhash.GetHash())
+	s.FullDhash[hash.Dhash.GetHash()][hash.Domain] = ch.Insert(s.FullDhash[hash.Dhash.GetHash()][hash.Domain], hash.ID)
+
+	if _, ok := s.FullPhash[hash.Phash.GetHash()]; !ok {
+		s.FullPhash[hash.Phash.GetHash()] = make(ch.IDList)
 	}
-	for i, partial_hash := range ch.SplitHash(hash.Phash.GetHash()) {
-		s.Partial_phash[i][partial_hash] = ch.Insert(s.Partial_phash[i][partial_hash], hash.Phash.GetHash())
+	s.FullPhash[hash.Phash.GetHash()][hash.Domain] = ch.Insert(s.FullPhash[hash.Phash.GetHash()][hash.Domain], hash.ID)
+
+	for i, partialHash := range ch.SplitHash(hash.Ahash.GetHash()) {
+		s.PartialAhash[i][partialHash] = ch.Insert(s.PartialAhash[i][partialHash], hash.Ahash.GetHash())
+	}
+	for i, partialHash := range ch.SplitHash(hash.Dhash.GetHash()) {
+		s.PartialDhash[i][partialHash] = ch.Insert(s.PartialDhash[i][partialHash], hash.Dhash.GetHash())
+	}
+	for i, partialHash := range ch.SplitHash(hash.Phash.GetHash()) {
+		s.PartialPhash[i][partialHash] = ch.Insert(s.PartialPhash[i][partialHash], hash.Phash.GetHash())
 	}
 }
 
 func (s *Server) initHashes() {
-	for i := range s.Partial_ahash {
-		s.Partial_ahash[i] = make(map[uint8][]uint64)
+	for i := range s.PartialAhash {
+		s.PartialAhash[i] = make(map[uint8][]uint64)
 	}
-	for i := range s.Partial_dhash {
-		s.Partial_dhash[i] = make(map[uint8][]uint64)
+	for i := range s.PartialDhash {
+		s.PartialDhash[i] = make(map[uint8][]uint64)
 	}
-	for i := range s.Partial_phash {
-		s.Partial_phash[i] = make(map[uint8][]uint64)
+	for i := range s.PartialPhash {
+		s.PartialPhash[i] = make(map[uint8][]uint64)
 	}
-	s.Full_ahash = make(map[uint64]ch.IDList)
-	s.Full_dhash = make(map[uint64]ch.IDList)
-	s.Full_phash = make(map[uint64]ch.IDList)
+	s.FullAhash = make(map[uint64]ch.IDList)
+	s.FullDhash = make(map[uint64]ch.IDList)
+	s.FullPhash = make(map[uint64]ch.IDList)
 	// s.IDToCover = make(map[string]string)
 }
 
 func (s *Server) mapper() {
 	var total uint64 = 0
-	for {
-		select {
-		case hash := <-s.mappingQueue:
-			if total%1000 == 0 {
-				mem := ch.MemStats()
-				if mem > 10*1024*1024*1024 {
-					fmt.Println("Forcing gc", mem, "G")
-					runtime.GC()
-				}
+	for hash := range s.mappingQueue {
+		if total%1000 == 0 {
+			mem := ch.MemStats()
+			if mem > 10*1024*1024*1024 {
+				fmt.Println("Forcing gc", mem, "G")
+				runtime.GC()
 			}
-			total++
-
-			s.mapHashes(hash)
 		}
+		total++
+
+		s.mapHashes(hash)
 	}
 }
 
 func (s *Server) hasher(workerID int) {
-	for {
-		select {
-		case i := <-s.hashingQueue:
-			start := time.Now()
+	for image := range s.hashingQueue {
+		start := time.Now()
 
-			hash := ch.HashImage(i)
-			if hash.Domain == "" {
-				continue
-			}
-
-			s.mappingQueue <- hash
-
-			elapsed := time.Now().Sub(start)
-			// fmt.Printf("%#064b\n", ahash.GetHash())
-			// fmt.Printf("%#064b\n", dhash.GetHash())
-			// fmt.Printf("%#064b\n", phash.GetHash())
-			log.Printf("Hashing took %v: worker: %v. path: %s ahash: %064b id: %s\n", elapsed, workerID, i.Path, hash.Ahash.GetHash(), hash.ID)
+		hash := ch.HashImage(image)
+		if hash.Domain == "" {
+			continue
 		}
+
+		s.mappingQueue <- hash
+
+		elapsed := time.Since(start)
+		// fmt.Printf("%#064b\n", ahash.GetHash())
+		// fmt.Printf("%#064b\n", dhash.GetHash())
+		// fmt.Printf("%#064b\n", phash.GetHash())
+		log.Printf("Hashing took %v: worker: %v. path: %s ahash: %064b id: %s\n", elapsed, workerID, image.Path, hash.Ahash.GetHash(), hash.ID)
 	}
 }
 
 func (s *Server) reader(workerID int) {
-	for {
-		select {
-		case path := <-s.readerQueue:
-			file, err := os.Open(path)
-			if err != nil {
-				panic(err)
-			}
-			i, format, err := image.Decode(bufio.NewReader(file))
-			if err != nil {
-				continue // skip this image
-			}
-			file.Close()
-			// fmt.Println("Hashing", path)
-			im := ch.Im{Im: i, Format: format, Domain: "comicvine.gamespot.com", ID: filepath.Base(filepath.Dir(path)), Path: path}
-			s.hashingQueue <- im
+	for path := range s.readerQueue {
+		file, err := os.Open(path)
+		if err != nil {
+			panic(err)
 		}
+		i, format, err := image.Decode(bufio.NewReader(file))
+		if err != nil {
+			continue // skip this image
+		}
+		file.Close()
+
+		im := ch.Im{Im: i, Format: format, Domain: "comicvine.gamespot.com", ID: filepath.Base(filepath.Dir(path)), Path: path}
+		s.hashingQueue <- im
 	}
 }
 
-//	func (s *Server) CoverByID(ID string) uint32 {
-//		v,ok :=s.IDToCover[ID]
-//		return 0
-//	}
 func (s *Server) FindHashes() {
 }
 
-func startServer(cover_path string) {
+func startServer(coverPath string) {
 	if *cpuprofile != "" {
 		f, err := os.Create(*cpuprofile)
 		if err != nil {
@@ -462,30 +447,28 @@ func startServer(cover_path string) {
 
 	fmt.Println("Starting local hashing go routine")
 	go func() {
-		fmt.Println("Hashing covers at ", cover_path)
+		fmt.Println("Hashing covers at ", coverPath)
 		start := time.Now()
-		err := filepath.WalkDir(cover_path, func(path string, d fs.DirEntry, err error) error {
+		err := filepath.WalkDir(coverPath, func(path string, d fs.DirEntry, err error) error {
 			select {
 			case s := <-sig:
 				server.httpServer.Shutdown(context.TODO())
-				return fmt.Errorf("Signal: %v", s)
+				return fmt.Errorf("signal: %v", s)
 			default:
 			}
-			if d.IsDir() { // Only hash thumbnails for now
+			if d.IsDir() {
 				return nil
 			}
 			fmt.Println(len(server.readerQueue))
 			server.readerQueue <- path
 			return nil
 		})
-		elapsed := time.Now().Sub(start)
+		elapsed := time.Since(start)
 		fmt.Println("Err:", err, "local hashing took", elapsed)
 
-		select {
-		case s := <-sig:
-			server.httpServer.Shutdown(context.TODO())
-			log.Printf("Signal: %v", s)
-		}
+		s := <-sig
+		err = server.httpServer.Shutdown(context.TODO())
+		log.Printf("Signal: %v, error: %s", s, err)
 	}()
 
 	fmt.Println("Listening on ", server.httpServer.Addr)

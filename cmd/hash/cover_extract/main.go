@@ -46,9 +46,11 @@ func main() {
 		panic(err)
 	}
 	c.SortStrings(fileList)
-	var image []byte
-	var issue_id string
-	var files = []string{"ComicInfo.xml", fileList[0]}
+	var (
+		image   []byte
+		issueID string
+		files   = []string{"ComicInfo.xml", fileList[0]}
+	)
 	fmt.Printf("Extracting %s\n", fileList[0])
 	err = unrar.Extract(context.TODO(), file, files, func(ctx context.Context, f archiver.File) error {
 		r, err := f.Open()
@@ -62,7 +64,7 @@ func main() {
 			}
 			parts := strings.Split(strings.TrimRight(ci.Web, "/"), "/")
 			ids := strings.Split(parts[len(parts)-1], "-")
-			issue_id = ids[1]
+			issueID = ids[1]
 		} else {
 			image, err = io.ReadAll(r)
 			if err != nil {
@@ -75,7 +77,7 @@ func main() {
 		panic(err)
 	}
 	file.Close()
-	file, err = os.Create(*fileArchive + "." + issue_id + ".image")
+	file, err = os.Create(*fileArchive + "." + issueID + ".image")
 	if err != nil {
 		panic(err)
 	}
