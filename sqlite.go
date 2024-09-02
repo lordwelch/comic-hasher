@@ -128,18 +128,18 @@ func (s *sqliteStorage) findPartialHashes(max int, search_hash int64, kind goima
 func (s *sqliteStorage) dropIndexes() error {
 	_, err := s.db.Exec(`
 
-DROP INDEX IF EXISTS hash_index;
-DROP INDEX IF EXISTS hash_1_index;
-DROP INDEX IF EXISTS hash_2_index;
-DROP INDEX IF EXISTS hash_3_index;
-DROP INDEX IF EXISTS hash_4_index;
-DROP INDEX IF EXISTS hash_5_index;
-DROP INDEX IF EXISTS hash_6_index;
-DROP INDEX IF EXISTS hash_7_index;
-DROP INDEX IF EXISTS hash_8_index;
+	DROP INDEX IF EXISTS hash_index;
+	DROP INDEX IF EXISTS hash_1_index;
+	DROP INDEX IF EXISTS hash_2_index;
+	DROP INDEX IF EXISTS hash_3_index;
+	DROP INDEX IF EXISTS hash_4_index;
+	DROP INDEX IF EXISTS hash_5_index;
+	DROP INDEX IF EXISTS hash_6_index;
+	DROP INDEX IF EXISTS hash_7_index;
+	DROP INDEX IF EXISTS hash_8_index;
 
-DROP INDEX IF EXISTS id_domain;
-`)
+	DROP INDEX IF EXISTS id_domain;
+	`)
 	if err != nil {
 		return err
 	}
@@ -220,35 +220,46 @@ func (s *sqliteStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Re
 
 func (s *sqliteStorage) MapHashes(hash ImageHash) {
 	insertHashes, err := s.db.Prepare(`
-INSERT INTO Hashes (hash,kind) VALUES (?,?) ON CONFLICT DO NOTHING;
+INSERT INTO Hashes (hash,kind) VALUES (?,?) ON CONFLICT DO UPDATE SET hash=?1 RETURNING hashid;
 `)
 	if err != nil {
 		panic(err)
 	}
-	IDInsertResult, err := s.db.Exec(`
-INSERT INTO IDs (domain,id) VALUES (?,?) ON CONFLICT DO NOTHING;
-`, hash.ID.Domain, hash.ID.Domain)
+	rows, err := s.db.Query(`
+INSERT INTO IDs (domain,id) VALUES (?,?) ON CONFLICT DO UPDATE SET domain=?1 RETURNING idid;
+`, hash.ID.Domain, hash.ID.ID)
 	if err != nil {
 		panic(err)
 	}
-	id_id, err := IDInsertResult.LastInsertId()
+	if !rows.Next() {
+		panic("Unable to insert IDs")
+	}
+	var id_id int64
+	err = rows.Scan(&id_id)
 	if err != nil {
 		panic(err)
 	}
+	rows.Close()
 	hash_ids := []int64{}
 	for _, hash := range hash.Hashes {
-		hashInsertResult, err := insertHashes.Exec(int64(hash.Hash), hash.Kind)
+		rows, err := insertHashes.Query(int64(hash.Hash), hash.Kind)
 		if err != nil {
 			panic(err)
 		}
-		id, err := hashInsertResult.LastInsertId()
+
+		if !rows.Next() {
+			panic("Unable to insert IDs")
+		}
+		var id int64
+		err = rows.Scan(&id)
+		rows.Close()
 		if err != nil {
 			panic(err)
 		}
 		hash_ids = append(hash_ids, id)
 	}
 	for _, hash_id := range hash_ids {
-		_, err = s.db.Exec(`INSERT INTO id_hash VALUES (?, ?) ON CONFLICT DO NOTHING;`, hash_id, id_id)
+		_, err = s.db.Exec(`INSERT INTO id_hash (hashid,idid) VALUES (?, ?) ON CONFLICT DO NOTHING;`, hash_id, id_id)
 		if err != nil {
 			panic(fmt.Errorf("Failed inserting: %v,%v: %w", hash.ID.Domain, hash.ID.ID, err))
 		}
