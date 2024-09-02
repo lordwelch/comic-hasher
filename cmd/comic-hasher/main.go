@@ -93,6 +93,7 @@ func (f *Format) Set(s string) error {
 type Opts struct {
 	cpuprofile         string
 	coverPath          string
+	sqlitePath         string
 	loadEmbeddedHashes bool
 	saveEmbeddedHashes bool
 	format             Format
@@ -107,6 +108,7 @@ func main() {
 	flag.StringVar(&opts.cpuprofile, "cpuprofile", "", "Write cpu profile to file")
 
 	flag.StringVar(&opts.coverPath, "cover-path", "", "Path to covers to add to hash database. must be in the form '{cover-path}/{domain}/{id}/*' eg for --cover-path /covers it should look like /covers/comicvine.gamespot.com/10000/image.gif")
+	flag.StringVar(&opts.sqlitePath, "sqlite-path", "tmp.sqlite", "Path to sqlite database to use for matching hashes, substantialy reduces memory usage")
 	flag.BoolVar(&opts.loadEmbeddedHashes, "use-embedded-hashes", true, "Use hashes embedded in the application as a starting point")
 	flag.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", false, "Save hashes even if we loaded the embedded hashes")
 	flag.StringVar(&opts.hashesPath, "hashes", "hashes.gz", "Path to optionally gziped hashes in msgpack or json format. You must disable embedded hashes to use this option")
