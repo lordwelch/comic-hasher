@@ -29,9 +29,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kr/pretty"
+
 	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/disintegration/imaging"
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/vp8"
 	_ "golang.org/x/image/vp8l"
@@ -39,36 +40,19 @@ import (
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
 	"gitea.narnian.us/lordwelch/goimagehash"
-	// "github.com/google/uuid"
-	// "github.com/zitadel/oidc/pkg/client/rp"
-	// httphelper "github.com/zitadel/oidc/pkg/http"
-	// "github.com/zitadel/oidc/pkg/oidc"
 )
 
 type Server struct {
-	httpServer *http.Server
-	mux        *http.ServeMux
-	BaseURL    *url.URL
-	// token         chan<- *oidc.Tokens
-	// Partial hashes are a uint64 split into 8 pieces or a unint64 for quick lookup, the value is an index to covers
-	PartialAhash [8]map[uint8][]uint64
-	PartialDhash [8]map[uint8][]uint64
-	PartialPhash [8]map[uint8][]uint64
-	FullAhash    map[uint64][]string // Maps ahash's to lists of ID's   domain:id
-	FullDhash    map[uint64][]string // Maps dhash's to lists of ID's   domain:id
-	FullPhash    map[uint64][]string // Maps phash's to lists of ID's   domain:id
-	ids          map[ch.Source]map[string]struct{}
-	hashMutex    sync.RWMutex
+	httpServer   *http.Server
+	mux          *http.ServeMux
+	BaseURL      *url.URL
+	hashes       ch.HashStorage
 	quit         chan struct{}
 	signalQueue  chan os.Signal
 	readerQueue  chan string
 	hashingQueue chan ch.Im
-	mappingQueue chan ch.Hash
+	mappingQueue chan ch.ImageHash
 }
-
-// var key = []byte(uuid.New().String())[:16]
-
-type savedHashes map[ch.Source]map[string][3]uint64
 
 type Format int
 
@@ -135,6 +119,8 @@ func main() {
 			panic(err)
 		}
 	}
+	opts.sqlitePath, _ = filepath.Abs(opts.sqlitePath)
+	pretty.Logln(opts)
 	startServer(opts)
 }
 
@@ -224,94 +210,30 @@ func (s *Server) associateIDs(w http.ResponseWriter, r *http.Request) {
 		writeJson(w, http.StatusBadRequest, result{Msg: msg})
 		return
 	}
-	if _, domainExists := s.ids[ch.Source(domain)]; !domainExists {
-		msg := "No IDs belonging to " + domain + "exist on this server"
-		log.Println(msg)
-		writeJson(w, http.StatusBadRequest, result{Msg: msg})
-	}
+	// if _, domainExists := s.ids[ch.Source(domain)]; !domainExists {
+	// 	msg := "No IDs belonging to " + domain + "exist on this server"
+	// 	log.Println(msg)
+	// 	writeJson(w, http.StatusBadRequest, result{Msg: msg})
+	// }
 	log.Printf("Attempting to associate %s:%s to %s:%s", domain, ID, newDomain, newID)
 	found := false
-	for _, hash := range []map[uint64][]string{s.FullAhash, s.FullDhash, s.FullPhash} {
-		for i, idlist := range hash {
-			if _, found_in_hash := slices.BinarySearch(idlist, domain+":"+ID); found_in_hash {
-				found = true
-				hash[i] = ch.Insert(idlist, newDomain+":"+newID)
-				if _, ok := s.ids[ch.Source(newDomain)]; !ok {
-					s.ids[ch.Source(newDomain)] = make(map[string]struct{})
-				}
-				s.ids[ch.Source(newDomain)][newID] = struct{}{}
-			}
-		}
-	}
+	// for _, hash := range []map[uint64][]string{s.FullAhash, s.FullDhash, s.FullPhash} {
+	// 	for i, idlist := range hash {
+	// 		if _, found_in_hash := slices.BinarySearch(idlist, domain+":"+ID); found_in_hash {
+	// 			found = true
+	// 			hash[i] = ch.Insert(idlist, newDomain+":"+newID)
+	// 			if _, ok := s.ids[ch.Source(newDomain)]; !ok {
+	// 				s.ids[ch.Source(newDomain)] = make(map[string]struct{})
+	// 			}
+	// 			s.ids[ch.Source(newDomain)][newID] = struct{}{}
+	// 		}
+	// 	}
+	// }
 	if found {
 		writeJson(w, http.StatusOK, result{Msg: "New ID added"})
 	} else {
 		writeJson(w, http.StatusOK, result{Msg: "Old ID not found"})
 	}
-}
-
-func (s *Server) getMatches(ahash, dhash, phash uint64, max int, skipNonExact bool) []ch.Result {
-	var foundMatches []ch.Result
-	s.hashMutex.RLock()
-	defer s.hashMutex.RUnlock()
-
-	if skipNonExact { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
-		if matchedResults, ok := s.FullAhash[ahash]; ok && ahash != 0 {
-			foundMatches = append(foundMatches, ch.Result{IDs: matchedResults, Distance: 0, Hash: ch.ImageHash{Hash: ahash, Kind: goimagehash.AHash}})
-		}
-		if matchedResults, ok := s.FullDhash[dhash]; ok && dhash != 0 {
-			foundMatches = append(foundMatches, ch.Result{IDs: matchedResults, Distance: 0, Hash: ch.ImageHash{Hash: dhash, Kind: goimagehash.DHash}})
-		}
-		if matchedResults, ok := s.FullPhash[phash]; ok && phash != 0 {
-			foundMatches = append(foundMatches, ch.Result{IDs: matchedResults, Distance: 0, Hash: ch.ImageHash{Hash: phash, Kind: goimagehash.PHash}})
-		}
-
-		// If we have exact matches don't bother with other matches
-		if len(foundMatches) > 0 && skipNonExact {
-			return foundMatches
-		}
-	}
-
-	foundHashes := make(map[uint64]struct{})
-	if ahash != 0 {
-		for i, partialHash := range ch.SplitHash(ahash) {
-			for _, match := range ch.Atleast(max, ahash, s.PartialAhash[i][partialHash]) {
-				_, alreadyMatched := foundHashes[match.Hash]
-				if matchedResults, ok := s.FullAhash[match.Hash]; ok && !alreadyMatched {
-					foundHashes[match.Hash] = struct{}{}
-					foundMatches = append(foundMatches, ch.Result{IDs: matchedResults, Distance: match.Distance, Hash: ch.ImageHash{Hash: match.Hash, Kind: goimagehash.AHash}})
-				}
-			}
-		}
-	}
-
-	foundHashes = make(map[uint64]struct{})
-	if dhash != 0 {
-		for i, partialHash := range ch.SplitHash(dhash) {
-			for _, match := range ch.Atleast(max, dhash, s.PartialDhash[i][partialHash]) {
-				_, alreadyMatched := foundHashes[match.Hash]
-				if matchedResults, ok := s.FullDhash[match.Hash]; ok && !alreadyMatched {
-					foundHashes[match.Hash] = struct{}{}
-					foundMatches = append(foundMatches, ch.Result{IDs: matchedResults, Distance: match.Distance, Hash: ch.ImageHash{Hash: match.Hash, Kind: goimagehash.DHash}})
-				}
-			}
-		}
-	}
-
-	foundHashes = make(map[uint64]struct{})
-	if phash != 0 {
-		for i, partialHash := range ch.SplitHash(phash) {
-			for _, match := range ch.Atleast(max, phash, s.PartialPhash[i][partialHash]) {
-				_, alreadyMatched := foundHashes[match.Hash]
-				if matchedResults, ok := s.FullPhash[match.Hash]; ok && !alreadyMatched {
-					foundHashes[match.Hash] = struct{}{}
-					foundMatches = append(foundMatches, ch.Result{IDs: matchedResults, Distance: match.Distance, Hash: ch.ImageHash{Hash: match.Hash, Kind: goimagehash.PHash}})
-				}
-			}
-		}
-	}
-
-	return foundMatches
 }
 
 type SimpleResult struct {
@@ -323,65 +245,29 @@ func getSimpleResults(fullResults []ch.Result) []SimpleResult {
 	simpleResult := make([]SimpleResult, 0, len(fullResults))
 
 	slices.SortFunc(fullResults, func(a, b ch.Result) int {
-		return cmp.Compare(a.Distance, b.Distance)
+		return cmp.Compare(a.Distance, b.Distance) * -1 // Reverses sort
 	})
 
 	// Deduplicate IDs
-	idToDistance := make(map[string]int)
+	distance := make(map[int]SimpleResult)
+
 	for _, fullResult := range fullResults {
-		for _, id := range fullResult.IDs {
-			if distance, ok := idToDistance[id]; !ok || fullResult.Distance < distance {
-				idToDistance[id] = fullResult.Distance
+		simple, ok := distance[fullResult.Distance]
+		if !ok {
+			simple.IDList = make(ch.IDList)
+		}
+		for source, ids := range fullResult.IDs {
+			for _, id := range ids {
+				simple.IDList[source] = ch.Insert(simple.IDList[source], id)
 			}
 		}
 	}
 
-	// Group by distance
-	distanceMap := make(map[int]SimpleResult)
-	for id, distance := range idToDistance {
-		var (
-			sr SimpleResult
-			ok bool
-		)
-		if sr, ok = distanceMap[distance]; !ok {
-			sr.IDList = make(ch.IDList)
-		}
-		sourceID := strings.SplitN(id, ":", 2)
-		sr.Distance = distance
-		sr.IDList[ch.Source(sourceID[0])] = append(sr.IDList[ch.Source(sourceID[0])], sourceID[1])
-		distanceMap[distance] = sr
-	}
-
 	// turn into array
-	for _, sr := range distanceMap {
+	for _, sr := range distance {
 		simpleResult = append(simpleResult, sr)
 	}
 	return simpleResult
-}
-
-type APIResult struct {
-	IDList   ch.IDList
-	Distance int
-	Hash     ch.ImageHash
-}
-
-func getResults(fullResults []ch.Result) []APIResult {
-	apiResults := make([]APIResult, 0, len(fullResults))
-	for _, res := range fullResults {
-		idlist := make(ch.IDList)
-		for _, id := range res.IDs {
-			sourceID := strings.SplitN(id, ":", 2)
-			idlist[ch.Source(sourceID[0])] = append(idlist[ch.Source(sourceID[0])], sourceID[1])
-		}
-		apiResults = append(apiResults,
-			APIResult{
-				Distance: res.Distance,
-				Hash:     res.Hash,
-				IDList:   idlist,
-			},
-		)
-	}
-	return apiResults
 }
 
 type result struct {
@@ -411,19 +297,19 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var (
-		values       = r.URL.Query()
-		ahashStr     = strings.TrimSpace(values.Get("ahash"))
-		dhashStr     = strings.TrimSpace(values.Get("dhash"))
-		phashStr     = strings.TrimSpace(values.Get("phash"))
-		maxStr       = strings.TrimSpace(values.Get("max"))
-		skipNonExact = strings.ToLower(strings.TrimSpace(values.Get("skipNonExact"))) != "false"
-		simple       = strings.ToLower(strings.TrimSpace(values.Get("simple"))) == "true"
-		ahash        uint64
-		dhash        uint64
-		phash        uint64
-		max          int = 8
-		max_tmp      int
-		err          error
+		values    = r.URL.Query()
+		ahashStr  = strings.TrimSpace(values.Get("ahash"))
+		dhashStr  = strings.TrimSpace(values.Get("dhash"))
+		phashStr  = strings.TrimSpace(values.Get("phash"))
+		maxStr    = strings.TrimSpace(values.Get("max"))
+		exactOnly = strings.ToLower(strings.TrimSpace(values.Get("exactOnly"))) != "false"
+		simple    = strings.ToLower(strings.TrimSpace(values.Get("simple"))) == "true"
+		ahash     uint64
+		dhash     uint64
+		phash     uint64
+		max       int = 8
+		max_tmp   int
+		err       error
 	)
 
 	if ahash, err = strconv.ParseUint(ahashStr, 16, 64); err != nil && ahashStr != "" {
@@ -455,13 +341,24 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		writeJson(w, http.StatusBadRequest, result{Msg: fmt.Sprintf("Max must be less than 9: %d", max)})
 		return
 	}
-	matches := s.getMatches(ahash, dhash, phash, max, skipNonExact)
+	matches, err := s.hashes.GetMatches([]ch.Hash{{ahash, goimagehash.AHash}, {dhash, goimagehash.DHash}, {phash, goimagehash.PHash}}, max, exactOnly)
+	log.Println(err)
 	if len(matches) > 0 {
+		var msg string = ""
+		if err != nil {
+			msg = err.Error()
+		}
 		if simple {
-			writeJson(w, http.StatusOK, result{Results: getSimpleResults(matches)})
+			writeJson(w, http.StatusOK, result{
+				Results: getSimpleResults(matches),
+				Msg:     msg,
+			})
 			return
 		}
-		writeJson(w, http.StatusOK, result{Results: getResults(matches)})
+		writeJson(w, http.StatusOK, result{
+			Results: matches,
+			Msg:     msg,
+		})
 		return
 	}
 
@@ -503,69 +400,14 @@ func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 		return
 	default:
 	}
-	s.hashingQueue <- ch.Im{Im: i, Format: format, Domain: ch.Source(domain), ID: ID, Path: ""}
+	s.hashingQueue <- ch.Im{Im: i, Format: format, ID: ch.ID{Domain: ch.Source(domain), ID: ID}, Path: ""}
 	writeJson(w, http.StatusOK, result{Msg: "Success"})
-}
-
-func (s *Server) MapHashes(hash ch.Hash) {
-	s.hashMutex.Lock()
-	defer s.hashMutex.Unlock()
-	s.mapHashes(hash.Ahash.GetHash(), hash.Dhash.GetHash(), hash.Phash.GetHash(), hash.Domain, hash.ID)
-}
-
-func (s *Server) mapHashes(ahash, dhash, phash uint64, domain ch.Source, id string) {
-
-	if _, ok := s.ids[domain]; !ok {
-		s.ids[domain] = make(map[string]struct{})
-	}
-	s.ids[domain][id] = struct{}{}
-
-	if _, ok := s.FullAhash[ahash]; !ok {
-		s.FullAhash[ahash] = make([]string, 0, 3)
-	}
-	s.FullAhash[ahash] = ch.Insert(s.FullAhash[ahash], string(domain)+":"+id)
-
-	if _, ok := s.FullDhash[dhash]; !ok {
-		s.FullDhash[dhash] = make([]string, 0, 3)
-	}
-	s.FullDhash[dhash] = ch.Insert(s.FullDhash[dhash], string(domain)+":"+id)
-
-	if _, ok := s.FullPhash[phash]; !ok {
-		s.FullPhash[phash] = make([]string, 0, 3)
-	}
-	s.FullPhash[phash] = ch.Insert(s.FullPhash[phash], string(domain)+":"+id)
-
-	for i, partialHash := range ch.SplitHash(ahash) {
-		s.PartialAhash[i][partialHash] = append(s.PartialAhash[i][partialHash], ahash)
-	}
-	for i, partialHash := range ch.SplitHash(dhash) {
-		s.PartialDhash[i][partialHash] = append(s.PartialDhash[i][partialHash], dhash)
-	}
-	for i, partialHash := range ch.SplitHash(phash) {
-		s.PartialPhash[i][partialHash] = append(s.PartialPhash[i][partialHash], phash)
-	}
-}
-
-func (s *Server) initHashes() {
-	for i := range s.PartialAhash {
-		s.PartialAhash[i] = make(map[uint8][]uint64)
-	}
-	for i := range s.PartialDhash {
-		s.PartialDhash[i] = make(map[uint8][]uint64)
-	}
-	for i := range s.PartialPhash {
-		s.PartialPhash[i] = make(map[uint8][]uint64)
-	}
-	s.FullAhash = make(map[uint64][]string)
-	s.FullDhash = make(map[uint64][]string)
-	s.FullPhash = make(map[uint64][]string)
-	s.ids = make(map[ch.Source]map[string]struct{})
 }
 
 func (s *Server) mapper(done func()) {
 	defer done()
 	for hash := range s.mappingQueue {
-		s.MapHashes(hash)
+		s.hashes.MapHashes(hash)
 	}
 }
 
@@ -575,7 +417,7 @@ func (s *Server) hasher(workerID int, done func()) {
 		start := time.Now()
 
 		hash := ch.HashImage(image)
-		if hash.Domain == "" {
+		if hash.ID.Domain == "" || hash.ID.ID == "" {
 			continue
 		}
 
@@ -588,7 +430,7 @@ func (s *Server) hasher(workerID int, done func()) {
 		}
 
 		elapsed := time.Since(start)
-		log.Printf("Hashing took %v: worker: %v. path: %s ahash: %064b id: %s\n", elapsed, workerID, image.Path, hash.Ahash.GetHash(), hash.ID)
+		log.Printf("Hashing took %v: worker: %v. path: %s %s: %064b id: %s\n", elapsed, workerID, image.Path, hash.Hashes[0].Kind, hash.Hashes[0].Hash, hash.ID)
 	}
 }
 
@@ -605,7 +447,11 @@ func (s *Server) reader(workerID int, done func()) {
 		}
 		file.Close()
 
-		im := ch.Im{Im: i, Format: format, Domain: ch.Source(filepath.Base(filepath.Dir(filepath.Dir(path)))), ID: filepath.Base(filepath.Dir(path)), Path: path}
+		im := ch.Im{
+			Im: i, Format: format,
+			ID:   ch.ID{Domain: ch.Source(filepath.Base(filepath.Dir(filepath.Dir(path)))), ID: filepath.Base(filepath.Dir(path))},
+			Path: path,
+		}
 		select {
 		case <-s.quit:
 			log.Println("Recieved quit")
@@ -616,94 +462,43 @@ func (s *Server) reader(workerID int, done func()) {
 	}
 }
 
-func (s *Server) encodeHashes(e Encoder) ([]byte, error) {
-	hashes := make(savedHashes)
-	for source, ids := range s.ids {
-		hashes[source] = make(map[string][3]uint64, len(ids))
-	}
-	for hash, idlist := range s.FullAhash {
-		for _, id := range idlist {
-			sourceID := strings.SplitN(id, ":", 2)
-			h := hashes[ch.Source(sourceID[0])][sourceID[1]]
-			h[0] = hash
-			hashes[ch.Source(sourceID[0])][sourceID[1]] = h
-		}
-	}
-	for hash, idlist := range s.FullDhash {
-		for _, id := range idlist {
-			sourceID := strings.SplitN(id, ":", 2)
-			h := hashes[ch.Source(sourceID[0])][sourceID[1]]
-			h[1] = hash
-			hashes[ch.Source(sourceID[0])][sourceID[1]] = h
-		}
-
-	}
-	for hash, idlist := range s.FullPhash {
-		for _, id := range idlist {
-			sourceID := strings.SplitN(id, ":", 2)
-			h := hashes[ch.Source(sourceID[0])][sourceID[1]]
-			h[2] = hash
-			hashes[ch.Source(sourceID[0])][sourceID[1]] = h
-		}
-
-	}
-	return e(hashes)
-}
-
 // EncodeHashes must have a lock to s.hashMutex
 func (s *Server) EncodeHashes(format Format) ([]byte, error) {
+	var encoder Encoder
 	switch format {
 	case Msgpack:
-		return s.encodeHashes(msgpack.Marshal)
+		encoder = msgpack.Marshal
 	case JSON:
-		return s.encodeHashes(json.Marshal)
-
+		encoder = json.Marshal
 	default:
 		return nil, fmt.Errorf("Unknown format: %v", format)
 	}
-}
-
-func (s *Server) decodeHashes(d Decoder, hashes []byte) error {
-	loadedHashes := make(savedHashes)
-	err := d(hashes, &loadedHashes)
+	hashes, err := s.hashes.EncodeHashes()
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	for domain, ids := range loadedHashes {
-		for id := range ids {
-			if _, ok := s.ids[domain]; ok {
-				s.ids[domain][id] = struct{}{}
-			} else {
-				s.ids[domain] = make(map[string]struct{})
-			}
-		}
-	}
-	for _, sourceHashes := range loadedHashes {
-		s.FullAhash = make(map[uint64][]string, len(sourceHashes))
-		s.FullDhash = make(map[uint64][]string, len(sourceHashes))
-		s.FullPhash = make(map[uint64][]string, len(sourceHashes))
-		break
-	}
-	for domain, sourceHashes := range loadedHashes {
-		for id, h := range sourceHashes {
-			s.mapHashes(h[0], h[1], h[2], domain, id)
-		}
-	}
-	return nil
+	return encoder(hashes)
 }
 
 // DecodeHashes must have a lock to s.hashMutex
 func (s *Server) DecodeHashes(format Format, hashes []byte) error {
+	var decoder Decoder
 	switch format {
 	case Msgpack:
-		return s.decodeHashes(msgpack.Unmarshal, hashes)
+		decoder = msgpack.Unmarshal
 	case JSON:
-		return s.decodeHashes(json.Unmarshal, hashes)
+		decoder = json.Unmarshal
 
 	default:
 		return fmt.Errorf("Unknown format: %v", format)
 	}
+	loadedHashes := make(ch.SavedHashes)
+	err := decoder(hashes, &loadedHashes)
+	if err != nil {
+		return err
+	}
+
+	return s.hashes.DecodeHashes(loadedHashes)
 }
 
 func (s *Server) HashLocalImages(opts Opts) {
@@ -769,13 +564,13 @@ func startServer(opts Opts) {
 	}
 
 	mux := http.NewServeMux()
+
 	server := Server{
-		// token:        make(chan *oidc.Tokens),
 		quit:         make(chan struct{}),
 		signalQueue:  make(chan os.Signal, 1),
-		readerQueue:  make(chan string, 1120130), // Number gotten from checking queue size
+		readerQueue:  make(chan string, 100),
 		hashingQueue: make(chan ch.Im),
-		mappingQueue: make(chan ch.Hash),
+		mappingQueue: make(chan ch.ImageHash),
 		mux:          mux,
 		httpServer: &http.Server{
 			Addr:           ":8080",
@@ -786,12 +581,16 @@ func startServer(opts Opts) {
 		},
 	}
 	Notify(server.signalQueue)
-	imaging.SetMaxProcs(1)
+	var err error
 	fmt.Println("init hashes")
-	server.initHashes()
-	// server.setupOauthHandlers()
+	server.hashes, err = ch.NewMapStorage()
+	if err != nil {
+		panic(err)
+	}
+
 	fmt.Println("init handlers")
 	server.setupAppHandlers()
+
 	fmt.Println("init hashers")
 	rwg := sync.WaitGroup{}
 	for i := range 10 {
@@ -829,7 +628,7 @@ func startServer(opts Opts) {
 		if err != nil {
 			panic(fmt.Sprintf("Failed to decode embedded hashes: %s", err))
 		}
-		fmt.Printf("Loaded embedded %s hashes ahashes: %d dhashes: %d phashes: %d\n", format, len(server.FullAhash), len(server.FullDhash), len(server.FullPhash))
+		fmt.Printf("Loaded embedded %s hashes\n", format)
 	} else {
 		if f, err := os.Open(opts.hashesPath); err == nil {
 			var buf io.Reader = f
@@ -854,7 +653,7 @@ func startServer(opts Opts) {
 			if err != nil {
 				panic(fmt.Sprintf("Failed to decode hashes from disk: %s", err))
 			}
-			fmt.Printf("Loaded hashes from %q %s hashes ahashes: %d dhashes: %d phashes: %d\n", opts.hashesPath, format, len(server.FullAhash), len(server.FullDhash), len(server.FullPhash))
+			fmt.Printf("Loaded hashes from %q %s\n", opts.hashesPath, format)
 		} else {
 			if errors.Is(err, os.ErrNotExist) {
 				fmt.Println("No saved hashes to load")
@@ -867,7 +666,7 @@ func startServer(opts Opts) {
 	server.HashLocalImages(opts)
 
 	fmt.Println("Listening on ", server.httpServer.Addr)
-	err := server.httpServer.ListenAndServe()
+	err = server.httpServer.ListenAndServe()
 	if err != nil {
 		fmt.Println(err)
 	}

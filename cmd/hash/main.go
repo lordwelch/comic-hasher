@@ -106,9 +106,9 @@ func main() {
 		debugImage(debugim, 8, 8)
 	}
 
-	hash := ch.HashImage(ch.Im{Im: im, Format: format, Domain: ch.Source(ch.ComicVine), ID: "nothing"})
+	hash := ch.HashImage(ch.Im{Im: im, Format: format, ID: ch.ID{Domain: ch.Source(ch.ComicVine), ID: "nothing"}})
 
-	fmt.Println("ahash: ", hash.Ahash.BinString())
-	fmt.Println("dhash: ", hash.Dhash.BinString())
-	fmt.Println("phash: ", hash.Phash.BinString())
+	fmt.Println("ahash: ", goimagehash.NewImageHash(hash.Hashes[0].Hash, hash.Hashes[0].Kind).BinString())
+	fmt.Println("dhash: ", goimagehash.NewImageHash(hash.Hashes[1].Hash, hash.Hashes[1].Kind).BinString())
+	fmt.Println("phash: ", goimagehash.NewImageHash(hash.Hashes[2].Hash, hash.Hashes[2].Kind).BinString())
 }

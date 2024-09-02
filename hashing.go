@@ -50,33 +50,47 @@ type Match struct {
 }
 
 type ID struct {
-	Domain, ID string
-}
-
-type Result struct {
-	IDs      []string // domain:id
-	Distance int
-	Hash     ImageHash
-}
-
-type Im struct {
-	Im       image.Image
-	Format   string
-	Domain   Source
-	ID, Path string
-}
-
-type Hash struct {
-	Ahash  *goimagehash.ImageHash
-	Dhash  *goimagehash.ImageHash
-	Phash  *goimagehash.ImageHash
 	Domain Source
 	ID     string
 }
 
+type Result struct {
+	IDs      IDList
+	Distance int
+	Hash     Hash
+}
+
+type Im struct {
+	Im     image.Image
+	Format string
+	Path   string
+	ID     ID
+}
+
 type ImageHash struct {
+	Hashes []Hash
+	ID     ID
+}
+
+type Hash struct {
 	Hash uint64
 	Kind goimagehash.Kind
+}
+
+type SavedHashes map[Source]map[string][3]uint64
+
+type NewIDs struct {
+	OldID ID
+	NewID ID
+}
+
+type HashStorage interface {
+	GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error)
+	MapHashes(ImageHash)
+	DecodeHashes(hashes SavedHashes) error
+	EncodeHashes() (SavedHashes, error)
+	AssociateIDs(newIDs []NewIDs)
+	GetIDs(id ID) IDList
 }
 
 func Atleast(maxDistance int, searchHash uint64, hashes []uint64) []Match {
@@ -98,47 +112,49 @@ func Insert[S ~[]E, E cmp.Ordered](slice S, item E) S {
 	return slices.Insert(slice, index, item)
 }
 
+func InsertIdx[S ~[]E, E cmp.Ordered](slice S, item E) (S, int) {
+	index, itemFound := slices.BinarySearch(slice, item)
+	if itemFound {
+		return slice, index
+	}
+	return slices.Insert(slice, index, item), index
+}
+
 func MemStats() uint64 {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	return m.Alloc
 }
 
-func HashImage(i Im) Hash {
+func HashImage(i Im) ImageHash {
 	if i.Format == "webp" {
 		i.Im = goimagehash.FancyUpscale(i.Im.(*image.YCbCr))
 	}
 
 	var (
-		err   error = nil
-		ahash *goimagehash.ImageHash
-		dhash *goimagehash.ImageHash
-		phash *goimagehash.ImageHash
+		err error
 	)
 
-	ahash, err = goimagehash.AverageHash(i.Im)
+	ahash, err := goimagehash.AverageHash(i.Im)
 	if err != nil {
 		msg := fmt.Sprintf("Failed to ahash Image: %s", err)
 		log.Println(msg)
-		return Hash{}
+		return ImageHash{}
 	}
-	dhash, err = goimagehash.DifferenceHash(i.Im)
+	dhash, err := goimagehash.DifferenceHash(i.Im)
 	if err != nil {
 		msg := fmt.Sprintf("Failed to dhash Image: %s", err)
 		log.Println(msg)
-		return Hash{}
+		return ImageHash{}
 	}
-	phash, err = goimagehash.PerceptionHash(i.Im)
+	phash, err := goimagehash.PerceptionHash(i.Im)
 	if err != nil {
 		msg := fmt.Sprintf("Failed to phash Image: %s", err)
 		log.Println(msg)
-		return Hash{}
+		return ImageHash{}
 	}
-	return Hash{
-		Ahash:  ahash,
-		Dhash:  dhash,
-		Phash:  phash,
-		Domain: i.Domain,
+	return ImageHash{
+		Hashes: []Hash{{ahash.GetHash(), ahash.GetKind()}, {dhash.GetHash(), dhash.GetKind()}, {phash.GetHash(), phash.GetKind()}},
 		ID:     i.ID,
 	}
 }
