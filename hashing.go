@@ -77,7 +77,82 @@ type Hash struct {
 	Kind goimagehash.Kind
 }
 
-type SavedHashes map[Source]map[string][3]uint64
+// IDList is a map of domain to ID eg IDs["comicvine.gamespot.com"] = []string{"1235"}
+// Maps are extremely expensive in go for small maps this should only be used to return info to a user no internal code should use this
+type IDList map[Source][]string
+
+type OldSavedHashes map[Source]map[string][3]uint64
+
+type SavedHashes struct {
+	IDs    [][]ID
+	Hashes [3]map[uint64]int
+}
+
+func ToIDList(ids []ID) IDList {
+	idlist := IDList{}
+	for _, id := range ids {
+		idlist[id.Domain] = Insert(idlist[id.Domain], id.ID)
+	}
+	return idlist
+}
+func InsertID(ids []ID, id ID) []ID {
+	index, itemFound := slices.BinarySearchFunc(ids, id, func(e ID, t ID) int {
+		return cmp.Or(
+			cmp.Compare(e.Domain, t.Domain),
+			cmp.Compare(e.ID, t.ID),
+		)
+	})
+	if itemFound {
+		return ids
+	}
+	return slices.Insert(ids, index, id)
+}
+func (s *SavedHashes) InsertHash(hash Hash, id ID) {
+	for i, h := range s.Hashes {
+		if h == nil {
+			s.Hashes[i] = make(map[uint64]int)
+		}
+	}
+
+	hashType := int(hash.Kind) - 1
+	idx, hashFound := s.Hashes[hashType][hash.Hash]
+	if !hashFound {
+		idx = len(s.IDs)
+		s.IDs = append(s.IDs, make([]ID, 0, 3))
+	}
+	s.IDs[idx] = InsertID(s.IDs[idx], id)
+	s.Hashes[hashType][hash.Hash] = idx
+}
+
+func ConvertSavedHashes(oldHashes OldSavedHashes) SavedHashes {
+	t := SavedHashes{}
+	idcount := 0
+	for _, ids := range oldHashes {
+		idcount += len(ids)
+	}
+	t.IDs = make([][]ID, 0, idcount)
+	t.Hashes[0] = make(map[uint64]int, idcount)
+	t.Hashes[1] = make(map[uint64]int, idcount)
+	t.Hashes[2] = make(map[uint64]int, idcount)
+	for domain, sourceHashes := range oldHashes {
+		for id, hashes := range sourceHashes {
+			idx := len(t.IDs)
+			t.IDs = append(t.IDs, []ID{{domain, id}})
+			for hashType, hash := range hashes {
+				t.Hashes[hashType][hash] = idx
+			}
+		}
+	}
+	fmt.Println("Expected number of IDs", idcount)
+	idcount = 0
+	for _, ids := range t.IDs {
+		idcount += len(ids)
+	}
+	fmt.Println("length of hashes", len(t.Hashes[0])+len(t.Hashes[1])+len(t.Hashes[2]))
+	fmt.Println("Length of ID lists", len(t.IDs))
+	fmt.Println("Total number of IDs", idcount)
+	return t
+}
 
 type NewIDs struct {
 	OldID ID
@@ -171,5 +246,3 @@ func SplitHash(hash uint64) [8]uint8 {
 		uint8((hash & H0) >> Shift0),
 	}
 }
-
-type IDList map[Source][]string // IDs is a map of domain to ID eg IDs['comicvine.gamespot.com'] = []string{"1235"}

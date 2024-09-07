@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/bits"
 	"strings"
+	"time"
 
 	"gitea.narnian.us/lordwelch/goimagehash"
 	_ "modernc.org/sqlite"
@@ -67,11 +68,11 @@ func (s *sqliteStorage) findExactHashes(statement *sql.Stmt, items ...interface{
 
 func (s *sqliteStorage) findPartialHashes(max int, search_hash int64, kind goimagehash.Kind) ([]sqliteHash, error) { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
 	hashes := []sqliteHash{}
-	statement, err := s.db.PrepareContext(context.Background(), `SELECT rowid,hash,kind FROM Hashes WHERE (kind=?) AND (((hash >> (0 * 8) & 0xFF)=(? >> (0 * 8) & 0xFF)) OR ((hash >> (1 * 8) & 0xFF)=(? >> (1 * 8) & 0xFF)) OR ((hash >> (2 * 8) & 0xFF)=(? >> (2 * 8) & 0xFF)) OR ((hash >> (3 * 8) & 0xFF)=(? >> (3 * 8) & 0xFF)) OR ((hash >> (4 * 8) & 0xFF)=(? >> (4 * 8) & 0xFF)) OR ((hash >> (5 * 8) & 0xFF)=(? >> (5 * 8) & 0xFF)) OR ((hash >> (6 * 8) & 0xFF)=(? >> (6 * 8) & 0xFF)) OR ((hash >> (7 * 8) & 0xFF)=(? >> (7 * 8) & 0xFF))) ORDER BY kind,hash;`)
+	statement, err := s.db.PrepareContext(context.Background(), `SELECT rowid,hash,kind FROM Hashes WHERE (kind=?) AND (((hash >> (0 * 8) & 0xFF)=(?2 >> (0 * 8) & 0xFF)) OR ((hash >> (1 * 8) & 0xFF)=(?2 >> (1 * 8) & 0xFF)) OR ((hash >> (2 * 8) & 0xFF)=(?2 >> (2 * 8) & 0xFF)) OR ((hash >> (3 * 8) & 0xFF)=(?2 >> (3 * 8) & 0xFF)) OR ((hash >> (4 * 8) & 0xFF)=(?2 >> (4 * 8) & 0xFF)) OR ((hash >> (5 * 8) & 0xFF)=(?2 >> (5 * 8) & 0xFF)) OR ((hash >> (6 * 8) & 0xFF)=(?2 >> (6 * 8) & 0xFF)) OR ((hash >> (7 * 8) & 0xFF)=(?2 >> (7 * 8) & 0xFF)));`)
 	if err != nil {
 		return hashes, err
 	}
-	rows, err := statement.Query(kind, int64(search_hash), int64(search_hash), int64(search_hash), int64(search_hash), int64(search_hash), int64(search_hash), int64(search_hash), int64(search_hash))
+	rows, err := statement.Query(kind, int64(search_hash))
 	if err != nil {
 		return hashes, err
 	}
@@ -93,6 +94,7 @@ func (s *sqliteStorage) findPartialHashes(max int, search_hash int64, kind goima
 		}
 	}
 	rows.Close()
+	logTime("Filter partial " + kind.String())
 
 	statement, err = s.db.PrepareContext(context.Background(), `SELECT DISTINCT IDS.domain, IDs.id, id_hash.hashid FROM IDs JOIN id_hash ON IDs.rowid = id_hash.idid WHERE (id_hash.hashid in (`+strings.TrimRight(strings.Repeat("?,", len(hashes)), ",")+`)) ORDER BY IDs.domain, IDs.ID;`)
 	if err != nil {
@@ -161,6 +163,7 @@ CREATE INDEX IF NOT EXISTS hash_8_index ON Hashes ((hash >> (7 * 8) & 0xFF));
 
 CREATE INDEX IF NOT EXISTS id_domain ON IDs (domain, id);
 PRAGMA shrink_memory;
+ANALYZE;
 `)
 	if err != nil {
 		return err
@@ -168,15 +171,38 @@ PRAGMA shrink_memory;
 	return nil
 }
 
+var (
+	total time.Duration
+	t     = time.Now()
+)
+
+func resetTime() {
+	total = 0
+	t = time.Now()
+}
+
+func logTime(log string) {
+	n := time.Now()
+	s := n.Sub(t)
+	t = n
+	total += s
+	fmt.Printf("total: %v, %s: %v\n", total, log, s)
+}
+
 func (s *sqliteStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error) {
-	var foundMatches []Result
+	var (
+		foundMatches []Result
+	)
+	resetTime()
 
 	if exactOnly { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
 
 		statement, err := s.db.Prepare(`SELECT rowid,hash,kind FROM Hashes WHERE ` + strings.TrimSuffix(strings.Repeat("(hash=? AND kind=?) OR", len(hashes)), "OR") + `ORDER BY kind,hash;`)
 		if err != nil {
+			logTime("Fail exact")
 			return foundMatches, err
 		}
+
 		args := make([]interface{}, 0, len(hashes)*2)
 		for _, hash := range hashes {
 			if hash.Hash != 0 {
@@ -195,6 +221,7 @@ func (s *sqliteStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Re
 		if len(foundMatches) > 0 && exactOnly {
 			return foundMatches, nil
 		}
+		logTime("Search Exact")
 	}
 
 	foundHashes := make(map[uint64]struct{})
@@ -204,6 +231,7 @@ func (s *sqliteStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Re
 		if err != nil {
 			return foundMatches, err
 		}
+		logTime("Search partial " + hash.Kind.String())
 
 		for _, hash := range hashes {
 			if _, alreadyMatched := foundHashes[hash.Hash.Hash]; !alreadyMatched {
@@ -219,14 +247,18 @@ func (s *sqliteStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Re
 }
 
 func (s *sqliteStorage) MapHashes(hash ImageHash) {
-	insertHashes, err := s.db.Prepare(`
-INSERT INTO Hashes (hash,kind) VALUES (?,?) ON CONFLICT DO UPDATE SET hash=?1 RETURNING hashid;
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		panic(err)
+	}
+	insertHashes, err := tx.Prepare(`
+INSERT INTO Hashes (hash,kind) VALUES (?,?) ON CONFLICT DO UPDATE SET hash=?1 RETURNING hashid
 `)
 	if err != nil {
 		panic(err)
 	}
-	rows, err := s.db.Query(`
-INSERT INTO IDs (domain,id) VALUES (?,?) ON CONFLICT DO UPDATE SET domain=?1 RETURNING idid;
+	rows, err := tx.Query(`
+INSERT INTO IDs (domain,id) VALUES (?,?) ON CONFLICT DO UPDATE SET domain=?1 RETURNING idid
 `, hash.ID.Domain, hash.ID.ID)
 	if err != nil {
 		panic(err)
@@ -258,12 +290,19 @@ INSERT INTO IDs (domain,id) VALUES (?,?) ON CONFLICT DO UPDATE SET domain=?1 RET
 		}
 		hash_ids = append(hash_ids, id)
 	}
+	var ids []any
 	for _, hash_id := range hash_ids {
-		_, err = s.db.Exec(`INSERT INTO id_hash (hashid,idid) VALUES (?, ?) ON CONFLICT DO NOTHING;`, hash_id, id_id)
-		if err != nil {
-			panic(fmt.Errorf("Failed inserting: %v,%v: %w", hash.ID.Domain, hash.ID.ID, err))
-		}
+		ids = append(ids, hash_id, id_id)
 	}
+	_, err = tx.Exec(`INSERT INTO id_hash (hashid,idid) VALUES `+strings.TrimSuffix(strings.Repeat("(?, ?),", len(hash_ids)), ",")+` ON CONFLICT DO NOTHING;`, ids...)
+	if err != nil {
+		panic(fmt.Errorf("Failed inserting: %v,%v: %w", hash.ID.Domain, hash.ID.ID, err))
+	}
+	err = tx.Commit()
+	if err != nil {
+		panic(err)
+	}
+	insertHashes.Close()
 }
 
 func (s *sqliteStorage) DecodeHashes(hashes SavedHashes) error {
@@ -272,9 +311,15 @@ func (s *sqliteStorage) DecodeHashes(hashes SavedHashes) error {
 		return err
 	}
 
-	for domain, sourceHashes := range hashes {
-		for id, h := range sourceHashes {
-			s.MapHashes(ImageHash{[]Hash{{h[0], goimagehash.AHash}, {h[1], goimagehash.DHash}, {h[2], goimagehash.PHash}}, ID{domain, id}})
+	for hashType, sourceHashes := range hashes.Hashes {
+		hashKind := goimagehash.Kind(hashType + 1)
+		for hash, idsLocations := range sourceHashes {
+			for _, id := range hashes.IDs[idsLocations] {
+				s.MapHashes(ImageHash{
+					Hashes: []Hash{{hash, hashKind}},
+					ID:     id,
+				})
+			}
 		}
 	}
 	err = s.createIndexes()
@@ -285,48 +330,27 @@ func (s *sqliteStorage) DecodeHashes(hashes SavedHashes) error {
 }
 
 func (s *sqliteStorage) EncodeHashes() (SavedHashes, error) {
-	hashes := make(SavedHashes)
+	hashes := SavedHashes{}
 	conn, err := s.db.Conn(context.Background())
 	if err != nil {
 		return hashes, err
 	}
 	defer conn.Close()
-	rows, err := conn.QueryContext(context.Background(), "SELECT DISTINCT (domain) FROM IDs ORDER BY domain;")
+	rows, err := conn.QueryContext(context.Background(), "SELECT IDs.domain,IDs.id,Hashes.hash,Hashes.kind FROM Hashes JOIN id_hash ON id_hash.hashid = hashes.rowid JOIN IDs ON IDs.rowid = id_hash.idid ORDER BY IDs.ID,Hashes.kind,Hashes.hash;")
+	if err != nil {
+		rows.Close()
+		return hashes, err
+	}
+	var (
+		id   ID
+		hash Hash
+	)
+	err = rows.Scan(&id.Domain, &id.ID, &hash.Hash, &hash.Kind)
 	if err != nil {
 		return hashes, err
 	}
-	sources := make([]string, 0, 10)
-	for rows.Next() {
-		var source string
-		if err = rows.Scan(&source); err != nil {
-			rows.Close()
-			return hashes, err
-		}
-		sources = append(sources, source)
-	}
-	for _, source := range sources {
-		rows, err = conn.QueryContext(context.Background(), "SELECT IDs.id,Hashes.hash,Hashes.kind FROM Hashes JOIN id_hash ON id_hash.hashid = hashes.rowid JOIN IDs ON IDs.rowid = id_hash.idid WHERE IDs.domain = ? ORDER BY IDs.ID,Hashes.kind,Hashes.hash;", source)
-		if err != nil {
-			rows.Close()
-			return hashes, err
-		}
-		var (
-			id   string
-			hash int64
-			typ  goimagehash.Kind
-		)
-		err = rows.Scan(&id, &hash, &typ)
-		if err != nil {
-			return hashes, err
-		}
-		_, ok := hashes[Source(source)]
-		if !ok {
-			hashes[Source(source)] = make(map[string][3]uint64)
-		}
-		h := hashes[Source(source)][id]
-		h[typ-1] = uint64(hash)
-		hashes[Source(source)][id] = h
-	}
+	hashes.InsertHash(hash, id)
+
 	return hashes, nil
 }
 
@@ -415,16 +439,6 @@ CREATE TABLE IF NOT EXISTS Hashes(
     UNIQUE(kind, hash)
 );
 
-CREATE INDEX IF NOT EXISTS hash_index   ON Hashes (kind, hash);
-CREATE INDEX IF NOT EXISTS hash_1_index ON Hashes ((hash >> (0 * 8) & 0xFF));
-CREATE INDEX IF NOT EXISTS hash_2_index ON Hashes ((hash >> (1 * 8) & 0xFF));
-CREATE INDEX IF NOT EXISTS hash_3_index ON Hashes ((hash >> (2 * 8) & 0xFF));
-CREATE INDEX IF NOT EXISTS hash_4_index ON Hashes ((hash >> (3 * 8) & 0xFF));
-CREATE INDEX IF NOT EXISTS hash_5_index ON Hashes ((hash >> (4 * 8) & 0xFF));
-CREATE INDEX IF NOT EXISTS hash_6_index ON Hashes ((hash >> (5 * 8) & 0xFF));
-CREATE INDEX IF NOT EXISTS hash_7_index ON Hashes ((hash >> (6 * 8) & 0xFF));
-CREATE INDEX IF NOT EXISTS hash_8_index ON Hashes ((hash >> (7 * 8) & 0xFF));
-
 CREATE TABLE IF NOT EXISTS IDs(
     id          TEXT NOT NULL,
     domain      TEXT NOT NULL,
@@ -445,6 +459,7 @@ CREATE TABLE IF NOT EXISTS id_hash(
 	if err != nil {
 		panic(err)
 	}
+	sqlite.createIndexes()
 	sqlite.db.SetMaxOpenConns(1)
 	return sqlite, nil
 }

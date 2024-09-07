@@ -1,8 +1,6 @@
 module gitea.narnian.us/lordwelch/comic-hasher
 
-go 1.22.1
-
-toolchain go1.22.2
+go 1.23.0
 
 require (
 	gitea.narnian.us/lordwelch/goimagehash v0.0.0-20240812025715-33ff96e45f00
@@ -10,8 +8,10 @@ require (
 	github.com/kr/pretty v0.1.0
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/mholt/archiver/v4 v4.0.0-alpha.8
+	github.com/ncruces/go-sqlite3 v0.18.1
 	golang.org/x/image v0.19.0
 	golang.org/x/text v0.17.0
+	gonum.org/v1/gonum v0.15.1
 	modernc.org/sqlite v1.32.0
 )
 
@@ -40,14 +40,16 @@ require (
 	github.com/kr/text v0.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
+	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/nwaples/rardecode/v2 v2.0.0-beta.2 // indirect
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/tetratelabs/wazero v1.8.0 // indirect
 	github.com/therootcompany/xz v1.0.1 // indirect
 	github.com/ulikunitz/xz v0.5.10 // indirect
 	go4.org v0.0.0-20200411211856-f5505b9728dd // indirect
 	golang.org/x/exp v0.0.0-20240808152545-0cdaa3abc0fa // indirect
-	golang.org/x/sys v0.22.0 // indirect
+	golang.org/x/sys v0.24.0 // indirect
 	modernc.org/gc/v3 v3.0.0-20240107210532-573471604cb6 // indirect
 	modernc.org/libc v1.55.3 // indirect
 	modernc.org/mathutil v1.6.0 // indirect

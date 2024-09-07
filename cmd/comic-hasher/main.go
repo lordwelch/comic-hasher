@@ -91,20 +91,26 @@ type Storage int
 
 const (
 	Map = iota + 1
+	BasicMap
 	Sqlite
 	Sqlite3
+	VPTree
 )
 
 var storageNames = map[Storage]string{
-	Map:     "map",
-	Sqlite:  "sqlite",
-	Sqlite3: "sqlite3",
+	Map:      "map",
+	BasicMap: "basicmap",
+	Sqlite:   "sqlite",
+	Sqlite3:  "sqlite3",
+	VPTree:   "vptree",
 }
 
 var storageValues = map[string]Storage{
-	"map":     Map,
-	"sqlite":  Sqlite,
-	"sqlite3": Sqlite3,
+	"map":      Map,
+	"basicmap": BasicMap,
+	"sqlite":   Sqlite,
+	"sqlite3":  Sqlite3,
+	"vptree":   VPTree,
 }
 
 func (f Storage) String() string {
@@ -138,7 +144,7 @@ type Opts struct {
 }
 
 func main() {
-	opts := Opts{format: Msgpack, storageType: Map} // flag is weird
+	opts := Opts{format: Msgpack, storageType: BasicMap} // flag is weird
 	go func() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
 	}()
@@ -150,7 +156,7 @@ func main() {
 	flag.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", false, "Save hashes even if we loaded the embedded hashes")
 	flag.StringVar(&opts.hashesPath, "hashes", "hashes.gz", "Path to optionally gziped hashes in msgpack or json format. You must disable embedded hashes to use this option")
 	flag.Var(&opts.format, "save-format", "Specify the format to export hashes to (json, msgpack)")
-	flag.Var(&opts.storageType, "storage-type", "Specify the storage type used internally to search hashes (sqlite,sqlite3,map)")
+	flag.Var(&opts.storageType, "storage-type", "Specify the storage type used internally to search hashes (sqlite,sqlite3,map,basicmap,vptree)")
 	flag.Parse()
 
 	if opts.coverPath != "" {
@@ -350,6 +356,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		max       int = 8
 		max_tmp   int
 		err       error
+		hashes    []ch.Hash
 	)
 
 	if ahash, err = strconv.ParseUint(ahashStr, 16, 64); err != nil && ahashStr != "" {
@@ -357,15 +364,24 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		writeJson(w, http.StatusBadRequest, result{Msg: "hash parse failed"})
 		return
 	}
+	if ahash > 0 {
+		hashes = append(hashes, ch.Hash{ahash, goimagehash.AHash})
+	}
 	if dhash, err = strconv.ParseUint(dhashStr, 16, 64); err != nil && dhashStr != "" {
 		log.Printf("could not parse dhash: %s", dhashStr)
 		writeJson(w, http.StatusBadRequest, result{Msg: "hash parse failed"})
 		return
 	}
+	if dhash > 0 {
+		hashes = append(hashes, ch.Hash{dhash, goimagehash.DHash})
+	}
 	if phash, err = strconv.ParseUint(phashStr, 16, 64); err != nil && phashStr != "" {
 		log.Printf("could not parse phash: %s", phashStr)
 		writeJson(w, http.StatusBadRequest, result{Msg: "hash parse failed"})
 		return
+	}
+	if phash > 0 {
+		hashes = append(hashes, ch.Hash{phash, goimagehash.PHash})
 	}
 	if max_tmp, err = strconv.Atoi(maxStr); err != nil && maxStr != "" {
 		log.Printf("Invalid Max: %s", maxStr)
@@ -381,7 +397,10 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		writeJson(w, http.StatusBadRequest, result{Msg: fmt.Sprintf("Max must be less than 9: %d", max)})
 		return
 	}
-	matches, err := s.hashes.GetMatches([]ch.Hash{{ahash, goimagehash.AHash}, {dhash, goimagehash.DHash}, {phash, goimagehash.PHash}}, max, exactOnly)
+	matches, err := s.hashes.GetMatches(hashes, max, exactOnly)
+	slices.SortFunc(matches, func(a ch.Result, b ch.Result) int {
+		return cmp.Compare(a.Distance, b.Distance)
+	})
 	log.Println(err)
 	if len(matches) > 0 {
 		var msg string = ""
@@ -532,10 +551,15 @@ func (s *Server) DecodeHashes(format Format, hashes []byte) error {
 	default:
 		return fmt.Errorf("Unknown format: %v", format)
 	}
-	loadedHashes := make(ch.SavedHashes)
+	loadedHashes := ch.SavedHashes{}
 	err := decoder(hashes, &loadedHashes)
-	if err != nil {
-		return err
+	if err != nil || len(loadedHashes.IDs) == 0 {
+		fmt.Println("Failed to load hashes, checking if they are old hashes", err)
+		oldHashes := make(ch.OldSavedHashes)
+		if err = decoder(hashes, &oldHashes); err != nil {
+			return err
+		}
+		loadedHashes = ch.ConvertSavedHashes(oldHashes)
 	}
 
 	return s.hashes.DecodeHashes(loadedHashes)
@@ -597,10 +621,14 @@ func initializeStorage(opts Opts) (ch.HashStorage, error) {
 	switch opts.storageType {
 	case Map:
 		return ch.NewMapStorage()
+	case BasicMap:
+		return ch.NewBasicMapStorage()
 	case Sqlite:
 		return ch.NewSqliteStorage("sqlite", opts.sqlitePath)
 	case Sqlite3:
 		return ch.NewSqliteStorage("sqlite3", opts.sqlitePath)
+	case VPTree:
+		return ch.NewVPStorage()
 	}
 	return nil, errors.New("Unknown storage type provided")
 }
