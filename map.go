@@ -1,6 +1,7 @@
 package ch
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"sync"
@@ -16,25 +17,26 @@ func (m *MapStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Resul
 	m.hashMutex.RLock()
 	defer m.hashMutex.RUnlock()
 	resetTime()
+	defer logTime("Search Complete")
 
 	if exactOnly { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
 		for _, hash := range hashes {
 			hashType := int(hash.Kind) - 1
-			idlist := m.hashes[hashType][hash.Hash]
-			if idlist != nil && len(*idlist) > 0 {
+			index, hashFound := m.findHash(hashType, hash.Hash)
+			if hashFound {
 				foundMatches = append(foundMatches, Result{
 					Distance: 0,
 					Hash:     hash,
-					IDs:      ToIDList(*idlist),
+					IDs:      ToIDList(*m.hashes[hashType][index].ids),
 				})
 			}
 		}
 
 		// If we have exact matches don't bother with other matches
+		logTime("Search Exact")
 		if len(foundMatches) > 0 && exactOnly {
 			return foundMatches, nil
 		}
-		logTime("Search Exact")
 	}
 
 	totalPartialHashes := 0
@@ -46,15 +48,14 @@ func (m *MapStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Resul
 			totalPartialHashes += len(partialHashes)
 			for _, match := range Atleast(max, searchHash.Hash, partialHashes) {
 				_, alreadyMatched := foundHashes[match.Hash]
-				if matchedResults, ok := m.hashes[hashType][match.Hash]; ok && !alreadyMatched {
+				if index, hashFound := m.findHash(hashType, match.Hash); hashFound && !alreadyMatched {
 					foundHashes[match.Hash] = struct{}{}
-					foundMatches = append(foundMatches, Result{IDs: ToIDList(*matchedResults), Distance: match.Distance, Hash: Hash{Hash: match.Hash, Kind: searchHash.Kind}})
+					foundMatches = append(foundMatches, Result{IDs: ToIDList(*m.hashes[hashType][index].ids), Distance: match.Distance, Hash: Hash{Hash: match.Hash, Kind: searchHash.Kind}})
 				}
 			}
 		}
 	}
 	fmt.Println("Total partial hashes tested:", totalPartialHashes)
-	logTime("Search Complete")
 	go m.printSizes()
 	return foundMatches, nil
 }
@@ -71,13 +72,15 @@ func (m *MapStorage) MapHashes(hash ImageHash) {
 
 func (m *MapStorage) DecodeHashes(hashes SavedHashes) error {
 	for hashType, sourceHashes := range hashes.Hashes {
-		m.hashes[hashType] = make(map[uint64]*[]ID, len(sourceHashes))
+		m.hashes[hashType] = make([]structHash, len(sourceHashes))
 		for savedHash, idlistLocation := range sourceHashes {
-			for i, partialHash := range SplitHash(savedHash) {
-				m.partialHash[hashType][i][partialHash] = append(m.partialHash[hashType][i][partialHash], savedHash)
-			}
-			m.hashes[hashType][savedHash] = &hashes.IDs[idlistLocation]
+			m.hashes[hashType] = append(m.hashes[hashType], structHash{savedHash, &hashes.IDs[idlistLocation]})
 		}
+	}
+	for hashType := range m.hashes {
+		slices.SortFunc(m.hashes[hashType], func(a, b structHash) int {
+			return cmp.Compare(a.hash, b.hash)
+		})
 	}
 	m.printSizes()
 	for _, partialHashes := range m.partialHash {
@@ -104,10 +107,10 @@ func NewMapStorage() (HashStorage, error) {
 	storage := &MapStorage{
 		basicMapStorage: basicMapStorage{
 			hashMutex: sync.RWMutex{},
-			hashes: [3]map[uint64]*[]ID{
-				make(map[uint64]*[]ID),
-				make(map[uint64]*[]ID),
-				make(map[uint64]*[]ID),
+			hashes: [3][]structHash{
+				[]structHash{},
+				[]structHash{},
+				[]structHash{},
 			},
 		},
 		partialHash: [3][8]map[uint8][]uint64{
