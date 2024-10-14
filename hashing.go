@@ -61,9 +61,10 @@ type Result struct {
 }
 
 type Im struct {
-	Im     image.Image
-	Format string
-	ID     ID
+	Im      image.Image
+	Format  string
+	ID      ID
+	NewOnly bool
 }
 
 type ImageHash struct {

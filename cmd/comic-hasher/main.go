@@ -39,19 +39,22 @@ import (
 	_ "golang.org/x/image/webp"
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/cv"
 	"gitea.narnian.us/lordwelch/goimagehash"
 )
 
 type Server struct {
-	httpServer   *http.Server
-	mux          *http.ServeMux
-	BaseURL      *url.URL
-	hashes       ch.HashStorage
-	quit         chan struct{}
-	signalQueue  chan os.Signal
-	readerQueue  chan string
-	hashingQueue chan ch.Im
-	mappingQueue chan ch.ImageHash
+	httpServer     *http.Server
+	mux            *http.ServeMux
+	BaseURL        *url.URL
+	hashes         ch.HashStorage
+	Context        context.Context
+	cancel         func()
+	signalQueue    chan os.Signal
+	readerQueue    chan string
+	hashingQueue   chan ch.Im
+	mappingQueue   chan ch.ImageHash
+	onlyHashNewIDs bool
 }
 
 type Format int
@@ -141,6 +144,14 @@ type Opts struct {
 	format             Format
 	hashesPath         string
 	storageType        Storage
+	onlyHashNewIDs     bool
+	cv                 struct {
+		downloadCovers bool
+		APIKey         string
+		path           string
+		thumbOnly      bool
+		hashDownloaded bool
+	}
 }
 
 func main() {
@@ -150,19 +161,34 @@ func main() {
 	}()
 	flag.StringVar(&opts.cpuprofile, "cpuprofile", "", "Write cpu profile to file")
 
-	flag.StringVar(&opts.coverPath, "cover-path", "", "Path to covers to add to hash database. must be in the form '{cover-path}/{domain}/{id}/*' eg for --cover-path /covers it should look like /covers/comicvine.gamespot.com/10000/image.gif")
+	flag.StringVar(&opts.coverPath, "cover-path", "", "Path to local covers to add to hash database. Must be in the form '{cover-path}/{domain}/{id}/*' eg for --cover-path /covers it should look like /covers/comicvine.gamespot.com/10000/image.gif")
 	flag.StringVar(&opts.sqlitePath, "sqlite-path", "tmp.sqlite", "Path to sqlite database to use for matching hashes, substantialy reduces memory usage")
 	flag.BoolVar(&opts.loadEmbeddedHashes, "use-embedded-hashes", true, "Use hashes embedded in the application as a starting point")
 	flag.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", false, "Save hashes even if we loaded the embedded hashes")
 	flag.StringVar(&opts.hashesPath, "hashes", "hashes.gz", "Path to optionally gziped hashes in msgpack or json format. You must disable embedded hashes to use this option")
 	flag.Var(&opts.format, "save-format", "Specify the format to export hashes to (json, msgpack)")
 	flag.Var(&opts.storageType, "storage-type", "Specify the storage type used internally to search hashes (sqlite,sqlite3,map,basicmap,vptree)")
+	flag.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers from CV/local path (Note: If there are multiple covers for the same ID they may get queued at the same time and hashed on the first run)")
+
+	flag.BoolVar(&opts.cv.downloadCovers, "cv-dl-covers", false, "Downloads all covers from ComicVine and adds them to the server")
+	flag.StringVar(&opts.cv.APIKey, "cv-api-key", "", "API Key to use to access the ComicVine API")
+	flag.StringVar(&opts.cv.path, "cv-path", "", "Path to store ComicVine data in")
+	flag.BoolVar(&opts.cv.thumbOnly, "cv-thumb-only", true, "Only downloads the thumbnail image from comicvine")
+	flag.BoolVar(&opts.cv.hashDownloaded, "cv-hash-downloaded", true, "Hash already downloaded images")
 	flag.Parse()
 
 	if opts.coverPath != "" {
 		_, err := os.Stat(opts.coverPath)
 		if err != nil {
 			panic(err)
+		}
+	}
+	if opts.cv.downloadCovers {
+		if opts.cv.APIKey == "" {
+			log.Fatal("No ComicVine API Key provided")
+		}
+		if opts.cv.path == "" {
+			log.Fatal("No path provided for ComicVine data")
 		}
 	}
 	opts.sqlitePath, _ = filepath.Abs(opts.sqlitePath)
@@ -454,7 +480,7 @@ func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("Decoded %s image from %s", format, user)
 	select {
-	case <-s.quit:
+	case <-s.Context.Done():
 		log.Println("Recieved quit")
 		return
 	default:
@@ -470,18 +496,21 @@ func (s *Server) mapper(done func()) {
 	}
 }
 
-func (s *Server) hasher(workerID int, done func()) {
-	defer done()
+func (s *Server) hasher(workerID int, done func(int)) {
+	defer done(workerID)
 	for image := range s.hashingQueue {
 		start := time.Now()
-
+		if image.NewOnly && len(s.hashes.GetIDs(image.ID)) > 0 {
+			fmt.Println("skipping", image)
+			continue
+		}
 		hash := ch.HashImage(image)
 		if hash.ID.Domain == "" || hash.ID.ID == "" {
 			continue
 		}
 
 		select {
-		case <-s.quit:
+		case <-s.Context.Done():
 			log.Println("Recieved quit")
 			return
 		case s.mappingQueue <- hash:
@@ -493,9 +522,13 @@ func (s *Server) hasher(workerID int, done func()) {
 	}
 }
 
-func (s *Server) reader(workerID int, done func()) {
-	defer done()
+func (s *Server) reader(workerID int, done func(i int)) {
+	defer done(workerID)
 	for path := range s.readerQueue {
+		id := ch.ID{Domain: ch.Source(filepath.Base(filepath.Dir(filepath.Dir(path)))), ID: filepath.Base(filepath.Dir(path))}
+		if len(s.hashes.GetIDs(id)) > 0 {
+			continue
+		}
 		file, err := os.Open(path)
 		if err != nil {
 			panic(err)
@@ -507,11 +540,13 @@ func (s *Server) reader(workerID int, done func()) {
 		file.Close()
 
 		im := ch.Im{
-			Im: i, Format: format,
-			ID: ch.ID{Domain: ch.Source(filepath.Base(filepath.Dir(filepath.Dir(path)))), ID: filepath.Base(filepath.Dir(path))},
+			Im:      i,
+			Format:  format,
+			ID:      id,
+			NewOnly: s.onlyHashNewIDs,
 		}
 		select {
-		case <-s.quit:
+		case <-s.Context.Done():
 			log.Println("Recieved quit")
 			return
 		case s.hashingQueue <- im:
@@ -571,8 +606,8 @@ func (s *Server) HashLocalImages(opts Opts) {
 			select {
 			case sig := <-s.signalQueue:
 				log.Printf("Signal: %v\n", sig)
-				close(s.quit)
-			case <-s.quit:
+				s.cancel()
+			case <-s.Context.Done():
 				log.Println("Recieved quit")
 			}
 			err := s.httpServer.Shutdown(context.TODO())
@@ -589,9 +624,9 @@ func (s *Server) HashLocalImages(opts Opts) {
 			case signal := <-s.signalQueue:
 				err = s.httpServer.Shutdown(context.TODO())
 				alreadyQuit = true
-				close(s.quit)
+				s.cancel()
 				return fmt.Errorf("signal: %v, %w", signal, err)
-			case <-s.quit:
+			case <-s.Context.Done():
 				log.Println("Recieved quit")
 				err = s.httpServer.Shutdown(context.TODO())
 				return fmt.Errorf("Recieved quit: %w", err)
@@ -609,7 +644,7 @@ func (s *Server) HashLocalImages(opts Opts) {
 
 		sig := <-s.signalQueue
 		if !alreadyQuit {
-			close(s.quit)
+			s.cancel()
 		}
 		err = s.httpServer.Shutdown(context.TODO())
 		log.Printf("Signal: %v, error: %v", sig, err)
@@ -632,62 +667,7 @@ func initializeStorage(opts Opts) (ch.HashStorage, error) {
 	return nil, errors.New("Unknown storage type provided")
 }
 
-func startServer(opts Opts) {
-	if opts.cpuprofile != "" {
-		f, err := os.Create(opts.cpuprofile)
-		if err != nil {
-			log.Fatal(err)
-		}
-		pprof.StartCPUProfile(f)
-		defer pprof.StopCPUProfile()
-	}
-
-	mux := http.NewServeMux()
-
-	server := Server{
-		quit:         make(chan struct{}),
-		signalQueue:  make(chan os.Signal, 1),
-		readerQueue:  make(chan string, 100),
-		hashingQueue: make(chan ch.Im),
-		mappingQueue: make(chan ch.ImageHash),
-		mux:          mux,
-		httpServer: &http.Server{
-			Addr:           ":8080",
-			Handler:        mux,
-			ReadTimeout:    10 * time.Second,
-			WriteTimeout:   10 * time.Second,
-			MaxHeaderBytes: 1 << 20,
-		},
-	}
-	Notify(server.signalQueue)
-	var err error
-	log.Println("init hashes")
-	server.hashes, err = initializeStorage(opts)
-	if err != nil {
-		panic(err)
-	}
-
-	log.Println("init handlers")
-	server.setupAppHandlers()
-
-	log.Println("init hashers")
-	rwg := sync.WaitGroup{}
-	for i := range 10 {
-		rwg.Add(1)
-		go server.reader(i, func() { log.Println("Reader completed"); rwg.Done() })
-	}
-
-	hwg := sync.WaitGroup{}
-	for i := range 10 {
-		hwg.Add(1)
-		go server.hasher(i, func() { log.Println("Hasher completed"); hwg.Done() })
-	}
-
-	log.Println("init mapper")
-	mwg := sync.WaitGroup{}
-	mwg.Add(1)
-	go server.mapper(func() { log.Println("Mapper completed"); mwg.Done() })
-
+func loadHashes(opts Opts, decodeHashes func(format Format, hashes []byte) error) {
 	if opts.loadEmbeddedHashes && len(ch.Hashes) != 0 {
 		var err error
 		hashes := ch.Hashes
@@ -700,7 +680,7 @@ func startServer(opts Opts) {
 
 		var format Format
 		for _, format = range []Format{Msgpack, JSON} {
-			if err = server.DecodeHashes(format, hashes); err == nil {
+			if err = decodeHashes(format, hashes); err == nil {
 				break
 			}
 		}
@@ -724,7 +704,7 @@ func startServer(opts Opts) {
 
 			var format Format
 			for _, format = range []Format{Msgpack, JSON} {
-				if err = server.DecodeHashes(format, hashes); err == nil {
+				if err = decodeHashes(format, hashes); err == nil {
 					break
 				}
 			}
@@ -732,7 +712,7 @@ func startServer(opts Opts) {
 			if err != nil {
 				panic(fmt.Sprintf("Failed to decode hashes from disk: %s", err))
 			}
-			fmt.Printf("Loaded hashes from %q %s\n", opts.hashesPath, format)
+			fmt.Printf("Loaded %s hashes from %q\n", format, opts.hashesPath)
 		} else {
 			if errors.Is(err, os.ErrNotExist) {
 				log.Println("No saved hashes to load")
@@ -741,35 +721,10 @@ func startServer(opts Opts) {
 			}
 		}
 	}
-
-	server.HashLocalImages(opts)
-
-	log.Println("Listening on ", server.httpServer.Addr)
-	err = server.httpServer.ListenAndServe()
-	if err != nil {
-		log.Println(err)
-	}
-	close(server.readerQueue)
-	log.Println("waiting on readers")
-	rwg.Wait()
-	for range server.readerQueue {
-	}
-	close(server.hashingQueue)
-	log.Println("waiting on hashers")
-	hwg.Wait()
-	for range server.hashingQueue {
-	}
-	close(server.mappingQueue)
-	log.Println("waiting on mapper")
-	mwg.Wait()
-	for range server.mappingQueue {
-	}
-	close(server.signalQueue)
-	for range server.signalQueue {
-	}
-
+}
+func saveHashes(opts Opts, encodeHashes func(format Format) ([]byte, error)) {
 	if !opts.loadEmbeddedHashes || opts.saveEmbeddedHashes {
-		encodedHashes, err := server.EncodeHashes(opts.format)
+		encodedHashes, err := encodeHashes(opts.format)
 		if err == nil {
 			if f, err := os.Create(opts.hashesPath); err == nil {
 				gzw := gzip.NewWriter(f)
@@ -788,4 +743,173 @@ func startServer(opts Opts) {
 			fmt.Printf("Unable to encode hashes as %v: %v", opts.format, err)
 		}
 	}
+}
+
+func downloadProcessor(opts Opts, imagePaths chan cv.Download, server Server) {
+	defer func() {
+		log.Println("Download Processor completed")
+	}()
+	for path := range imagePaths {
+		id := ch.ID{Domain: ch.ComicVine, ID: path.IssueID}
+		if opts.onlyHashNewIDs && len(server.hashes.GetIDs(id)) > 0 {
+			continue
+		}
+
+		file, err := os.Open(path.Dest)
+		if err != nil {
+			panic(err)
+		}
+		i, format, err := image.Decode(bufio.NewReader(file))
+		if err != nil {
+			continue // skip this image
+		}
+		file.Close()
+
+		im := ch.Im{
+			Im:      i,
+			Format:  format,
+			ID:      id,
+			NewOnly: opts.onlyHashNewIDs,
+		}
+		select {
+		case <-server.Context.Done():
+			log.Println("Recieved quit")
+			return
+		case server.hashingQueue <- im:
+			log.Println("Sending:", im)
+		}
+	}
+}
+
+func startServer(opts Opts) {
+	if opts.cpuprofile != "" {
+		f, err := os.Create(opts.cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+
+	mux := http.NewServeMux()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	server := Server{
+		Context:      ctx,
+		cancel:       cancel,
+		signalQueue:  make(chan os.Signal, 1),
+		readerQueue:  make(chan string, 100),
+		hashingQueue: make(chan ch.Im),
+		mappingQueue: make(chan ch.ImageHash),
+		mux:          mux,
+		httpServer: &http.Server{
+			Addr:           ":8080",
+			Handler:        mux,
+			ReadTimeout:    10 * time.Second,
+			WriteTimeout:   10 * time.Second,
+			MaxHeaderBytes: 1 << 20,
+		},
+		onlyHashNewIDs: opts.onlyHashNewIDs,
+	}
+	Notify(server.signalQueue)
+	var err error
+	log.Println("Init hashes")
+	server.hashes, err = initializeStorage(opts)
+	if err != nil {
+		panic(err)
+	}
+
+	log.Println("Init handlers")
+	server.setupAppHandlers()
+
+	log.Println("Init 10 readers")
+	rwg := sync.WaitGroup{}
+	for i := range 10 {
+		rwg.Add(1)
+		go server.reader(i, func(i int) { log.Println("Reader", i, "completed"); rwg.Done() })
+	}
+
+	log.Println("Init 10 hashers")
+	hwg := sync.WaitGroup{}
+	for i := range 10 {
+		hwg.Add(1)
+		go server.hasher(i, func(i int) { log.Println("Hasher", i, "completed"); hwg.Done() })
+	}
+
+	log.Println("Init 1 mapper")
+	mwg := sync.WaitGroup{}
+	mwg.Add(1)
+	go server.mapper(func() { log.Println("Mapper 0 completed"); mwg.Done() })
+
+	// server.DecodeHashes would normally need a write lock
+	// nothing else has been started yet so we don't need one
+	loadHashes(opts, server.DecodeHashes)
+
+	server.HashLocalImages(opts)
+
+	log.Println("Init downloaders")
+	dwg := sync.WaitGroup{}
+	finishedDownloadQueue := make(chan cv.Download)
+	go downloadProcessor(opts, finishedDownloadQueue, server)
+
+	if opts.cv.downloadCovers {
+		dwg.Add(1)
+		imageTypes := []string{}
+		if opts.cv.thumbOnly {
+			imageTypes = append(imageTypes, "thumb_url")
+		}
+		cvdownloader := cv.NewCVDownloader(server.Context, opts.cv.path, opts.cv.APIKey, imageTypes, opts.cv.hashDownloaded, finishedDownloadQueue)
+		go func() {
+			defer dwg.Done()
+		f:
+			for {
+				select {
+				case <-time.After(2 * time.Hour):
+					cv.DownloadCovers(cvdownloader)
+				case <-server.Context.Done():
+					break f
+				}
+			}
+		}()
+	}
+
+	log.Println("Listening on ", server.httpServer.Addr)
+	err = server.httpServer.ListenAndServe()
+	if err != nil {
+		log.Println(err)
+	}
+
+	close(server.readerQueue)
+	log.Println("waiting on readers")
+	rwg.Wait()
+	for range server.readerQueue {
+	}
+
+	log.Println("waiting on downloaders")
+	dwg.Wait() // Downloaders send to server.hashingQueue
+
+	close(server.hashingQueue)
+	log.Println("waiting on hashers")
+	hwg.Wait()
+	for range server.hashingQueue {
+	}
+
+	close(server.mappingQueue)
+	log.Println("waiting on mapper")
+	mwg.Wait()
+	for range server.mappingQueue {
+	}
+
+	close(server.signalQueue)
+	for range server.signalQueue {
+	}
+
+	log.Println("waiting on downloader")
+	close(finishedDownloadQueue)
+	for range finishedDownloadQueue {
+	}
+
+	// server.EncodeHashes would normally need a read lock
+	// the server has been stopped so it's not needed here
+	saveHashes(opts, server.EncodeHashes)
 }
