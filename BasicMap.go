@@ -88,7 +88,7 @@ func (b *basicMapStorage) InsertHash(hashType int, hash uint64, ids *[]ID) {
 	if hashFound {
 		return
 	}
-	slices.Insert(b.hashes[hashType], index, structHash{hash, ids})
+	b.hashes[hashType] = slices.Insert(b.hashes[hashType], index, structHash{hash, ids})
 }
 
 func (b *basicMapStorage) MapHashes(hash ImageHash) {
@@ -99,6 +99,7 @@ func (b *basicMapStorage) MapHashes(hash ImageHash) {
 		ids, ok := b.ids[hash.ID]
 		if !ok {
 			ids = &[]ID{hash.ID}
+			b.ids[hash.ID] = ids
 		}
 
 		b.InsertHash(hashType, ih.Hash, ids)
@@ -129,15 +130,23 @@ func (b *basicMapStorage) printSizes() {
 }
 
 func (b *basicMapStorage) EncodeHashes() (SavedHashes, error) {
-	hashes := SavedHashes{}
+	hashes := SavedHashes{
+		Hashes: [3]map[uint64]int{
+			make(map[uint64]int),
+			make(map[uint64]int),
+			make(map[uint64]int),
+		},
+	}
 	idmap := map[*[]ID]int{}
+
 	for _, ids := range b.ids {
 		if _, ok := idmap[ids]; ok {
 			continue
 		}
-		hashes.IDs = append(hashes.IDs, *ids)
 		idmap[ids] = len(hashes.IDs)
+		hashes.IDs = append(hashes.IDs, *ids)
 	}
+
 	for hashType, hashToID := range b.hashes {
 		for _, hash := range hashToID {
 			hashes.Hashes[hashType][hash.hash] = idmap[hash.ids]
@@ -169,12 +178,8 @@ func (b *basicMapStorage) GetIDs(id ID) IDList {
 func NewBasicMapStorage() (HashStorage, error) {
 	storage := &basicMapStorage{
 		hashMutex: sync.RWMutex{},
-
-		hashes: [3][]structHash{
-			[]structHash{},
-			[]structHash{},
-			[]structHash{},
-		},
+		ids:       make(map[ID]*[]ID),
+		hashes:    [3][]structHash{},
 	}
 	return storage, nil
 }
