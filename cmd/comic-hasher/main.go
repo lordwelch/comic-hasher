@@ -552,8 +552,8 @@ func (s *Server) DecodeHashes(format Format, hashes []byte) error {
 	}
 	loadedHashes := ch.SavedHashes{}
 	err := decoder(hashes, &loadedHashes)
-	if err != nil || len(loadedHashes.IDs) == 0 {
-		fmt.Println("Failed to load hashes, checking if they are old hashes", err)
+	if err != nil {
+		fmt.Println("Failed to load hashes, checking if they are old hashes", format, ":", err)
 		oldHashes := make(ch.OldSavedHashes)
 		if err = decoder(hashes, &oldHashes); err != nil {
 			return err
