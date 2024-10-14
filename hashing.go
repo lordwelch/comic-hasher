@@ -63,7 +63,6 @@ type Result struct {
 type Im struct {
 	Im     image.Image
 	Format string
-	Path   string
 	ID     ID
 }
 

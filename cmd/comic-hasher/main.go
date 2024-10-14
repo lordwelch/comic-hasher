@@ -459,7 +459,7 @@ func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 		return
 	default:
 	}
-	s.hashingQueue <- ch.Im{Im: i, Format: format, ID: ch.ID{Domain: ch.Source(domain), ID: ID}, Path: ""}
+	s.hashingQueue <- ch.Im{Im: i, Format: format, ID: ch.ID{Domain: ch.Source(domain), ID: ID}}
 	writeJson(w, http.StatusOK, result{Msg: "Success"})
 }
 
@@ -489,7 +489,7 @@ func (s *Server) hasher(workerID int, done func()) {
 		}
 
 		elapsed := time.Since(start)
-		log.Printf("Hashing took %v: worker: %v. path: %s %s: %064b id: %s\n", elapsed, workerID, image.Path, hash.Hashes[0].Kind, hash.Hashes[0].Hash, hash.ID)
+		log.Printf("Hashing took %v: worker: %v. %s: %064b id: %s\n", elapsed, workerID, hash.Hashes[0].Kind, hash.Hashes[0].Hash, hash.ID)
 	}
 }
 
@@ -508,8 +508,7 @@ func (s *Server) reader(workerID int, done func()) {
 
 		im := ch.Im{
 			Im: i, Format: format,
-			ID:   ch.ID{Domain: ch.Source(filepath.Base(filepath.Dir(filepath.Dir(path)))), ID: filepath.Base(filepath.Dir(path))},
-			Path: path,
+			ID: ch.ID{Domain: ch.Source(filepath.Base(filepath.Dir(filepath.Dir(path)))), ID: filepath.Base(filepath.Dir(path))},
 		}
 		select {
 		case <-s.quit:
