@@ -354,26 +354,26 @@ func (s *sqliteStorage) EncodeHashes() (SavedHashes, error) {
 	return hashes, nil
 }
 
-func (s *sqliteStorage) AssociateIDs(newIDs []NewIDs) {
+func (s *sqliteStorage) AssociateIDs(newIDs []NewIDs) error {
 	for _, ids := range newIDs {
 		var oldIDID, newIDID int
 		_, err := s.db.Exec(`INSERT INTO IDs domain,id VALUES (?,?)`, ids.NewID.Domain, ids.NewID.ID)
 		if err != nil {
-			panic(err)
+			return err
 		}
 		rows, err := s.db.Query(`SELECT idid FROM IDs WHERE domain=? AND id=?`, ids.NewID.Domain, ids.NewID.ID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			panic(err)
+			return err
 		}
 		if rows.Next() {
 			rows.Scan(&newIDID)
 		} else {
-			panic("Unable to insert New ID into database")
+			return errors.New("Unable to insert New ID into database")
 		}
 		rows.Close()
 		rows, err = s.db.Query(`SELECT idid FROM IDs WHERE domain=? AND id=?`, ids.OldID.Domain, ids.OldID.ID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			panic(err)
+			return err
 		}
 		if rows.Next() {
 			rows.Scan(&oldIDID)
@@ -382,16 +382,17 @@ func (s *sqliteStorage) AssociateIDs(newIDs []NewIDs) {
 		}
 		_, err = s.db.Exec(`INSERT INTO id_hash (hashid, id_id) SELECT hashid,? FROM id_hash where id_id=?`, newIDID, oldIDID)
 		if err != nil {
-			panic(err)
+			return fmt.Errorf("Unable to associate IDs: %w", err)
 		}
 	}
+	return nil
 }
 
 func (s *sqliteStorage) GetIDs(id ID) IDList {
 	var idid int
 	rows, err := s.db.Query(`SELECT idid FROM IDs WHERE domain=? AND id=?`, id.Domain, id.ID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		panic(err)
+		return nil
 	}
 	if rows.Next() {
 		rows.Scan(&idid)

@@ -85,8 +85,8 @@ func (v *VPTree) EncodeHashes() (SavedHashes, error) {
 	return SavedHashes{}, errors.New("Not Implemented")
 }
 
-func (v *VPTree) AssociateIDs(newIDs []NewIDs) {
-	panic("Not Implemented")
+func (v *VPTree) AssociateIDs(newIDs []NewIDs) error {
+	return errors.New("Not Implemented")
 }
 
 func (v *VPTree) GetIDs(id ID) IDList {

@@ -2,6 +2,7 @@ package ch
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"math/bits"
 	"slices"
@@ -111,6 +112,9 @@ func (b *basicMapStorage) DecodeHashes(hashes SavedHashes) error {
 		b.hashes[hashType] = make([]structHash, len(sourceHashes))
 		for savedHash, idlistLocation := range sourceHashes {
 			b.hashes[hashType] = append(b.hashes[hashType], structHash{savedHash, &hashes.IDs[idlistLocation]})
+			for _, id := range hashes.IDs[idlistLocation] {
+				b.ids[id] = &hashes.IDs[idlistLocation]
+			}
 		}
 	}
 	for hashType := range b.hashes {
@@ -155,22 +159,22 @@ func (b *basicMapStorage) EncodeHashes() (SavedHashes, error) {
 	return hashes, nil
 }
 
-func (b *basicMapStorage) AssociateIDs(newids []NewIDs) {
+func (b *basicMapStorage) AssociateIDs(newids []NewIDs) error {
 	for _, newid := range newids {
 		ids, found := b.ids[newid.OldID]
 		if !found {
-			msg := "No IDs belonging to " + newid.OldID.Domain + "exist on this server"
-			panic(msg)
+			msg := "No IDs belonging to " + string(newid.OldID.Domain) + " exist on this server"
+			return errors.New(msg)
 		}
 		*ids = InsertID(*ids, newid.NewID)
 	}
+	return nil
 }
 
 func (b *basicMapStorage) GetIDs(id ID) IDList {
 	ids, found := b.ids[id]
 	if !found {
-		msg := "No IDs belonging to " + id.Domain + "exist on this server"
-		panic(msg)
+		return nil
 	}
 	return ToIDList(*ids)
 }

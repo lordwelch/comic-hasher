@@ -163,7 +163,7 @@ type HashStorage interface {
 	MapHashes(ImageHash)
 	DecodeHashes(hashes SavedHashes) error
 	EncodeHashes() (SavedHashes, error)
-	AssociateIDs(newIDs []NewIDs)
+	AssociateIDs(newIDs []NewIDs) error
 	GetIDs(id ID) IDList
 }
 
