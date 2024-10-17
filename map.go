@@ -106,7 +106,7 @@ func (m *MapStorage) printSizes() {
 func NewMapStorage() (HashStorage, error) {
 	storage := &MapStorage{
 		basicMapStorage: basicMapStorage{
-			hashMutex: sync.RWMutex{},
+			hashMutex: &sync.RWMutex{},
 			hashes: [3][]structHash{
 				[]structHash{},
 				[]structHash{},
