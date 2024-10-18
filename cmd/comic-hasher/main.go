@@ -868,6 +868,7 @@ func startServer(opts Opts) {
 		cvdownloader := cv.NewCVDownloader(server.Context, opts.cv.path, opts.cv.APIKey, imageTypes, opts.cv.hashDownloaded, finishedDownloadQueue)
 		go func() {
 			defer dwg.Done()
+			cv.DownloadCovers(cvdownloader)
 		f:
 			for {
 				select {
