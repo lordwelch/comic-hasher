@@ -136,16 +136,18 @@ type Encoder func(any) ([]byte, error)
 type Decoder func([]byte, interface{}) error
 
 type Opts struct {
-	cpuprofile         string
-	coverPath          string
-	sqlitePath         string
-	loadEmbeddedHashes bool
-	saveEmbeddedHashes bool
-	format             Format
-	hashesPath         string
-	storageType        Storage
-	onlyHashNewIDs     bool
-	cv                 struct {
+	cpuprofile           string
+	coverPath            string
+	sqlitePath           string
+	loadEmbeddedHashes   bool
+	saveEmbeddedHashes   bool
+	format               Format
+	hashesPath           string
+	storageType          Storage
+	onlyHashNewIDs       bool
+	truncateHashedImages bool
+
+	cv struct {
 		downloadCovers bool
 		APIKey         string
 		path           string
@@ -169,6 +171,7 @@ func main() {
 	flag.Var(&opts.format, "save-format", "Specify the format to export hashes to (json, msgpack)")
 	flag.Var(&opts.storageType, "storage-type", "Specify the storage type used internally to search hashes (sqlite,sqlite3,map,basicmap,vptree)")
 	flag.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers from CV/local path (Note: If there are multiple covers for the same ID they may get queued at the same time and hashed on the first run)")
+	flag.BoolVar(&opts.truncateHashedImages, "trucate-hashed-images", true, "Truncates downloaded images after hashing them, useful to save space, implies -only-hash-new-ids")
 
 	flag.BoolVar(&opts.cv.downloadCovers, "cv-dl-covers", false, "Downloads all covers from ComicVine and adds them to the server")
 	flag.StringVar(&opts.cv.APIKey, "cv-api-key", "", "API Key to use to access the ComicVine API")
@@ -183,6 +186,7 @@ func main() {
 			panic(err)
 		}
 	}
+	opts.onlyHashNewIDs = opts.onlyHashNewIDs || opts.truncateHashedImages
 	if opts.cv.downloadCovers {
 		if opts.cv.APIKey == "" {
 			log.Fatal("No ComicVine API Key provided")
@@ -762,6 +766,9 @@ func downloadProcessor(opts Opts, imagePaths chan cv.Download, server Server) {
 		i, format, err := image.Decode(bufio.NewReader(file))
 		if err != nil {
 			continue // skip this image
+		}
+		if opts.truncateHashedImages {
+			file.Truncate(0)
 		}
 		file.Close()
 
