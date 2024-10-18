@@ -180,12 +180,12 @@ func (c *CVDownloader) updateIssues() {
 	failCount := 0
 	prev := -1
 	offset := 0
-	retry := func(err error) bool {
+	retry := func(url string, err error) bool {
 		if errors.Is(err, context.Canceled) {
 			log.Println("Server closed")
 			return false
 		}
-		log.Printf("Failed to download at offset %v: %v Attempt #%d", offset, err, failCount+1)
+		log.Printf("Failed to download %#v at offset %v: %v Attempt #%d", url, offset, err, failCount+1)
 		if prev == offset {
 			sleepTime := time.Second * 36
 			if failCount > 2 {
@@ -243,7 +243,7 @@ func (c *CVDownloader) updateIssues() {
 
 		log.Println("Starting download at offset", offset)
 		issue := &CVResult{}
-		URI := base_url
+		URI := (*base_url)
 		query = base_url.Query()
 		query.Add("offset", strconv.Itoa(offset))
 		URI.RawQuery = query.Encode()
@@ -256,7 +256,7 @@ func (c *CVDownloader) updateIssues() {
 		resp, err, cancelDownloadCTX := Get(c.Context, URI.String())
 		if err != nil {
 			cancelDownloadCTX()
-			if retry(err) {
+			if retry(URI.String(), err) {
 				continue
 			}
 			return
@@ -269,7 +269,7 @@ func (c *CVDownloader) updateIssues() {
 		err = json.NewDecoder(bufio.NewReader(body)).Decode(issue)
 		if err != nil {
 			cancelDownloadCTX()
-			if retry(err) {
+			if retry(URI.String(), err) {
 				continue
 			}
 			return
