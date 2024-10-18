@@ -97,6 +97,8 @@ func (c *CVDownloader) InsertBadURLs(url ...string) {
 	slices.Sort(c.badURLs)
 }
 func (c *CVDownloader) IsBadURL(url string) bool {
+	c.bMut.Lock()
+	defer c.bMut.Unlock()
 	_, itemFound := slices.BinarySearch(c.badURLs, url)
 	return itemFound
 }
@@ -400,9 +402,9 @@ func (c *CVDownloader) handleNotFound() {
 	if err != nil {
 		panic(err)
 	}
+	defer file.Close()
 	_, err = file.Seek(0, io.SeekEnd)
 	if err != nil {
-		file.Close()
 		panic(err)
 	}
 	for failedDownload := range c.notFound {
@@ -412,7 +414,6 @@ func (c *CVDownloader) handleNotFound() {
 		file.Write([]byte("\n"))
 		file.Sync()
 	}
-	file.Close()
 }
 
 func (c *CVDownloader) downloadImages() {
