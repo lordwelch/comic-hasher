@@ -282,7 +282,8 @@ func (c *CVDownloader) updateIssues() {
 		}
 		body := io.TeeReader(resp.Body, file)
 		err = json.NewDecoder(bufio.NewReader(body)).Decode(issue)
-		if err != nil {
+		if err != nil || issue.Offset != offset {
+			os.Remove(filepath.Join(c.JSONPath, "cv-"+strconv.Itoa(offset)+".json"))
 			cancelDownloadCTX()
 			if retry(URI.String(), err) {
 				continue
