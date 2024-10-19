@@ -193,6 +193,7 @@ func (c *CVDownloader) updateIssues() {
 			if failCount > 2 {
 				sleepTime = time.Minute * 10
 			}
+			log.Println("This page failed to download, lets wait for", sleepTime, "and hope it works")
 			select {
 			case <-c.Context.Done(): // allows us to return immediately even during a timeout
 				return false
@@ -262,6 +263,18 @@ func (c *CVDownloader) updateIssues() {
 				continue
 			}
 			return
+		}
+		if resp.StatusCode != 200 {
+			cancelDownloadCTX()
+			if retry(URI.String(), nil) {
+				continue
+			}
+			log.Println("Failed to download this page, we'll wait for an hour to see if it clears up")
+			select {
+			case <-c.Context.Done(): // allows us to return immediately even during a timeout
+				return
+			case <-time.After(1 * time.Hour):
+			}
 		}
 		file, err := os.Create(filepath.Join(c.JSONPath, "cv-"+strconv.Itoa(offset)+".json"))
 		if err != nil {
