@@ -78,7 +78,10 @@ type CVDownloader struct {
 	notFound       chan download
 }
 
-var ErrQuit = errors.New("Quit")
+var (
+	ErrQuit        = errors.New("Quit")
+	ErrInvalidPage = errors.New("Invalid ComicVine Page")
+)
 
 func (c *CVDownloader) InsertBadURL(url string) {
 	c.bMut.Lock()
@@ -110,11 +113,13 @@ func (c *CVDownloader) readJson() ([]*CVResult, error) {
 		}
 		result, err := c.loadIssues(file_entry)
 		if err != nil {
+			if err == ErrInvalidPage {
+				continue
+			}
 			return issues, err
 		}
-		if result.NumberOfTotalResults > c.totalResults {
-			c.totalResults = result.NumberOfTotalResults
-		}
+
+		c.totalResults = max(result.NumberOfTotalResults, c.totalResults)
 		issues = append(issues, result)
 	}
 	return issues, nil
@@ -133,6 +138,9 @@ func (c *CVDownloader) loadIssues(file_entry fs.DirEntry) (*CVResult, error) {
 	err = json.Unmarshal(bytes, tmp)
 	if err != nil {
 		return nil, err
+	}
+	if getOffset(file_entry) != tmp.Offset {
+		return nil, ErrInvalidPage
 	}
 	return tmp, nil
 }
@@ -223,6 +231,8 @@ func (c *CVDownloader) updateIssues() {
 					continue
 				} else {
 					log.Println("Failed to read page at offset ", offset, err)
+					os.Remove(filepath.Join(c.JSONPath, c.fileList[offset/100].Name()))
+					c.fileList = slices.Delete(c.fileList, offset/100, (offset/100)+1)
 				}
 			}
 			log.Printf("Expected Offset %d got Offset %d", offset, getOffset(c.fileList[offset/100]))
@@ -241,6 +251,10 @@ func (c *CVDownloader) updateIssues() {
 				case c.downloadQueue <- issue:
 				}
 				continue
+			} else {
+				log.Println("Failed to read page at offset ", offset, err)
+				os.Remove(filepath.Join(c.JSONPath, c.fileList[offset/100].Name()))
+				c.fileList = slices.Delete(c.fileList, offset/100, (offset/100)+1)
 			}
 		}
 
