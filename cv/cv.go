@@ -272,6 +272,7 @@ func (c *CVDownloader) updateIssues() {
 		}
 		resp, err, cancelDownloadCTX := Get(c.Context, URI.String())
 		if err != nil {
+			_ = resp.Body.Close()
 			cancelDownloadCTX()
 			if retry(URI.String(), err) {
 				continue
@@ -281,11 +282,13 @@ func (c *CVDownloader) updateIssues() {
 		if resp.StatusCode != 200 {
 			cancelDownloadCTX()
 			if retry(URI.String(), nil) {
+				_ = resp.Body.Close()
 				continue
 			}
 			log.Println("Failed to download this page, we'll wait for an hour to see if it clears up")
 			select {
 			case <-c.Context.Done(): // allows us to return immediately even during a timeout
+				_ = resp.Body.Close()
 				return
 			case <-time.After(1 * time.Hour):
 			}
@@ -296,6 +299,8 @@ func (c *CVDownloader) updateIssues() {
 		}
 		body := io.TeeReader(resp.Body, file)
 		err = json.NewDecoder(bufio.NewReader(body)).Decode(issue)
+		_ = resp.Body.Close()
+		_ = file.Close()
 		if err != nil || issue.Offset != offset {
 			os.Remove(filepath.Join(c.JSONPath, "cv-"+strconv.Itoa(offset)+".json"))
 			cancelDownloadCTX()
@@ -304,8 +309,6 @@ func (c *CVDownloader) updateIssues() {
 			}
 			return
 		}
-		_ = resp.Body.Close()
-		_ = file.Close()
 		cancelDownloadCTX()
 		if issue.NumberOfTotalResults > c.totalResults {
 			c.totalResults = issue.NumberOfTotalResults

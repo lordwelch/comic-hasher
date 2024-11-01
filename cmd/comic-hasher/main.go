@@ -538,10 +538,10 @@ func (s *Server) reader(workerID int, done func(i int)) {
 			panic(err)
 		}
 		i, format, err := image.Decode(bufio.NewReader(file))
+		file.Close()
 		if err != nil {
 			continue // skip this image
 		}
-		file.Close()
 
 		im := ch.Im{
 			Im:      i,
@@ -759,16 +759,21 @@ func downloadProcessor(opts Opts, imagePaths chan cv.Download, server Server) {
 			continue
 		}
 
-		file, err := os.Open(path.Dest)
+		file, err := os.OpenFile(path.Dest, os.O_RDWR|os.O_CREATE, 0666)
 		if err != nil {
 			panic(err)
 		}
 		i, format, err := image.Decode(bufio.NewReader(file))
 		if err != nil {
+			file.Close()
 			continue // skip this image
 		}
 		if opts.truncateHashedImages {
-			file.Truncate(0)
+			file.Seek(0, io.SeekStart)
+			err = file.Truncate(0)
+			if err != nil {
+				log.Printf("Failed to truncate %#v: %v", path.Dest, err)
+			}
 		}
 		file.Close()
 
