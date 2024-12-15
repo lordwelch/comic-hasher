@@ -136,16 +136,17 @@ type Encoder func(any) ([]byte, error)
 type Decoder func([]byte, interface{}) error
 
 type Opts struct {
-	cpuprofile           string
-	coverPath            string
-	sqlitePath           string
-	loadEmbeddedHashes   bool
-	saveEmbeddedHashes   bool
-	format               Format
-	hashesPath           string
-	storageType          Storage
-	onlyHashNewIDs       bool
-	truncateHashedImages bool
+	cpuprofile         string
+	coverPath          string
+	sqlitePath         string
+	loadEmbeddedHashes bool
+	saveEmbeddedHashes bool
+	format             Format
+	hashesPath         string
+	storageType        Storage
+	onlyHashNewIDs     bool
+	deleteHashedImages bool
+	path               string
 
 	cv struct {
 		downloadCovers bool
@@ -158,24 +159,32 @@ type Opts struct {
 
 func main() {
 	opts := Opts{format: Msgpack, storageType: BasicMap} // flag is weird
+	wd, err := os.Getwd()
+	fmt.Println(err)
+	if err != nil {
+		wd = "comic-hasher"
+	} else {
+		wd = filepath.Join(wd, "comic-hasher")
+	}
 	go func() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
 	}()
 	flag.StringVar(&opts.cpuprofile, "cpuprofile", "", "Write cpu profile to file")
 
+	flag.StringVar(&opts.path, "path", wd, "Path for comic-hasher to store files")
 	flag.StringVar(&opts.coverPath, "cover-path", "", "Path to local covers to add to hash database. Must be in the form '{cover-path}/{domain}/{id}/*' eg for --cover-path /covers it should look like /covers/comicvine.gamespot.com/10000/image.gif")
-	flag.StringVar(&opts.sqlitePath, "sqlite-path", "tmp.sqlite", "Path to sqlite database to use for matching hashes, substantialy reduces memory usage")
+	flag.StringVar(&opts.sqlitePath, "sqlite-path", "", fmt.Sprintf("Path to sqlite database to use for matching hashes, substantialy reduces memory usage (default %v)", filepath.Join(wd, "tmp.sqlite")))
 	flag.BoolVar(&opts.loadEmbeddedHashes, "use-embedded-hashes", true, "Use hashes embedded in the application as a starting point")
 	flag.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", false, "Save hashes even if we loaded the embedded hashes")
-	flag.StringVar(&opts.hashesPath, "hashes", "hashes.gz", "Path to optionally gziped hashes in msgpack or json format. You must disable embedded hashes to use this option")
+	flag.StringVar(&opts.hashesPath, "hashes", "", fmt.Sprintf("Path to optionally gziped hashes in msgpack or json format. You must disable embedded hashes to use this option (default %v)", filepath.Join(wd, "hashes.gz")))
 	flag.Var(&opts.format, "save-format", "Specify the format to export hashes to (json, msgpack)")
 	flag.Var(&opts.storageType, "storage-type", "Specify the storage type used internally to search hashes (sqlite,sqlite3,map,basicmap,vptree)")
-	flag.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers from CV/local path (Note: If there are multiple covers for the same ID they may get queued at the same time and hashed on the first run)")
-	flag.BoolVar(&opts.truncateHashedImages, "trucate-hashed-images", true, "Truncates downloaded images after hashing them, useful to save space, implies -only-hash-new-ids")
+	flag.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers from CV/local path (Note: If there are multiple covers for the same ID they may get queued at the same time and hashed on the first run, implies -cv-thumb-only if -delete-hashed-images is set)")
+	flag.BoolVar(&opts.deleteHashedImages, "delete-hashed-images", false, "Deletes downloaded images after hashing them, useful to save space, paths are recorded in ch.sqlite")
 
 	flag.BoolVar(&opts.cv.downloadCovers, "cv-dl-covers", false, "Downloads all covers from ComicVine and adds them to the server")
 	flag.StringVar(&opts.cv.APIKey, "cv-api-key", "", "API Key to use to access the ComicVine API")
-	flag.StringVar(&opts.cv.path, "cv-path", "", "Path to store ComicVine data in")
+	flag.StringVar(&opts.cv.path, "cv-path", "", fmt.Sprintf("Path to store ComicVine data in (default %v)", filepath.Join(wd, "comicvine")))
 	flag.BoolVar(&opts.cv.thumbOnly, "cv-thumb-only", true, "Only downloads the thumbnail image from comicvine")
 	flag.BoolVar(&opts.cv.hashDownloaded, "cv-hash-downloaded", true, "Hash already downloaded images")
 	flag.Parse()
@@ -186,17 +195,28 @@ func main() {
 			panic(err)
 		}
 	}
-	opts.onlyHashNewIDs = opts.onlyHashNewIDs || opts.truncateHashedImages
+	// opts.onlyHashNewIDs = opts.onlyHashNewIDs || opts.deleteHashedImages
 	if opts.cv.downloadCovers {
 		if opts.cv.APIKey == "" {
 			log.Fatal("No ComicVine API Key provided")
 		}
-		if opts.cv.path == "" {
-			log.Fatal("No path provided for ComicVine data")
-		}
+	}
+	opts.cv.thumbOnly = opts.cv.thumbOnly || (opts.onlyHashNewIDs && opts.deleteHashedImages)
+	opts.path, _ = filepath.Abs(opts.path)
+	if opts.hashesPath == "" {
+		opts.hashesPath = filepath.Join(opts.path, "hashes.gz")
+	}
+	opts.hashesPath, _ = filepath.Abs(opts.hashesPath)
+	if opts.sqlitePath == "" {
+		opts.sqlitePath = filepath.Join(opts.path, "tmp.sqlite")
 	}
 	opts.sqlitePath, _ = filepath.Abs(opts.sqlitePath)
-	log.Println(pretty.Formatter(opts))
+	if opts.cv.path == "" {
+		opts.cv.path = filepath.Join(opts.path, "comicvine")
+	}
+	opts.cv.path, _ = filepath.Abs(opts.cv.path)
+	pretty.Log(opts)
+
 	startServer(opts)
 }
 
@@ -505,7 +525,7 @@ func (s *Server) hasher(workerID int, done func(int)) {
 	for image := range s.hashingQueue {
 		start := time.Now()
 		if image.NewOnly && len(s.hashes.GetIDs(image.ID)) > 0 {
-			fmt.Println("skipping", image)
+			log.Printf("Skipping existing hash with ID: %s found", image.ID)
 			continue
 		}
 		hash := ch.HashImage(image)
@@ -749,7 +769,7 @@ func saveHashes(opts Opts, encodeHashes func(format Format) ([]byte, error)) {
 	}
 }
 
-func downloadProcessor(opts Opts, imagePaths chan cv.Download, server Server) {
+func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, server Server) {
 	defer func() {
 		log.Println("Download Processor completed")
 	}()
@@ -759,23 +779,22 @@ func downloadProcessor(opts Opts, imagePaths chan cv.Download, server Server) {
 			continue
 		}
 
-		file, err := os.OpenFile(path.Dest, os.O_RDWR|os.O_CREATE, 0666)
+		if chdb.PathHashed(path.Dest) {
+			// log.Println(path.Dest, "File has already been hashed, it may not be saved in the hashes file because we currently don't save any hashes if we've crashed")
+			continue
+		}
+		file, err := os.OpenFile(path.Dest, os.O_RDWR, 0666)
 		if err != nil {
 			panic(err)
 		}
 		i, format, err := image.Decode(bufio.NewReader(file))
 		if err != nil {
 			file.Close()
+			log.Println("Reading image failed", path.Dest)
 			continue // skip this image
 		}
-		if opts.truncateHashedImages {
-			file.Seek(0, io.SeekStart)
-			err = file.Truncate(0)
-			if err != nil {
-				log.Printf("Failed to truncate %#v: %v", path.Dest, err)
-			}
-		}
 		file.Close()
+		chdb.AddPath(path.Dest) // Add to sqlite db and remove file if opts.deleteHashedImages is true
 
 		im := ch.Im{
 			Im:      i,
@@ -788,7 +807,7 @@ func downloadProcessor(opts Opts, imagePaths chan cv.Download, server Server) {
 			log.Println("Recieved quit")
 			return
 		case server.hashingQueue <- im:
-			log.Println("Sending:", im)
+			// log.Println("Sending:", im)
 		}
 	}
 }
@@ -858,11 +877,15 @@ func startServer(opts Opts) {
 	loadHashes(opts, server.DecodeHashes)
 
 	server.HashLocalImages(opts)
+	chdb, err := ch.OpenCHDB(filepath.Join(opts.path, "ch.sqlite"), opts.cv.path, opts.deleteHashedImages)
+	if err != nil {
+		panic(err)
+	}
 
 	log.Println("Init downloaders")
 	dwg := sync.WaitGroup{}
 	finishedDownloadQueue := make(chan cv.Download)
-	go downloadProcessor(opts, finishedDownloadQueue, server)
+	go downloadProcessor(chdb, opts, finishedDownloadQueue, server)
 
 	if opts.cv.downloadCovers {
 		dwg.Add(1)
@@ -870,7 +893,7 @@ func startServer(opts Opts) {
 		if opts.cv.thumbOnly {
 			imageTypes = append(imageTypes, "thumb_url")
 		}
-		cvdownloader := cv.NewCVDownloader(server.Context, opts.cv.path, opts.cv.APIKey, imageTypes, opts.cv.hashDownloaded, finishedDownloadQueue)
+		cvdownloader := cv.NewCVDownloader(server.Context, chdb, opts.cv.path, opts.cv.APIKey, imageTypes, opts.cv.hashDownloaded, finishedDownloadQueue)
 		go func() {
 			defer dwg.Done()
 			cv.DownloadCovers(cvdownloader)
@@ -921,6 +944,7 @@ func startServer(opts Opts) {
 	close(finishedDownloadQueue)
 	for range finishedDownloadQueue {
 	}
+	_ = chdb.Close()
 
 	// server.EncodeHashes would normally need a read lock
 	// the server has been stopped so it's not needed here

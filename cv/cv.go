@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"slices"
+
+	ch "gitea.narnian.us/lordwelch/comic-hasher"
 )
 
 type Download struct {
@@ -70,12 +72,11 @@ type CVDownloader struct {
 
 	fileList       []fs.DirEntry
 	totalResults   int
-	badURLs        []string
-	bMut           sync.Mutex
 	imageWG        sync.WaitGroup
 	downloadQueue  chan *CVResult
 	imageDownloads chan download
 	notFound       chan download
+	chdb           ch.CHDB
 }
 
 var (
@@ -83,28 +84,6 @@ var (
 	ErrInvalidPage = errors.New("Invalid ComicVine Page")
 )
 
-func (c *CVDownloader) InsertBadURL(url string) {
-	c.bMut.Lock()
-	defer c.bMut.Unlock()
-	index, itemFound := slices.BinarySearch(c.badURLs, url)
-	if itemFound {
-		return
-	}
-	c.badURLs = slices.Insert(c.badURLs, index, url)
-}
-
-func (c *CVDownloader) InsertBadURLs(url ...string) {
-	c.bMut.Lock()
-	defer c.bMut.Unlock()
-	c.badURLs = append(c.badURLs, url...)
-	slices.Sort(c.badURLs)
-}
-func (c *CVDownloader) IsBadURL(url string) bool {
-	c.bMut.Lock()
-	defer c.bMut.Unlock()
-	_, itemFound := slices.BinarySearch(c.badURLs, url)
-	return itemFound
-}
 func (c *CVDownloader) readJson() ([]*CVResult, error) {
 	var issues []*CVResult
 	for _, file_entry := range c.fileList {
@@ -272,7 +251,6 @@ func (c *CVDownloader) updateIssues() {
 		}
 		resp, err, cancelDownloadCTX := Get(c.Context, URI.String())
 		if err != nil {
-			_ = resp.Body.Close()
 			cancelDownloadCTX()
 			if retry(URI.String(), err) {
 				continue
@@ -338,6 +316,7 @@ func (c *CVDownloader) start_downloader() {
 	for i := range 5 {
 		go func() {
 			log.Println("starting downloader", i)
+			dir_created := make(map[string]bool)
 			for dl := range c.imageDownloads {
 				if c.hasQuit() {
 					c.imageWG.Done()
@@ -358,10 +337,11 @@ func (c *CVDownloader) start_downloader() {
 					}
 					continue
 				}
+				dir := filepath.Dir(dl.dest)
 				resp, err, cancelDownload := Get(c.Context, dl.url)
 				if err != nil {
 					cancelDownload()
-					log.Println("Failed to download", dl.url, err)
+					log.Println("Failed to download", dl.volumeID, "/", dl.issueID, dl.url, err)
 					c.imageWG.Done()
 					continue
 				}
@@ -380,6 +360,10 @@ func (c *CVDownloader) start_downloader() {
 					log.Println("Failed to download", dl.url, resp.StatusCode)
 					cleanup()
 					continue
+				}
+				if !dir_created[dir] {
+					_ = os.MkdirAll(dir, 0o755)
+					dir_created[dir] = true
 				}
 				image, err := os.Create(dl.dest)
 				if err != nil {
@@ -408,42 +392,10 @@ func (c *CVDownloader) start_downloader() {
 	}
 }
 
-func (c *CVDownloader) loadBadURLs(path string) error {
-	bad_urls_file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
-	if err != nil {
-		return fmt.Errorf("Unable to read bad_urls: %w", err)
-	}
-	bad_urls_bytes, err := io.ReadAll(bad_urls_file)
-	bad_urls_file.Close()
-	if err != nil {
-		return fmt.Errorf("Unable to read bad_urls: %w", err)
-	}
-	c.bMut.Lock()
-	c.badURLs = strings.Split(string(bad_urls_bytes), "\n")
-	c.bMut.Unlock()
-	return nil
-}
-
 func (c *CVDownloader) handleNotFound() {
-	err := c.loadBadURLs("bad_urls")
-	if err != nil {
-		panic(err)
-	}
-	file, err := os.OpenFile("bad_urls", os.O_RDWR|os.O_CREATE, 0666)
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
-	_, err = file.Seek(0, io.SeekEnd)
-	if err != nil {
-		panic(err)
-	}
 	for failedDownload := range c.notFound {
-		c.InsertBadURL(failedDownload.url)
+		c.chdb.AddURL(failedDownload.url)
 		log.Printf("Not found: volumeID: %d issueID: %d Offset: %d URL: %s\n", failedDownload.volumeID, failedDownload.issueID, failedDownload.offset, failedDownload.url)
-		file.Write([]byte(failedDownload.url))
-		file.Write([]byte("\n"))
-		file.Sync()
 	}
 }
 
@@ -456,7 +408,6 @@ func (c *CVDownloader) downloadImages() {
 
 	go c.handleNotFound()
 	added := 0
-	dir_created := make(map[string]bool)
 	for list := range c.downloadQueue {
 		log.Printf("Checking downloads at offset %v\r", list.Offset)
 		for _, issue := range list.Results {
@@ -472,7 +423,7 @@ func (c *CVDownloader) downloadImages() {
 				if len(c.ImageTypes) > 0 && !slices.Contains(c.ImageTypes, image.name) {
 					continue
 				}
-				if c.IsBadURL(image.url) {
+				if c.chdb.CheckURL(image.url) {
 					log.Printf("Skipping known bad url %s", image.url)
 					continue
 				}
@@ -491,13 +442,13 @@ func (c *CVDownloader) downloadImages() {
 				if ext == "" || (len(ext) > 4 && !slices.Contains([]string{".avif", ".webp", ".tiff", ".heif"}, ext)) {
 					ext = ".jpg"
 				}
-				path := filepath.Join(c.ImagePath, strconv.Itoa(issue.Volume.ID), strconv.Itoa(issue.ID), image.name+ext)
+				dir := filepath.Join(c.ImagePath, strconv.Itoa(issue.Volume.ID), strconv.Itoa(issue.ID))
+				path := filepath.Join(dir, image.name+ext)
 
-				image_file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0666)
-				if errors.Is(err, os.ErrExist) {
-					if c.SendExistingImages {
+				if c.chdb.PathDownloaded(path) {
+					if _, err = os.Stat(path); c.SendExistingImages && err == nil {
 						// We don't add to the count of added as these should be processed immediately
-
+						log.Printf("Sending Existing image %v/%v %v", issue.Volume.ID, issue.ID, path)
 						c.imageWG.Add(1)
 						c.imageDownloads <- download{
 							url:      image.url,
@@ -510,13 +461,8 @@ func (c *CVDownloader) downloadImages() {
 					}
 					continue // If it exists assume it is fine, adding some basic verification might be a good idea later
 				}
-				dir := filepath.Join(c.ImagePath, strconv.Itoa(issue.Volume.ID), strconv.Itoa(issue.ID))
-				if !dir_created[dir] {
-					os.MkdirAll(dir, 0o777)
-					dir_created[dir] = true
-				}
 				added++
-				image_file.Close()
+
 				c.imageWG.Add(1)
 				c.imageDownloads <- download{
 					url:      image.url,
@@ -564,7 +510,7 @@ list:
 				if c.hasQuit() {
 					return ErrQuit
 				}
-				if c.IsBadURL(url) {
+				if c.chdb.CheckURL(url) {
 					indexesToRemove = append(indexesToRemove, i)
 					if err := os.Remove(filepath.Join(c.JSONPath, jsonFile.Name())); err != nil {
 						return err
@@ -591,7 +537,7 @@ func (c *CVDownloader) hasQuit() bool {
 	}
 }
 
-func NewCVDownloader(ctx context.Context, workPath, APIKey string, imageTypes []string, sendExistingImages bool, finishedDownloadQueue chan Download) *CVDownloader {
+func NewCVDownloader(ctx context.Context, chdb ch.CHDB, workPath, APIKey string, imageTypes []string, sendExistingImages bool, finishedDownloadQueue chan Download) *CVDownloader {
 	return &CVDownloader{
 		Context:               ctx,
 		JSONPath:              filepath.Join(workPath, "_json"),
@@ -603,6 +549,7 @@ func NewCVDownloader(ctx context.Context, workPath, APIKey string, imageTypes []
 		FinishedDownloadQueue: finishedDownloadQueue,
 		SendExistingImages:    sendExistingImages,
 		ImageTypes:            imageTypes,
+		chdb:                  chdb,
 	}
 }
 
