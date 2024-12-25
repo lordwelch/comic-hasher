@@ -1,6 +1,6 @@
 module gitea.narnian.us/lordwelch/comic-hasher
 
-go 1.23.0
+go 1.22
 
 require (
 	gitea.narnian.us/lordwelch/goimagehash v0.0.0-20240812025715-33ff96e45f00
