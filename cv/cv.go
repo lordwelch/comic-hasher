@@ -347,9 +347,9 @@ func (c *CVDownloader) start_downloader() {
 					cleanup()
 					continue
 				}
-				_ = os.MkdirAll(dir, 0o755)
 
 				if c.KeepDownloadedImages {
+					_ = os.MkdirAll(dir, 0o755)
 					image, err := os.Create(dl.dest)
 					if err != nil {
 						log.Println("Unable to create image file", dl.dest, err)
