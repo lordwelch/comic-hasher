@@ -154,6 +154,7 @@ type Opts struct {
 		path           string
 		thumbOnly      bool
 		hashDownloaded bool
+		keepDownloaded bool
 	}
 }
 
@@ -187,6 +188,7 @@ func main() {
 	flag.StringVar(&opts.cv.path, "cv-path", "", fmt.Sprintf("Path to store ComicVine data in (default %v)", filepath.Join(wd, "comicvine")))
 	flag.BoolVar(&opts.cv.thumbOnly, "cv-thumb-only", true, "Only downloads the thumbnail image from comicvine")
 	flag.BoolVar(&opts.cv.hashDownloaded, "cv-hash-downloaded", true, "Hash already downloaded images")
+	flag.BoolVar(&opts.cv.keepDownloaded, "cv-keep-downloaded", true, "Keep downloaded images. When set to false does not ever write to the filesystem, a crash or exiting can mean some images need to be re-downloaded")
 	flag.Parse()
 
 	if opts.coverPath != "" {
@@ -783,9 +785,17 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 			// log.Println(path.Dest, "File has already been hashed, it may not be saved in the hashes file because we currently don't save any hashes if we've crashed")
 			continue
 		}
-		file, err := os.OpenFile(path.Dest, os.O_RDWR, 0666)
-		if err != nil {
-			panic(err)
+		var (
+			file io.ReadCloser
+			err  error
+		)
+		if path.Image == nil {
+			file, err = os.OpenFile(path.Dest, os.O_RDWR, 0666)
+			if err != nil {
+				panic(err)
+			}
+		} else {
+			file = io.NopCloser(bytes.NewBuffer(path.Image))
 		}
 		i, format, err := image.Decode(bufio.NewReader(file))
 		if err != nil {
@@ -807,7 +817,6 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 			log.Println("Recieved quit")
 			return
 		case server.hashingQueue <- im:
-			// log.Println("Sending:", im)
 		}
 	}
 }
@@ -884,7 +893,7 @@ func startServer(opts Opts) {
 
 	log.Println("Init downloaders")
 	dwg := sync.WaitGroup{}
-	finishedDownloadQueue := make(chan cv.Download)
+	finishedDownloadQueue := make(chan cv.Download, 10)
 	go downloadProcessor(chdb, opts, finishedDownloadQueue, server)
 
 	if opts.cv.downloadCovers {
@@ -893,7 +902,7 @@ func startServer(opts Opts) {
 		if opts.cv.thumbOnly {
 			imageTypes = append(imageTypes, "thumb_url")
 		}
-		cvdownloader := cv.NewCVDownloader(server.Context, chdb, opts.cv.path, opts.cv.APIKey, imageTypes, opts.cv.hashDownloaded, finishedDownloadQueue)
+		cvdownloader := cv.NewCVDownloader(server.Context, chdb, opts.cv.path, opts.cv.APIKey, imageTypes, opts.cv.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
 		go func() {
 			defer dwg.Done()
 			cv.DownloadCovers(cvdownloader)

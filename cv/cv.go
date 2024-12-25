@@ -2,6 +2,7 @@ package cv
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -29,6 +30,7 @@ type Download struct {
 	URL     string
 	Dest    string
 	IssueID string
+	Image   []byte
 }
 
 type Issue struct {
@@ -67,6 +69,7 @@ type CVDownloader struct {
 	ImagePath             string
 	ImageTypes            []string
 	SendExistingImages    bool
+	KeepDownloadedImages  bool
 	Context               context.Context
 	FinishedDownloadQueue chan Download
 
@@ -150,22 +153,6 @@ func (c *CVDownloader) updateIssues() {
 	query.Add("api_key", c.APIKey)
 	base_url.RawQuery = query.Encode()
 	c.totalResults = max(c.totalResults, 1)
-	// IDs := make([]int, 0, 1_000_000)
-	// deleteIndexes := make([]int, 0, 100)
-	// CV sucks remove duplicate IDs so that we can try to get all the comics
-	// for i, issueList := range ssues {
-	// 	for _, issue := range issueList.Results {
-	// 		if _, found := slices.BinarySearch(IDs, issue.ID); found {
-	// 			deleteIndexes = append(deleteIndexes, i)
-	// 			slices.Sort(deleteIndexes)
-	// 		}
-	// 		IDs = append(IDs, issue.ID)
-	// 	}
-	// }
-	// slices.Reverse(deleteIndexes)
-	// for _, i := range deleteIndexes {
-	// 	issues = slices.Delete(issues, i, min(i+1, len(issues)-1))
-	// }
 	failCount := 0
 	prev := -1
 	offset := 0
@@ -316,7 +303,6 @@ func (c *CVDownloader) start_downloader() {
 	for i := range 5 {
 		go func() {
 			log.Println("starting downloader", i)
-			dir_created := make(map[string]bool)
 			for dl := range c.imageDownloads {
 				if c.hasQuit() {
 					c.imageWG.Done()
@@ -361,30 +347,50 @@ func (c *CVDownloader) start_downloader() {
 					cleanup()
 					continue
 				}
-				if !dir_created[dir] {
-					_ = os.MkdirAll(dir, 0o755)
-					dir_created[dir] = true
-				}
-				image, err := os.Create(dl.dest)
-				if err != nil {
-					log.Println("Unable to create image file", dl.dest, err)
-					os.Remove(dl.dest)
-					cleanup()
-					continue
-				}
-				log.Println("downloading", dl.dest)
-				_, err = io.Copy(image, resp.Body)
-				if err != nil {
-					log.Println("Failed when downloading image", err)
-					cleanup()
-					os.Remove(dl.dest)
-					continue
-				}
+				_ = os.MkdirAll(dir, 0o755)
 
-				c.FinishedDownloadQueue <- Download{
-					URL:     dl.url,
-					Dest:    dl.dest,
-					IssueID: strconv.Itoa(dl.issueID),
+				if c.KeepDownloadedImages {
+					image, err := os.Create(dl.dest)
+					if err != nil {
+						log.Println("Unable to create image file", dl.dest, err)
+						os.Remove(dl.dest)
+						image.Close()
+						cleanup()
+						continue
+					}
+					log.Println("downloading", dl.dest)
+					_, err = io.Copy(image, resp.Body)
+					image.Close()
+					if err != nil {
+						log.Println("Failed when downloading image", err)
+						os.Remove(dl.dest)
+						cleanup()
+						continue
+					}
+
+					c.FinishedDownloadQueue <- Download{
+						URL:     dl.url,
+						Dest:    dl.dest,
+						IssueID: strconv.Itoa(dl.issueID),
+					}
+
+				} else {
+					image := &bytes.Buffer{}
+					log.Println("downloading", dl.dest)
+					_, err = io.Copy(image, resp.Body)
+					if err != nil {
+						log.Println("Failed when downloading image", err)
+						cleanup()
+						os.Remove(dl.dest)
+						continue
+					}
+
+					c.FinishedDownloadQueue <- Download{
+						URL:     dl.url,
+						Dest:    dl.dest,
+						IssueID: strconv.Itoa(dl.issueID),
+						Image:   image.Bytes(),
+					}
 				}
 				cleanup()
 			}
@@ -479,7 +485,7 @@ func (c *CVDownloader) downloadImages() {
 				beforeWait := time.Now()
 				c.imageWG.Wait()
 				waited := time.Since(beforeWait)
-				// If we had to wait for the arbitrarily picked time of 7.4 seconds it means we had a backed up queue, lets wait to give the CV servers a break
+				// If we had to wait for the arbitrarily picked time of 7.4 seconds it means we had a backed up queue (slow hashing can also cause it to wait longer), lets wait to give the CV servers a break
 				if waited > time.Duration(7.4*float64(time.Second)) {
 					t := 10 * time.Second
 					log.Println("Waiting for", t, "at offset", list.Offset, "had to wait for", waited)
@@ -537,7 +543,24 @@ func (c *CVDownloader) hasQuit() bool {
 	}
 }
 
-func NewCVDownloader(ctx context.Context, chdb ch.CHDB, workPath, APIKey string, imageTypes []string, sendExistingImages bool, finishedDownloadQueue chan Download) *CVDownloader {
+func (c *CVDownloader) cleanDirs() {
+	_ = filepath.WalkDir(c.ImagePath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			path, _ = filepath.Abs(path)
+			err := ch.RmdirP(path)
+			// The error is only for the first path value. EG ch.RmdirP("/test/t") will only return the error for os.Remove("/test/t") not os.Remove("test")
+			if err == nil {
+				return filepath.SkipDir
+			}
+		}
+		return nil
+	})
+}
+
+func NewCVDownloader(ctx context.Context, chdb ch.CHDB, workPath, APIKey string, imageTypes []string, keepDownloadedImages, sendExistingImages bool, finishedDownloadQueue chan Download) *CVDownloader {
 	return &CVDownloader{
 		Context:               ctx,
 		JSONPath:              filepath.Join(workPath, "_json"),
@@ -548,6 +571,7 @@ func NewCVDownloader(ctx context.Context, chdb ch.CHDB, workPath, APIKey string,
 		notFound:              make(chan download, 100),
 		FinishedDownloadQueue: finishedDownloadQueue,
 		SendExistingImages:    sendExistingImages,
+		KeepDownloadedImages:  keepDownloadedImages,
 		ImageTypes:            imageTypes,
 		chdb:                  chdb,
 	}
@@ -558,6 +582,9 @@ func DownloadCovers(c *CVDownloader) {
 		err error
 	)
 	os.MkdirAll(c.JSONPath, 0o777)
+	f, _ := os.Create(filepath.Join(c.ImagePath, ".keep"))
+	f.Close()
+	c.cleanDirs()
 	c.fileList, err = os.ReadDir(c.JSONPath)
 	if err != nil {
 		panic(fmt.Errorf("Unable to open path for json files: %w", err))
@@ -589,9 +616,8 @@ func DownloadCovers(c *CVDownloader) {
 
 	log.Println("Number of issues", issueCount, " expected:", c.totalResults)
 
-	close(c.downloadQueue) // sends only happen in c.updateIssues
-	for range c.downloadQueue {
-	}
+	close(c.downloadQueue) // sends only happen in c.updateIssues which has already been called
+	// We don't drain here as we want to process them
 
 	log.Println("Waiting for downloaders")
 	dwg.Wait()
@@ -600,6 +626,10 @@ func DownloadCovers(c *CVDownloader) {
 	}
 	close(c.notFound)
 	for range c.notFound {
+	}
+
+	// We drain this at the end because we need to wait for the images to download
+	for range c.downloadQueue {
 	}
 
 	log.Println("Completed downloading images")

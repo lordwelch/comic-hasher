@@ -71,14 +71,15 @@ func (s CHDB) PathDownloaded(path string) bool {
 }
 
 func (s CHDB) AddPath(path string) {
-	path, _ = filepath.Rel(s.comicvinePath, path)
-	_, err := s.sql.Exec("INSERT INTO paths VALUES(?) ON CONFLICT DO NOTHING", path)
+	relPath, _ := filepath.Rel(s.comicvinePath, path)
+	_, err := s.sql.Exec("INSERT INTO paths VALUES(?) ON CONFLICT DO NOTHING", relPath)
 	if err != nil {
-		log.Println(fmt.Errorf("Failed to insert %v into paths: %w", path, err))
+		log.Println(fmt.Errorf("Failed to insert %v into paths: %w", relPath, err))
 	}
 
 	if s.deleteExisting {
-		os.Remove(path)
+		_ = os.Remove(path)
+		_ = RmdirP(filepath.Dir(path))
 	}
 }
 
