@@ -481,10 +481,10 @@ func (c *CVDownloader) downloadImages() {
 			if added > 200 {
 				// On a clean single image type run each page would have 100 downloads of a single cover type but stuff happens so we only wait once we have sent 200 to the queue
 				log.Println("waiting for", added, "downloads at offset", list.Offset)
-				added = 0
 				beforeWait := time.Now()
 				c.imageWG.Wait()
 				waited := time.Since(beforeWait)
+				added = 0
 				// If we had to wait for the arbitrarily picked time of 7.4 seconds it means we had a backed up queue (slow hashing can also cause it to wait longer), lets wait to give the CV servers a break
 				if waited > time.Duration(7.4*float64(time.Second)) {
 					t := 10 * time.Second
@@ -494,6 +494,10 @@ func (c *CVDownloader) downloadImages() {
 						return
 					case <-time.After(t):
 					}
+				} else {
+					// Things are too fast we can't depend CV being slow to manage our download speed
+					// We sleep for 3 seconds so we don't overload CV
+					time.Sleep(3 * time.Second)
 				}
 			}
 		}

@@ -843,8 +843,8 @@ func startServer(opts Opts) {
 		cancel:       cancel,
 		signalQueue:  make(chan os.Signal, 1),
 		readerQueue:  make(chan string, 100),
-		hashingQueue: make(chan ch.Im),
-		mappingQueue: make(chan ch.ImageHash),
+		hashingQueue: make(chan ch.Im, 1),
+		mappingQueue: make(chan ch.ImageHash, 1),
 		mux:          mux,
 		httpServer: &http.Server{
 			Addr:           ":8080",
