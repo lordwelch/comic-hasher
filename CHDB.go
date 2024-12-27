@@ -57,11 +57,11 @@ func (s CHDB) PathHashed(path string) bool {
 }
 
 func (s CHDB) PathDownloaded(path string) bool {
-	path, _ = filepath.Rel(s.comicvinePath, path)
+	relPath, _ := filepath.Rel(s.comicvinePath, path)
 	dbPath := ""
-	_ = s.sql.QueryRow("SELECT path FROM paths where path=?", path).Scan(&dbPath)
-	if dbPath != path {
-		f, err := os.Open(filepath.Join(s.comicvinePath, path))
+	_ = s.sql.QueryRow("SELECT path FROM paths where path=?", relPath).Scan(&dbPath)
+	if dbPath != relPath {
+		f, err := os.Open(path)
 		if err == nil {
 			defer f.Close()
 		}

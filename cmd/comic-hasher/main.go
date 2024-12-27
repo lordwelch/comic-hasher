@@ -180,13 +180,13 @@ func main() {
 	flag.StringVar(&opts.hashesPath, "hashes", "", fmt.Sprintf("Path to optionally gziped hashes in msgpack or json format. You must disable embedded hashes to use this option (default %v)", filepath.Join(wd, "hashes.gz")))
 	flag.Var(&opts.format, "save-format", "Specify the format to export hashes to (json, msgpack)")
 	flag.Var(&opts.storageType, "storage-type", "Specify the storage type used internally to search hashes (sqlite,sqlite3,map,basicmap,vptree)")
-	flag.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers from CV/local path (Note: If there are multiple covers for the same ID they may get queued at the same time and hashed on the first run, implies -cv-thumb-only if -delete-hashed-images is set)")
+	flag.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers from CV/local path (Note: If there are multiple covers for the same ID they may get queued at the same time and hashed on the first run, implies -cv-thumb-only if -delete-hashed-images is true or -cv-keep-downloaded is false)")
 	flag.BoolVar(&opts.deleteHashedImages, "delete-hashed-images", false, "Deletes downloaded images after hashing them, useful to save space, paths are recorded in ch.sqlite")
 
 	flag.BoolVar(&opts.cv.downloadCovers, "cv-dl-covers", false, "Downloads all covers from ComicVine and adds them to the server")
 	flag.StringVar(&opts.cv.APIKey, "cv-api-key", "", "API Key to use to access the ComicVine API")
 	flag.StringVar(&opts.cv.path, "cv-path", "", fmt.Sprintf("Path to store ComicVine data in (default %v)", filepath.Join(wd, "comicvine")))
-	flag.BoolVar(&opts.cv.thumbOnly, "cv-thumb-only", true, "Only downloads the thumbnail image from comicvine")
+	flag.BoolVar(&opts.cv.thumbOnly, "cv-thumb-only", true, "Only downloads the thumbnail image from comicvine, when false sets -only-hash-new-ids=false")
 	flag.BoolVar(&opts.cv.hashDownloaded, "cv-hash-downloaded", true, "Hash already downloaded images")
 	flag.BoolVar(&opts.cv.keepDownloaded, "cv-keep-downloaded", true, "Keep downloaded images. When set to false does not ever write to the filesystem, a crash or exiting can mean some images need to be re-downloaded")
 	flag.Parse()
@@ -203,7 +203,7 @@ func main() {
 			log.Fatal("No ComicVine API Key provided")
 		}
 	}
-	opts.cv.thumbOnly = opts.cv.thumbOnly || (opts.onlyHashNewIDs && opts.deleteHashedImages)
+	opts.cv.thumbOnly = opts.cv.thumbOnly || (opts.onlyHashNewIDs && (opts.deleteHashedImages || !opts.cv.keepDownloaded))
 	opts.path, _ = filepath.Abs(opts.path)
 	if opts.hashesPath == "" {
 		opts.hashesPath = filepath.Join(opts.path, "hashes.gz")
@@ -218,6 +218,10 @@ func main() {
 	}
 	opts.cv.path, _ = filepath.Abs(opts.cv.path)
 	pretty.Log(opts)
+
+	if !opts.cv.keepDownloaded && opts.onlyHashNewIDs {
+		panic("You need to fix your -cv-keep-downloaded and -only-hash-new-ids flags")
+	}
 
 	startServer(opts)
 }
