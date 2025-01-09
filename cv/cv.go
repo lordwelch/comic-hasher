@@ -30,7 +30,7 @@ type Download struct {
 	URL     string
 	Dest    string
 	IssueID string
-	Image   []byte
+	Image   *bytes.Buffer
 }
 
 type Issue struct {
@@ -80,6 +80,7 @@ type CVDownloader struct {
 	imageDownloads chan download
 	notFound       chan download
 	chdb           ch.CHDB
+	bufPool        *sync.Pool
 }
 
 var (
@@ -375,13 +376,16 @@ func (c *CVDownloader) start_downloader() {
 					}
 
 				} else {
-					image := &bytes.Buffer{}
+					image := c.bufPool.Get().(*bytes.Buffer)
 					log.Println("downloading", dl.dest)
 					_, err = io.Copy(image, resp.Body)
 					if err != nil {
 						log.Println("Failed when downloading image", err)
 						cleanup()
 						os.Remove(dl.dest)
+						if image != nil {
+							c.bufPool.Put(image)
+						}
 						continue
 					}
 
@@ -389,7 +393,7 @@ func (c *CVDownloader) start_downloader() {
 						URL:     dl.url,
 						Dest:    dl.dest,
 						IssueID: strconv.Itoa(dl.issueID),
-						Image:   image.Bytes(),
+						Image:   image,
 					}
 				}
 				cleanup()
@@ -564,15 +568,16 @@ func (c *CVDownloader) cleanDirs() {
 	})
 }
 
-func NewCVDownloader(ctx context.Context, chdb ch.CHDB, workPath, APIKey string, imageTypes []string, keepDownloadedImages, sendExistingImages bool, finishedDownloadQueue chan Download) *CVDownloader {
+func NewCVDownloader(ctx context.Context, bufPool *sync.Pool, chdb ch.CHDB, workPath, APIKey string, imageTypes []string, keepDownloadedImages, sendExistingImages bool, finishedDownloadQueue chan Download) *CVDownloader {
 	return &CVDownloader{
 		Context:               ctx,
 		JSONPath:              filepath.Join(workPath, "_json"),
 		ImagePath:             filepath.Join(workPath, "_image"),
 		APIKey:                APIKey,
-		downloadQueue:         make(chan *CVResult, 1000),
-		imageDownloads:        make(chan download, 250),
-		notFound:              make(chan download, 100),
+		downloadQueue:         make(chan *CVResult, 1000), // This is just json it shouldn't take up much more than 122 MB
+		imageDownloads:        make(chan download, 250),   // These are just URLs should only take a few MB
+		notFound:              make(chan download, 100),   // Same here
+		bufPool:               bufPool,                    // Only used if keepDownloadedImages is false to save space on byte buffers. The buffers get sent back via finishedDownloadQueue
 		FinishedDownloadQueue: finishedDownloadQueue,
 		SendExistingImages:    sendExistingImages,
 		KeepDownloadedImages:  keepDownloadedImages,

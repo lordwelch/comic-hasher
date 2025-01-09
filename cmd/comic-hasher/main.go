@@ -74,6 +74,15 @@ var formatValues = map[string]Format{
 	"msgpack": Msgpack,
 }
 
+var bufPool = &sync.Pool{
+	New: func() any {
+		// The Pool's New function should generally only return pointer
+		// types, since a pointer can be put into the return interface
+		// value without an allocation:
+		return new(bytes.Buffer)
+	},
+}
+
 func (f Format) String() string {
 	if name, known := formatNames[f]; known {
 		return name
@@ -799,15 +808,21 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 				panic(err)
 			}
 		} else {
-			file = io.NopCloser(bytes.NewBuffer(path.Image))
+			file = io.NopCloser(path.Image)
 		}
 		i, format, err := image.Decode(bufio.NewReader(file))
 		if err != nil {
 			file.Close()
-			log.Println("Reading image failed", path.Dest)
+			log.Println("Reading image failed", path.Dest, err)
+			if path.Image != nil {
+				bufPool.Put(path.Image)
+			}
 			continue // skip this image
 		}
 		file.Close()
+		if path.Image != nil {
+			bufPool.Put(path.Image)
+		}
 		chdb.AddPath(path.Dest) // Add to sqlite db and remove file if opts.deleteHashedImages is true
 
 		im := ch.Im{
@@ -906,7 +921,7 @@ func startServer(opts Opts) {
 		if opts.cv.thumbOnly {
 			imageTypes = append(imageTypes, "thumb_url")
 		}
-		cvdownloader := cv.NewCVDownloader(server.Context, chdb, opts.cv.path, opts.cv.APIKey, imageTypes, opts.cv.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
+		cvdownloader := cv.NewCVDownloader(server.Context, bufPool, chdb, opts.cv.path, opts.cv.APIKey, imageTypes, opts.cv.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
 		go func() {
 			defer dwg.Done()
 			cv.DownloadCovers(cvdownloader)
