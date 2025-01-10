@@ -9,5 +9,5 @@ import (
 )
 
 func Notify(sig chan os.Signal) {
-	signal.Notify(sig, os.Interrupt, syscall.SIGABRT, syscall.SIGQUIT, syscall.SIGTERM)
+	signal.Notify(sig, os.Interrupt, syscall.SIGQUIT, syscall.SIGTERM)
 }
