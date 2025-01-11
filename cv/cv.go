@@ -73,7 +73,7 @@ type CVDownloader struct {
 	Context               context.Context
 	FinishedDownloadQueue chan Download
 
-	fileList       []fs.DirEntry
+	fileList       []string
 	totalResults   int
 	imageWG        sync.WaitGroup
 	downloadQueue  chan *CVResult
@@ -90,11 +90,11 @@ var (
 
 func (c *CVDownloader) readJson() ([]*CVResult, error) {
 	var issues []*CVResult
-	for _, file_entry := range c.fileList {
+	for _, filename := range c.fileList {
 		if c.hasQuit() {
 			return nil, ErrQuit
 		}
-		result, err := c.loadIssues(file_entry)
+		result, err := c.loadIssues(filename)
 		if err != nil {
 			if err == ErrInvalidPage {
 				continue
@@ -107,9 +107,9 @@ func (c *CVDownloader) readJson() ([]*CVResult, error) {
 	}
 	return issues, nil
 }
-func (c *CVDownloader) loadIssues(file_entry fs.DirEntry) (*CVResult, error) {
+func (c *CVDownloader) loadIssues(filename string) (*CVResult, error) {
 	tmp := &CVResult{Results: make([]Issue, 0, 100)}
-	file, err := os.Open(filepath.Join(c.JSONPath, file_entry.Name()))
+	file, err := os.Open(filepath.Join(c.JSONPath, filename))
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func (c *CVDownloader) loadIssues(file_entry fs.DirEntry) (*CVResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if getOffset(file_entry) != tmp.Offset {
+	if getOffset(filename) != tmp.Offset {
 		return nil, ErrInvalidPage
 	}
 	return tmp, nil
@@ -138,8 +138,8 @@ func Get(ctx context.Context, url string) (*http.Response, error, func()) {
 	return resp, err, cancel
 }
 
-func getOffset(entry fs.DirEntry) int {
-	i, _ := strconv.Atoi(entry.Name()[3 : len(entry.Name())-1-4])
+func getOffset(name string) int {
+	i, _ := strconv.Atoi(name[3 : len(name)-1-4])
 	return i
 }
 
@@ -181,12 +181,13 @@ func (c *CVDownloader) updateIssues() {
 		return failCount < 15
 	}
 	for offset = 0; offset < c.totalResults; offset += 100 {
+		index := offset / 100
 		if c.hasQuit() {
 			return
 		}
-		if offset/100 < len(c.fileList) {
-			if getOffset(c.fileList[offset/100]) == offset { // If it's in order and it's not missing it should be here
-				if issue, err := c.loadIssues(c.fileList[offset/100]); err == nil && issue != nil {
+		if index < len(c.fileList) {
+			if getOffset(c.fileList[index]) == offset { // If it's in order and it's not missing it should be here
+				if issue, err := c.loadIssues(c.fileList[index]); err == nil && issue != nil {
 					c.totalResults = max(c.totalResults, issue.NumberOfTotalResults)
 					prev = -1
 					failCount = 0
@@ -197,19 +198,19 @@ func (c *CVDownloader) updateIssues() {
 					}
 					continue
 				} else {
-					log.Println("Failed to read page at offset ", offset, err)
-					os.Remove(filepath.Join(c.JSONPath, c.fileList[offset/100].Name()))
-					c.fileList = slices.Delete(c.fileList, offset/100, (offset/100)+1)
+					log.Println("Failed to read page at offset", offset, issue, err)
+					os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
+					c.fileList = slices.Delete(c.fileList, index, index+1)
 				}
+			} else {
+				log.Printf("Expected Offset %d got Offset %d", offset, getOffset(c.fileList[index]))
 			}
-			log.Printf("Expected Offset %d got Offset %d", offset, getOffset(c.fileList[offset/100]))
 		}
-		index, found := slices.BinarySearchFunc(c.fileList, offset, func(a fs.DirEntry, b int) int {
-			ai, _ := strconv.Atoi(a.Name()[3 : len(a.Name())-1-4])
-			return cmp.Compare(ai, b)
+		index, found := slices.BinarySearchFunc(c.fileList, offset, func(a string, b int) int {
+			return cmp.Compare(getOffset(a), b)
 		})
 		if found {
-			if issue, err := c.loadIssues(c.fileList[index]); err != nil && issue != nil {
+			if issue, err := c.loadIssues(c.fileList[index]); err == nil && issue != nil {
 				prev = -1
 				failCount = 0
 				// When canceled one of these will randomly be chosen, c.downloadQueue won't be closed until after this function returns
@@ -219,8 +220,8 @@ func (c *CVDownloader) updateIssues() {
 				}
 				continue
 			} else {
-				log.Println("Failed to read page at offset ", offset, err)
-				os.Remove(filepath.Join(c.JSONPath, c.fileList[index].Name()))
+				log.Println("Failed to read page at offset", offset, issue, err)
+				os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
 				c.fileList = slices.Delete(c.fileList, index, (index)+1)
 			}
 		}
@@ -517,7 +518,7 @@ list:
 		list, err := c.loadIssues(jsonFile)
 		if err != nil {
 			indexesToRemove = append(indexesToRemove, i)
-			os.Remove(filepath.Join(c.JSONPath, jsonFile.Name()))
+			os.Remove(filepath.Join(c.JSONPath, jsonFile))
 			continue
 		}
 		for _, issue := range list.Results {
@@ -527,7 +528,7 @@ list:
 				}
 				if c.chdb.CheckURL(url) {
 					indexesToRemove = append(indexesToRemove, i)
-					if err := os.Remove(filepath.Join(c.JSONPath, jsonFile.Name())); err != nil {
+					if err := os.Remove(filepath.Join(c.JSONPath, jsonFile)); err != nil {
 						return err
 					}
 					// We've removed the entire page, lets see if the new url works
@@ -591,24 +592,26 @@ func DownloadCovers(c *CVDownloader) {
 	var (
 		err error
 	)
-	log.Println("Reading json")
 	os.MkdirAll(c.JSONPath, 0o777)
 	f, _ := os.Create(filepath.Join(c.ImagePath, ".keep"))
 	f.Close()
-	c.cleanDirs()
-	c.fileList, err = os.ReadDir(c.JSONPath)
+	if !c.KeepDownloadedImages {
+		log.Println("Cleaning directories")
+		c.cleanDirs()
+	}
+	log.Println("Reading json")
+	var d *os.File
+	d, err = os.Open(c.JSONPath)
+	c.fileList, err = d.Readdirnames(-1)
 	if err != nil {
 		panic(fmt.Errorf("Unable to open path for json files: %w", err))
 	}
 
-	slices.SortFunc(c.fileList, func(x, y fs.DirEntry) int {
-		xi, _ := strconv.Atoi(x.Name()[3 : len(x.Name())-1-4])
-		yi, _ := strconv.Atoi(y.Name()[3 : len(y.Name())-1-4])
-		return cmp.Compare(xi, yi)
+	slices.SortFunc(c.fileList, func(x, y string) int {
+		return cmp.Compare(getOffset(x), getOffset(y))
 	})
 	if len(c.fileList) > 0 {
-		last_file := c.fileList[len(c.fileList)-1].Name()
-		c.totalResults, _ = strconv.Atoi(last_file[3 : len(last_file)-1-4])
+		c.totalResults = getOffset(c.fileList[len(c.fileList)-1])
 	}
 	c.totalResults += 100
 	log.Println("Number of pages", len(c.fileList), "Expected Pages:", c.totalResults/100)

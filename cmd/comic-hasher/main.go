@@ -143,7 +143,15 @@ func (f *Storage) Set(s string) error {
 
 type Encoder func(any) ([]byte, error)
 type Decoder func([]byte, interface{}) error
-
+type CVOpts struct {
+	downloadCovers bool
+	APIKey         string
+	path           string
+	thumbOnly      bool
+	originalOnly   bool
+	hashDownloaded bool
+	keepDownloaded bool
+}
 type Opts struct {
 	cpuprofile         string
 	coverPath          string
@@ -157,15 +165,7 @@ type Opts struct {
 	deleteHashedImages bool
 	path               string
 
-	cv struct {
-		downloadCovers bool
-		APIKey         string
-		path           string
-		thumbOnly      bool
-		originalOnly   bool
-		hashDownloaded bool
-		keepDownloaded bool
-	}
+	cv CVOpts
 }
 
 func main() {
