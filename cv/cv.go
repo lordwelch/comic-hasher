@@ -108,7 +108,7 @@ func (c *CVDownloader) readJson() ([]*CVResult, error) {
 	return issues, nil
 }
 func (c *CVDownloader) loadIssues(file_entry fs.DirEntry) (*CVResult, error) {
-	tmp := &CVResult{}
+	tmp := &CVResult{Results: make([]Issue, 0, 100)}
 	file, err := os.Open(filepath.Join(c.JSONPath, file_entry.Name()))
 	if err != nil {
 		return nil, err
@@ -377,6 +377,7 @@ func (c *CVDownloader) start_downloader() {
 
 				} else {
 					image := c.bufPool.Get().(*bytes.Buffer)
+					image.Reset()
 					log.Println("downloading", dl.dest)
 					_, err = io.Copy(image, resp.Body)
 					if err != nil {
@@ -574,10 +575,10 @@ func NewCVDownloader(ctx context.Context, bufPool *sync.Pool, chdb ch.CHDB, work
 		JSONPath:              filepath.Join(workPath, "_json"),
 		ImagePath:             filepath.Join(workPath, "_image"),
 		APIKey:                APIKey,
-		downloadQueue:         make(chan *CVResult, 1000), // This is just json it shouldn't take up much more than 122 MB
-		imageDownloads:        make(chan download, 250),   // These are just URLs should only take a few MB
-		notFound:              make(chan download, 100),   // Same here
-		bufPool:               bufPool,                    // Only used if keepDownloadedImages is false to save space on byte buffers. The buffers get sent back via finishedDownloadQueue
+		downloadQueue:         make(chan *CVResult, 1), // This is just json it shouldn't take up much more than 122 MB
+		imageDownloads:        make(chan download, 1),  // These are just URLs should only take a few MB
+		notFound:              make(chan download, 1),  // Same here
+		bufPool:               bufPool,                 // Only used if keepDownloadedImages is false to save space on byte buffers. The buffers get sent back via finishedDownloadQueue
 		FinishedDownloadQueue: finishedDownloadQueue,
 		SendExistingImages:    sendExistingImages,
 		KeepDownloadedImages:  keepDownloadedImages,
