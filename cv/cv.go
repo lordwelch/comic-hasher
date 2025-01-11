@@ -220,8 +220,8 @@ func (c *CVDownloader) updateIssues() {
 				continue
 			} else {
 				log.Println("Failed to read page at offset ", offset, err)
-				os.Remove(filepath.Join(c.JSONPath, c.fileList[offset/100].Name()))
-				c.fileList = slices.Delete(c.fileList, offset/100, (offset/100)+1)
+				os.Remove(filepath.Join(c.JSONPath, c.fileList[index].Name()))
+				c.fileList = slices.Delete(c.fileList, index, (index)+1)
 			}
 		}
 
@@ -591,6 +591,7 @@ func DownloadCovers(c *CVDownloader) {
 	var (
 		err error
 	)
+	log.Println("Reading json")
 	os.MkdirAll(c.JSONPath, 0o777)
 	f, _ := os.Create(filepath.Join(c.ImagePath, ".keep"))
 	f.Close()
@@ -610,7 +611,6 @@ func DownloadCovers(c *CVDownloader) {
 		c.totalResults, _ = strconv.Atoi(last_file[3 : len(last_file)-1-4])
 	}
 	c.totalResults += 100
-	log.Println("Reading json")
 	log.Println("Number of pages", len(c.fileList), "Expected Pages:", c.totalResults/100)
 	log.Println("Updating issues now")
 
