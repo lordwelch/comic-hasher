@@ -385,9 +385,7 @@ func (c *CVDownloader) start_downloader() {
 						log.Println("Failed when downloading image", err)
 						cleanup()
 						os.Remove(dl.dest)
-						if image != nil {
-							c.bufPool.Put(image)
-						}
+						// Something failed let this buffer GC instead of saving it
 						continue
 					}
 
@@ -576,10 +574,10 @@ func NewCVDownloader(ctx context.Context, bufPool *sync.Pool, chdb ch.CHDB, work
 		JSONPath:              filepath.Join(workPath, "_json"),
 		ImagePath:             filepath.Join(workPath, "_image"),
 		APIKey:                APIKey,
-		downloadQueue:         make(chan *CVResult, 1), // This is just json it shouldn't take up much more than 122 MB
-		imageDownloads:        make(chan download, 1),  // These are just URLs should only take a few MB
-		notFound:              make(chan download, 1),  // Same here
-		bufPool:               bufPool,                 // Only used if keepDownloadedImages is false to save space on byte buffers. The buffers get sent back via finishedDownloadQueue
+		downloadQueue:         make(chan *CVResult, 100), // This is just json it shouldn't take up much more than 122 MB
+		imageDownloads:        make(chan download, 1),    // These are just URLs should only take a few MB
+		notFound:              make(chan download, 1),    // Same here
+		bufPool:               bufPool,                   // Only used if keepDownloadedImages is false to save space on byte buffers. The buffers get sent back via finishedDownloadQueue
 		FinishedDownloadQueue: finishedDownloadQueue,
 		SendExistingImages:    sendExistingImages,
 		KeepDownloadedImages:  keepDownloadedImages,

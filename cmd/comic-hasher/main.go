@@ -804,17 +804,13 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 			file = io.NopCloser(path.Image)
 		}
 		i, format, err := image.Decode(bufio.NewReader(file))
-		if err != nil {
-			file.Close()
-			log.Println("Reading image failed", path.Dest, err)
-			if path.Image != nil {
-				bufPool.Put(path.Image)
-			}
-			continue // skip this image
-		}
 		file.Close()
-		if path.Image != nil {
+		if path.Image != nil && path.Image.Cap() < 10*1024*1024 {
 			bufPool.Put(path.Image)
+		}
+		if err != nil {
+			log.Println("Reading image failed", path.Dest, err)
+			continue // skip this image
 		}
 		chdb.AddPath(path.Dest) // Add to sqlite db and remove file if opts.deleteHashedImages is true
 
