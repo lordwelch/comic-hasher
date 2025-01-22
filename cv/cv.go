@@ -574,10 +574,7 @@ func NewCVDownloader(ctx context.Context, bufPool *sync.Pool, chdb ch.CHDB, work
 		JSONPath:              filepath.Join(workPath, "_json"),
 		ImagePath:             filepath.Join(workPath, "_image"),
 		APIKey:                APIKey,
-		downloadQueue:         make(chan *CVResult, 100), // This is just json it shouldn't take up much more than 122 MB
-		imageDownloads:        make(chan download, 1),    // These are just URLs should only take a few MB
-		notFound:              make(chan download, 1),    // Same here
-		bufPool:               bufPool,                   // Only used if keepDownloadedImages is false to save space on byte buffers. The buffers get sent back via finishedDownloadQueue
+		bufPool:               bufPool, // Only used if keepDownloadedImages is false to save space on byte buffers. The buffers get sent back via finishedDownloadQueue
 		FinishedDownloadQueue: finishedDownloadQueue,
 		SendExistingImages:    sendExistingImages,
 		KeepDownloadedImages:  keepDownloadedImages,
@@ -590,6 +587,9 @@ func DownloadCovers(c *CVDownloader) {
 	var (
 		err error
 	)
+	c.downloadQueue = make(chan *CVResult, 100) // This is just json it shouldn't take up much more than 122 MB
+	c.imageDownloads = make(chan download, 1)   // These are just URLs should only take a few MB
+	c.notFound = make(chan download, 1)         // Same here
 	os.MkdirAll(c.JSONPath, 0o777)
 	f, _ := os.Create(filepath.Join(c.ImagePath, ".keep"))
 	f.Close()
