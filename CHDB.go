@@ -48,19 +48,26 @@ CREATE TABLE IF NOT EXISTS bad_urls(
 func (s CHDB) PathHashed(path string) bool {
 	path, _ = filepath.Rel(s.comicvinePath, path)
 	dbPath := ""
-	_ = s.sql.QueryRow("SELECT path FROM paths where path=?", path).Scan(&dbPath)
 
-	if dbPath == path && s.deleteExisting {
-		os.Remove(filepath.Join(s.comicvinePath, path))
+	if s.deleteExisting {
+		_ = s.sql.QueryRow("SELECT path FROM paths where path=?", path).Scan(&dbPath)
+
+		if dbPath == path {
+			os.Remove(filepath.Join(s.comicvinePath, path))
+		}
+		return dbPath == path
 	}
-	return dbPath == path
+	count := 0
+	_ = s.sql.QueryRow("SELECT count(path) FROM paths where path=?", path).Scan(&count)
+	return count > 0
 }
 
 func (s CHDB) PathDownloaded(path string) bool {
 	relPath, _ := filepath.Rel(s.comicvinePath, path)
-	dbPath := ""
-	_ = s.sql.QueryRow("SELECT path FROM paths where path=?", relPath).Scan(&dbPath)
-	if dbPath != relPath {
+
+	count := 0
+	_ = s.sql.QueryRow("SELECT count(path) FROM paths where path=?", relPath).Scan(&count)
+	if count != 1 {
 		f, err := os.Open(path)
 		if err == nil {
 			defer f.Close()
@@ -84,9 +91,9 @@ func (s CHDB) AddPath(path string) {
 }
 
 func (s CHDB) CheckURL(url string) bool {
-	dbURL := ""
-	_ = s.sql.QueryRow("SELECT url FROM bad_urls where url=?", url).Scan(&dbURL)
-	return dbURL == url
+	count := 0
+	_ = s.sql.QueryRow("SELECT count(url) FROM bad_urls where url=?", url).Scan(&count)
+	return count > 0
 }
 
 func (s CHDB) AddURL(url string) {

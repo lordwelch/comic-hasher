@@ -129,7 +129,7 @@ func (c *CVDownloader) loadIssues(filename string) (*CVResult, error) {
 }
 
 func Get(ctx context.Context, url string) (*http.Response, error, func()) {
-	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
+	ctx, cancel := context.WithTimeout(ctx, time.Second*20)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err, cancel
@@ -180,7 +180,7 @@ func (c *CVDownloader) updateIssues() {
 		offset -= 100
 		return failCount < 15
 	}
-	for offset = 0; offset < c.totalResults; offset += 100 {
+	for offset = 0; offset <= c.totalResults; offset += 100 {
 		index := offset / 100
 		if c.hasQuit() {
 			return
@@ -192,11 +192,21 @@ func (c *CVDownloader) updateIssues() {
 					prev = -1
 					failCount = 0
 					// When canceled one of these will randomly be chosen, c.downloadQueue won't be closed until after this function returns
-					select {
-					case <-c.Context.Done():
-					case c.downloadQueue <- issue:
+					if c.totalResults == issue.Offset+issue.NumberOfPageResults {
+						if index != len(c.fileList)-1 {
+							log.Printf("Wrong index: expected %d got %d", len(c.fileList), index)
+							return
+						}
+						log.Println("Deleting the last page to detect new comics")
+						os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
+						c.fileList = slices.Delete(c.fileList, index, index+1)
+					} else {
+						select {
+						case <-c.Context.Done():
+						case c.downloadQueue <- issue:
+						}
+						continue
 					}
-					continue
 				} else {
 					log.Println("Failed to read page at offset", offset, issue, err)
 					os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
@@ -218,7 +228,17 @@ func (c *CVDownloader) updateIssues() {
 				case <-c.Context.Done():
 				case c.downloadQueue <- issue:
 				}
-				continue
+				if c.totalResults == issue.Offset+issue.NumberOfPageResults {
+					if index != len(c.fileList)-1 {
+						log.Printf("Wrong index: expected %d got %d", len(c.fileList), index)
+						return
+					}
+					log.Println("Deleting the last page to detect new comics")
+					os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
+					c.fileList = slices.Delete(c.fileList, index, index+1)
+				} else {
+					continue
+				}
 			} else {
 				log.Println("Failed to read page at offset", offset, issue, err)
 				os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
@@ -244,6 +264,7 @@ func (c *CVDownloader) updateIssues() {
 			if retry(URI.String(), err) {
 				continue
 			}
+			// Fail and let comic-hasher try the whole thing again later
 			return
 		}
 		if resp.StatusCode != 200 {
@@ -288,6 +309,7 @@ func (c *CVDownloader) updateIssues() {
 			return
 		case c.downloadQueue <- issue:
 		}
+		c.fileList = ch.Insert(c.fileList, fmt.Sprintf("cv-%v.json", offset))
 		log.Printf("Downloaded %s/cv-%v.json", c.JSONPath, offset)
 	}
 }
@@ -611,7 +633,6 @@ func DownloadCovers(c *CVDownloader) {
 	if len(c.fileList) > 0 {
 		c.totalResults = getOffset(c.fileList[len(c.fileList)-1])
 	}
-	c.totalResults += 100
 	log.Println("Number of pages", len(c.fileList), "Expected Pages:", c.totalResults/100)
 	log.Println("Updating issues now")
 

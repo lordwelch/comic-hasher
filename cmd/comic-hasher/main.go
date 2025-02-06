@@ -497,6 +497,8 @@ func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid Auth", http.StatusForbidden)
 		return
 	}
+	w.WriteHeader(http.StatusNotImplemented)
+	return
 	var (
 		values = r.URL.Query()
 		domain = strings.TrimSpace(values.Get("domain"))
@@ -700,6 +702,7 @@ func initializeStorage(opts Opts) (ch.HashStorage, error) {
 
 func loadHashes(opts Opts, decodeHashes func(format Format, hashes []byte) error) {
 	if opts.loadEmbeddedHashes && len(ch.Hashes) != 0 {
+		fmt.Println("Loading embedded hashes")
 		var err error
 		hashes := ch.Hashes
 		if gr, err := gzip.NewReader(bytes.NewReader(ch.Hashes)); err == nil {
@@ -720,6 +723,7 @@ func loadHashes(opts Opts, decodeHashes func(format Format, hashes []byte) error
 		}
 		fmt.Printf("Loaded embedded %s hashes\n", format)
 	} else {
+		fmt.Println("Loading saved hashes")
 		if f, err := os.Open(opts.hashesPath); err == nil {
 			var buf io.Reader = f
 			if gr, err := gzip.NewReader(buf); err == nil {
@@ -758,15 +762,26 @@ func saveHashes(opts Opts, encodeHashes func(format Format) ([]byte, error)) {
 		encodedHashes, err := encodeHashes(opts.format)
 		if err == nil {
 			if f, err := os.Create(opts.hashesPath); err == nil {
+				failed := false
 				gzw := gzip.NewWriter(f)
 				_, err := gzw.Write(encodedHashes)
 				if err != nil {
 					log.Println("Failed to write hashes", err)
-				} else {
+					failed = true
+				}
+				err = gzw.Close()
+				if err != nil {
+					log.Println("Failed to write hashes", err)
+					failed = true
+				}
+				err = f.Close()
+				if err != nil {
+					log.Println("Failed to write hashes", err)
+					failed = true
+				}
+				if !failed {
 					log.Println("Successfully saved hashes")
 				}
-				gzw.Close()
-				f.Close()
 			} else {
 				log.Println("Unabled to save hashes", err)
 			}
@@ -809,7 +824,12 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 			bufPool.Put(path.Image)
 		}
 		if err != nil {
-			log.Println("Reading image failed", path.Dest, err)
+			if len(path.URL) > 0 {
+				log.Println("Reading image failed, adding to known bad urls:", path.URL, err)
+				chdb.AddURL(path.URL)
+			} else {
+				log.Println("Reading image failed", path.Dest, err)
+			}
 			continue // skip this image
 		}
 		chdb.AddPath(path.Dest) // Add to sqlite db and remove file if opts.deleteHashedImages is true
