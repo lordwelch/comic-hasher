@@ -29,9 +29,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/disintegration/imaging"
 	"github.com/kr/pretty"
-
-	"github.com/vmihailenco/msgpack/v5"
 
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/vp8"
@@ -57,23 +56,6 @@ type Server struct {
 	onlyHashNewIDs bool
 }
 
-type Format int
-
-const (
-	Msgpack = iota + 1
-	JSON
-)
-
-var formatNames = map[Format]string{
-	JSON:    "json",
-	Msgpack: "msgpack",
-}
-
-var formatValues = map[string]Format{
-	"json":    JSON,
-	"msgpack": Msgpack,
-}
-
 var bufPool = &sync.Pool{
 	New: func() any {
 		// The Pool's New function should generally only return pointer
@@ -81,22 +63,6 @@ var bufPool = &sync.Pool{
 		// value without an allocation:
 		return new(bytes.Buffer)
 	},
-}
-
-func (f Format) String() string {
-	if name, known := formatNames[f]; known {
-		return name
-	}
-	return "Unknown"
-}
-
-func (f *Format) Set(s string) error {
-	if format, known := formatValues[strings.ToLower(s)]; known {
-		*f = format
-	} else {
-		return fmt.Errorf("Unknown format: %d", f)
-	}
-	return nil
 }
 
 type Storage int
@@ -141,8 +107,6 @@ func (f *Storage) Set(s string) error {
 	return nil
 }
 
-type Encoder func(any) ([]byte, error)
-type Decoder func([]byte, interface{}) error
 type CVOpts struct {
 	downloadCovers bool
 	APIKey         string
@@ -158,7 +122,7 @@ type Opts struct {
 	sqlitePath         string
 	loadEmbeddedHashes bool
 	saveEmbeddedHashes bool
-	format             Format
+	format             ch.Format
 	hashesPath         string
 	storageType        Storage
 	onlyHashNewIDs     bool
@@ -169,7 +133,7 @@ type Opts struct {
 }
 
 func main() {
-	opts := Opts{format: Msgpack, storageType: BasicMap} // flag is weird
+	opts := Opts{format: ch.Msgpack, storageType: BasicMap} // flag is weird
 	wd, err := os.Getwd()
 	fmt.Println(err)
 	if err != nil {
@@ -208,13 +172,11 @@ func main() {
 			panic(err)
 		}
 	}
-	// opts.onlyHashNewIDs = opts.onlyHashNewIDs || opts.deleteHashedImages
 	if opts.cv.downloadCovers {
 		if opts.cv.APIKey == "" {
 			log.Fatal("No ComicVine API Key provided")
 		}
 	}
-	opts.cv.thumbOnly = opts.cv.thumbOnly || (opts.onlyHashNewIDs && (opts.deleteHashedImages || !opts.cv.keepDownloaded))
 	opts.path, _ = filepath.Abs(opts.path)
 	if opts.hashesPath == "" {
 		opts.hashesPath = filepath.Join(opts.path, "hashes.gz")
@@ -230,9 +192,7 @@ func main() {
 	opts.cv.path, _ = filepath.Abs(opts.cv.path)
 	pretty.Log(opts)
 
-	if !opts.cv.keepDownloaded && opts.onlyHashNewIDs {
-		panic("You need to fix your -cv-keep-downloaded and -only-hash-new-ids flags")
-	}
+	// TODO: Fix options
 
 	startServer(opts)
 }
@@ -553,9 +513,7 @@ func (s *Server) hasher(workerID int, done func(int)) {
 		}
 
 		select {
-		case <-s.Context.Done():
-			log.Println("Recieved quit")
-			return
+		// TODO: Check channel pipelines
 		case s.mappingQueue <- hash:
 		default:
 		}
@@ -589,57 +547,10 @@ func (s *Server) reader(workerID int, done func(i int)) {
 			NewOnly: s.onlyHashNewIDs,
 		}
 		select {
-		case <-s.Context.Done():
-			log.Println("Recieved quit")
-			return
 		case s.hashingQueue <- im:
 		default:
 		}
 	}
-}
-
-// EncodeHashes must have a lock to s.hashMutex
-func (s *Server) EncodeHashes(format Format) ([]byte, error) {
-	var encoder Encoder
-	switch format {
-	case Msgpack:
-		encoder = msgpack.Marshal
-	case JSON:
-		encoder = json.Marshal
-	default:
-		return nil, fmt.Errorf("Unknown format: %v", format)
-	}
-	hashes, err := s.hashes.EncodeHashes()
-	if err != nil {
-		return nil, err
-	}
-	return encoder(hashes)
-}
-
-// DecodeHashes must have a lock to s.hashMutex
-func (s *Server) DecodeHashes(format Format, hashes []byte) error {
-	var decoder Decoder
-	switch format {
-	case Msgpack:
-		decoder = msgpack.Unmarshal
-	case JSON:
-		decoder = json.Unmarshal
-
-	default:
-		return fmt.Errorf("Unknown format: %v", format)
-	}
-	loadedHashes := ch.SavedHashes{}
-	err := decoder(hashes, &loadedHashes)
-	if err != nil || len(loadedHashes.Hashes[0]) == 0 {
-		fmt.Println("Failed to load hashes, checking if they are old hashes", format, ":", err)
-		oldHashes := make(ch.OldSavedHashes)
-		if err = decoder(hashes, &oldHashes); err != nil {
-			return err
-		}
-		loadedHashes = ch.ConvertSavedHashes(oldHashes)
-	}
-
-	return s.hashes.DecodeHashes(loadedHashes)
 }
 
 func (s *Server) HashLocalImages(opts Opts) {
@@ -700,28 +611,17 @@ func initializeStorage(opts Opts) (ch.HashStorage, error) {
 	return nil, errors.New("Unknown storage type provided")
 }
 
-func loadHashes(opts Opts, decodeHashes func(format Format, hashes []byte) error) {
+func loadHashes(opts Opts) *ch.SavedHashes {
+	var hashes []byte
 	if opts.loadEmbeddedHashes && len(ch.Hashes) != 0 {
 		fmt.Println("Loading embedded hashes")
-		var err error
-		hashes := ch.Hashes
+		hashes = ch.Hashes
 		if gr, err := gzip.NewReader(bytes.NewReader(ch.Hashes)); err == nil {
 			hashes, err = io.ReadAll(gr)
 			if err != nil {
 				panic(fmt.Sprintf("Failed to read embedded hashes: %s", err))
 			}
 		}
-
-		var format Format
-		for _, format = range []Format{Msgpack, JSON} {
-			if err = decodeHashes(format, hashes); err == nil {
-				break
-			}
-		}
-		if err != nil {
-			panic(fmt.Sprintf("Failed to decode embedded hashes: %s", err))
-		}
-		fmt.Printf("Loaded embedded %s hashes\n", format)
 	} else {
 		fmt.Println("Loading saved hashes")
 		if f, err := os.Open(opts.hashesPath); err == nil {
@@ -731,64 +631,67 @@ func loadHashes(opts Opts, decodeHashes func(format Format, hashes []byte) error
 			} else {
 				_, _ = f.Seek(0, io.SeekStart)
 			}
-			hashes, err := io.ReadAll(buf)
+			hashes, err = io.ReadAll(buf)
 			f.Close()
 			if err != nil {
 				panic(fmt.Sprintf("Failed to load hashes from disk: %s", err))
 			}
-
-			var format Format
-			for _, format = range []Format{Msgpack, JSON} {
-				if err = decodeHashes(format, hashes); err == nil {
-					break
-				}
-			}
-
-			if err != nil {
-				panic(fmt.Sprintf("Failed to decode hashes from disk: %s", err))
-			}
-			fmt.Printf("Loaded %s hashes from %q\n", format, opts.hashesPath)
 		} else {
 			if errors.Is(err, os.ErrNotExist) {
 				log.Println("No saved hashes to load")
 			} else {
 				log.Println("Unable to load saved hashes", err)
 			}
+			return nil
 		}
 	}
+
+	var (
+		format       ch.Format
+		loadedHashes *ch.SavedHashes
+		err          error
+	)
+	for _, format = range []ch.Format{ch.Msgpack, ch.JSON} {
+		if loadedHashes, err = ch.DecodeHashes(format, hashes); errors.Is(err, ch.DecodeError) {
+			continue
+		}
+		break
+	}
+	if err != nil {
+		panic(fmt.Sprintf("Failed to decode hashes: %s", err))
+	}
+	fmt.Printf("Loaded %s hashes\n", format)
+	return loadedHashes
 }
-func saveHashes(opts Opts, encodeHashes func(format Format) ([]byte, error)) {
-	if !opts.loadEmbeddedHashes || opts.saveEmbeddedHashes {
-		encodedHashes, err := encodeHashes(opts.format)
-		if err == nil {
-			if f, err := os.Create(opts.hashesPath); err == nil {
-				failed := false
-				gzw := gzip.NewWriter(f)
-				_, err := gzw.Write(encodedHashes)
-				if err != nil {
-					log.Println("Failed to write hashes", err)
-					failed = true
-				}
-				err = gzw.Close()
-				if err != nil {
-					log.Println("Failed to write hashes", err)
-					failed = true
-				}
-				err = f.Close()
-				if err != nil {
-					log.Println("Failed to write hashes", err)
-					failed = true
-				}
-				if !failed {
-					log.Println("Successfully saved hashes")
-				}
-			} else {
-				log.Println("Unabled to save hashes", err)
-			}
-		} else {
-			fmt.Printf("Unable to encode hashes as %v: %v", opts.format, err)
-		}
+func saveHashes(opts Opts, hashes ch.SavedHashes) error {
+	if opts.loadEmbeddedHashes && !opts.saveEmbeddedHashes {
+		return errors.New("refusing to save embedded hashes")
 	}
+
+	encodedHashes, err := ch.EncodeHashes(hashes, opts.format)
+	if err != nil {
+		return fmt.Errorf("unable to encode hashes as %v: %w", opts.format, err)
+	}
+	f, err := os.Create(opts.hashesPath)
+	if err != nil {
+		return fmt.Errorf("unabled to save hashes: %w", err)
+	}
+
+	gzw := gzip.NewWriter(f)
+
+	if _, err = gzw.Write(encodedHashes); err != nil {
+		return fmt.Errorf("failed to write hashes: %w", err)
+	}
+
+	if err = gzw.Close(); err != nil {
+		return fmt.Errorf("failed to write hashes: %w", err)
+	}
+
+	if err = f.Close(); err != nil {
+		return fmt.Errorf("failed to write hashes: %w", err)
+	}
+	log.Println("Successfully saved hashes")
+	return nil
 }
 
 func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, server Server) {
@@ -803,7 +706,6 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 		}
 
 		if chdb.PathHashed(path.Dest) {
-			// log.Println(path.Dest, "File has already been hashed, it may not be saved in the hashes file because we currently don't save any hashes if we've crashed")
 			continue
 		}
 		var (
@@ -832,7 +734,7 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 			}
 			continue // skip this image
 		}
-		chdb.AddPath(path.Dest) // Add to sqlite db and remove file if opts.deleteHashedImages is true
+		chdb.AddPath(path.Dest) // Add to db and remove file if opts.deleteHashedImages is true
 
 		im := ch.Im{
 			Im:      i,
@@ -845,6 +747,7 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 }
 
 func startServer(opts Opts) {
+	imaging.SetMaxProcs(2)
 	if opts.cpuprofile != "" {
 		f, err := os.Create(opts.cpuprofile)
 		if err != nil {
@@ -904,31 +807,37 @@ func startServer(opts Opts) {
 	mwg.Add(1)
 	go server.mapper(func() { log.Println("Mapper 0 completed"); mwg.Done() })
 
-	// server.DecodeHashes would normally need a write lock
+	// DecodeHashes would normally need a write lock
 	// nothing else has been started yet so we don't need one
-	loadHashes(opts, server.DecodeHashes)
+	if err := server.hashes.DecodeHashes(*loadHashes(opts)); err != nil {
+		panic(err)
+	}
 
 	server.HashLocalImages(opts)
-	chdb, err := ch.OpenCHDB(filepath.Join(opts.path, "ch.sqlite"), opts.cv.path, opts.deleteHashedImages)
+	chdb, err := ch.OpenCHDBBolt(filepath.Join(opts.path, "chdb.bolt"), opts.cv.path, opts.deleteHashedImages)
 	if err != nil {
 		panic(err)
 	}
 
 	log.Println("Init downloaders")
 	dwg := sync.WaitGroup{}
+	dcwg := sync.WaitGroup{}
 	finishedDownloadQueue := make(chan cv.Download, 1)
-	go downloadProcessor(chdb, opts, finishedDownloadQueue, server)
+	dcwg.Add(1)
+	go func() {
+		defer dcwg.Done()
+		downloadProcessor(chdb, opts, finishedDownloadQueue, server)
+	}()
 
 	if opts.cv.downloadCovers {
 		dwg.Add(1)
 		imageTypes := []string{}
 		if opts.cv.thumbOnly {
 			imageTypes = append(imageTypes, "thumb_url")
-		}
-		if opts.cv.originalOnly {
+		} else if opts.cv.originalOnly {
 			imageTypes = append(imageTypes, "original_url")
 		}
-		cvdownloader := cv.NewCVDownloader(server.Context, bufPool, chdb, opts.cv.path, opts.cv.APIKey, imageTypes, opts.cv.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
+		cvdownloader := cv.NewCVDownloader(server.Context, bufPool, opts.onlyHashNewIDs, server.hashes.GetIDs, chdb, opts.cv.path, opts.cv.APIKey, imageTypes, opts.cv.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
 		go func() {
 			defer dwg.Done()
 			cv.DownloadCovers(cvdownloader)
@@ -954,7 +863,8 @@ func startServer(opts Opts) {
 	close(server.readerQueue)
 	log.Println("waiting on readers")
 	rwg.Wait()
-	for range server.readerQueue {
+	for dw := range server.readerQueue {
+		fmt.Println("Skipping read", dw)
 	}
 
 	log.Println("waiting on downloaders")
@@ -962,28 +872,39 @@ func startServer(opts Opts) {
 
 	log.Println("waiting on downloader")
 	close(finishedDownloadQueue)
-	for range finishedDownloadQueue {
+	dcwg.Wait() // Wait for the download processor to finish
+	for dw := range finishedDownloadQueue {
+		fmt.Println("Skipping download", dw.IssueID)
 	}
 
 	// close(server.hashingQueue) // Closed by downloadProcessor
 	log.Println("waiting on hashers")
 	hwg.Wait()
-	for range server.hashingQueue {
+	for dw := range server.hashingQueue {
+		fmt.Println("Skipping hashing", dw.ID)
 	}
 
 	close(server.mappingQueue)
 	log.Println("waiting on mapper")
 	mwg.Wait()
-	for range server.mappingQueue {
+	for dw := range server.mappingQueue {
+		fmt.Println("Skipping mapping", dw.ID)
 	}
 
 	close(server.signalQueue)
-	for range server.signalQueue {
+	for dw := range server.signalQueue {
+		fmt.Println("Skipping", dw)
 	}
 
 	_ = chdb.Close()
 
 	// server.EncodeHashes would normally need a read lock
 	// the server has been stopped so it's not needed here
-	saveHashes(opts, server.EncodeHashes)
+	hashes, err := server.hashes.EncodeHashes()
+	if err != nil {
+		panic(fmt.Errorf("Failed to save hashes: %w", err))
+	}
+	if err = saveHashes(opts, hashes); err != nil {
+		panic(err)
+	}
 }

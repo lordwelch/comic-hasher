@@ -1,150 +1,156 @@
 package ch
 
 import (
-	"cmp"
 	"fmt"
 	"slices"
 	"sync"
+
+	"gitea.narnian.us/lordwelch/goimagehash"
 )
 
 type MapStorage struct {
 	basicMapStorage
-	partialHash [3][8]map[uint8][]uint64
+	partialAHash [8]map[uint8][]uint64
+	partialDHash [8]map[uint8][]uint64
+	partialPHash [8]map[uint8][]uint64
 }
 
 func (m *MapStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error) {
-	var foundMatches []Result
+	var (
+		foundMatches []Result
+		tl           timeLog
+	)
 	m.hashMutex.RLock()
 	defer m.hashMutex.RUnlock()
-	resetTime()
-	defer logTime("Search Complete")
 
-	if exactOnly { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
-		for _, hash := range hashes {
-			hashType := int(hash.Kind) - 1
-			index, hashFound := m.findHash(hashType, hash.Hash)
-			if hashFound {
-				foundMatches = append(foundMatches, Result{
-					Distance: 0,
-					Hash:     hash,
-					IDs:      ToIDList(*m.hashes[hashType][index].ids),
-				})
-			}
-		}
-
-		// If we have exact matches don't bother with other matches
-		logTime("Search Exact")
-		if len(foundMatches) > 0 && exactOnly {
-			return foundMatches, nil
-		}
+	if exactOnly {
+		return m.basicMapStorage.GetMatches(hashes, max, exactOnly)
 	}
+	tl.resetTime()
+	defer tl.logTime("Search Complete")
 
 	totalPartialHashes := 0
+
 	for _, searchHash := range hashes {
-		foundHashes := make(map[uint64]struct{})
-		hashType := int(searchHash.Kind) - 1
+		currentHashes, currentPartialHashes := m.getCurrentHashes(searchHash.Kind)
+		potentialMatches := []uint64{}
+
 		for i, partialHash := range SplitHash(searchHash.Hash) {
-			partialHashes := m.partialHash[hashType][i][partialHash]
-			totalPartialHashes += len(partialHashes)
-			for _, match := range Atleast(max, searchHash.Hash, partialHashes) {
-				_, alreadyMatched := foundHashes[match.Hash]
-				if index, hashFound := m.findHash(hashType, match.Hash); hashFound && !alreadyMatched {
-					foundHashes[match.Hash] = struct{}{}
-					foundMatches = append(foundMatches, Result{IDs: ToIDList(*m.hashes[hashType][index].ids), Distance: match.Distance, Hash: Hash{Hash: match.Hash, Kind: searchHash.Kind}})
+			potentialMatches = append(potentialMatches, currentPartialHashes[i][partialHash]...)
+		}
+
+		totalPartialHashes += len(potentialMatches)
+		mappedIds := map[*[]ID]bool{}
+
+		for _, match := range Atleast(max, searchHash.Hash, potentialMatches) {
+			matchedHash := Hash{match.Hash, searchHash.Kind}
+			index, count := m.findHash(matchedHash)
+			if count < 1 {
+				continue
+			}
+			for _, storedHash := range currentHashes[index : index+count] {
+				ids := m.ids[storedHash.ID]
+				if mappedIds[ids] {
+					continue
 				}
+				mappedIds[ids] = true
+
+				foundMatches = append(foundMatches, Result{
+					Distance: 0,
+					Hash:     storedHash.Hash,
+					IDs:      ToIDList(*m.ids[storedHash.ID]),
+				})
+
 			}
 		}
 	}
 	fmt.Println("Total partial hashes tested:", totalPartialHashes)
-	go m.printSizes()
 	return foundMatches, nil
+}
+
+// getCurrentHashes must have a read lock before using
+func (m *MapStorage) getCurrentHashes(kind goimagehash.Kind) ([]SavedHash, [8]map[uint8][]uint64) {
+	if kind == goimagehash.AHash {
+		return m.aHashes, m.partialAHash
+	}
+	if kind == goimagehash.DHash {
+		return m.dHashes, m.partialDHash
+	}
+	if kind == goimagehash.PHash {
+		return m.pHashes, m.partialPHash
+	}
+	panic("Unknown hash type: " + kind.String())
 }
 
 func (m *MapStorage) MapHashes(hash ImageHash) {
 	m.basicMapStorage.MapHashes(hash)
 	for _, hash := range hash.Hashes {
-		hashType := int(hash.Kind) - 1
+		_, partialHashes := m.getCurrentHashes(hash.Kind)
 		for i, partialHash := range SplitHash(hash.Hash) {
-			m.partialHash[hashType][i][partialHash] = Insert(m.partialHash[hashType][i][partialHash], hash.Hash)
+			partialHashes[i][partialHash] = Insert(partialHashes[i][partialHash], hash.Hash)
 		}
 	}
 }
 
 func (m *MapStorage) DecodeHashes(hashes SavedHashes) error {
-	for hashType, sourceHashes := range hashes.Hashes {
-		m.hashes[hashType] = make([]structHash, len(sourceHashes))
-		for savedHash, idlistLocation := range sourceHashes {
-			m.hashes[hashType] = append(m.hashes[hashType], structHash{savedHash, &hashes.IDs[idlistLocation]})
-		}
+	if err := m.basicMapStorage.DecodeHashes(hashes); err != nil {
+		return err
 	}
-	for hashType := range m.hashes {
-		slices.SortFunc(m.hashes[hashType], func(a, b structHash) int {
-			return cmp.Compare(a.hash, b.hash)
-		})
-	}
-	m.printSizes()
-	for _, partialHashes := range m.partialHash {
-		for _, partMap := range partialHashes {
-			for part, hashes := range partMap {
-				slices.Sort(hashes)
-				partMap[part] = slices.Compact(hashes)
-			}
-		}
-	}
-	m.printSizes()
+
+	mapPartialHashes(m.aHashes, m.partialAHash)
+	mapPartialHashes(m.dHashes, m.partialDHash)
+	mapPartialHashes(m.pHashes, m.partialPHash)
+
+	compactPartialHashes(m.partialAHash)
+	compactPartialHashes(m.partialDHash)
+	compactPartialHashes(m.partialPHash)
+
 	return nil
 }
 
-func (m *MapStorage) printSizes() {
-	fmt.Println("Length of hashes:", len(m.hashes[0])+len(m.hashes[1])+len(m.hashes[2]))
-	// fmt.Println("Size of", "hashes:", size.Of(m.hashes)/1024/1024, "MB")
-	// fmt.Println("Size of", "ids:", size.Of(m.ids)/1024/1024, "MB")
-	// fmt.Println("Size of", "MapStorage:", size.Of(m)/1024/1024, "MB")
-
-}
-
 func NewMapStorage() (HashStorage, error) {
+
 	storage := &MapStorage{
 		basicMapStorage: basicMapStorage{
 			hashMutex: &sync.RWMutex{},
-			hashes: [3][]structHash{
-				[]structHash{},
-				[]structHash{},
-				[]structHash{},
-			},
+			ids:       make(map[ID]*[]ID),
+			aHashes:   []SavedHash{},
+			dHashes:   []SavedHash{},
+			pHashes:   []SavedHash{},
 		},
-		partialHash: [3][8]map[uint8][]uint64{
-			{
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-			},
-			{
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-			},
-			{
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-				make(map[uint8][]uint64),
-			},
-		},
+		partialAHash: newPartialHash(),
+		partialDHash: newPartialHash(),
+		partialPHash: newPartialHash(),
 	}
 	return storage, nil
+}
+
+func newPartialHash() [8]map[uint8][]uint64 {
+	return [8]map[uint8][]uint64{
+		map[uint8][]uint64{},
+		map[uint8][]uint64{},
+		map[uint8][]uint64{},
+		map[uint8][]uint64{},
+		map[uint8][]uint64{},
+		map[uint8][]uint64{},
+		map[uint8][]uint64{},
+		map[uint8][]uint64{},
+	}
+}
+
+func mapPartialHashes(hashes []SavedHash, partialHashMap [8]map[uint8][]uint64) {
+	for _, savedHash := range hashes {
+		for i, partialHash := range SplitHash(savedHash.Hash.Hash) {
+			partialHashMap[i][partialHash] = append(partialHashMap[i][partialHash], savedHash.Hash.Hash)
+		}
+	}
+}
+
+func compactPartialHashes(partialHashMap [8]map[uint8][]uint64) {
+	for _, partMap := range partialHashMap {
+		for part, hashes := range partMap {
+			slices.Sort(hashes)
+			partMap[part] = slices.Compact(hashes)
+		}
+	}
 }

@@ -10,12 +10,17 @@ import (
 )
 
 type VPTree struct {
-	trees  [3]*vptree.Tree
-	hashes [3][]vptree.Comparable
+	aTree *vptree.Tree
+	dTree *vptree.Tree
+	pTree *vptree.Tree
+	ids   map[ID]*[]ID
+
+	aHashes []vptree.Comparable // temporary, only used for vptree creation
+	dHashes []vptree.Comparable // temporary, only used for vptree creation
+	pHashes []vptree.Comparable // temporary, only used for vptree creation
 }
 type VPHash struct {
-	Hash Hash
-	IDs  []ID
+	SavedHash
 }
 
 func (h *VPHash) Distance(c vptree.Comparable) float64 {
@@ -27,35 +32,61 @@ func (h *VPHash) Distance(c vptree.Comparable) float64 {
 }
 
 func (v *VPTree) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error) {
-	var matches []Result
-	var exactMatches []Result
-	fmt.Println(hashes)
+	var (
+		matches      []Result
+		exactMatches []Result
+		tl           timeLog
+	)
+	tl.resetTime()
+	defer tl.logTime("Search Complete")
+
 	for _, hash := range hashes {
 		results := vptree.NewDistKeeper(float64(max))
-		hashType := int(hash.Kind) - 1
-		v.trees[hashType].NearestSet(results, &VPHash{Hash: hash})
+
+		currentTree := v.getCurrentTree(hash.Kind)
+		currentTree.NearestSet(results, &VPHash{SavedHash{Hash: hash}})
+
+		mappedIds := map[*[]ID]bool{}
 		for _, result := range results.Heap {
-			vphash := result.Comparable.(*VPHash)
+			storedHash := result.Comparable.(*VPHash)
+			ids := v.ids[storedHash.ID]
+			if mappedIds[ids] {
+				continue
+			}
+			mappedIds[ids] = true
 			if result.Dist == 0 {
 				exactMatches = append(exactMatches, Result{
-					IDs:      ToIDList(vphash.IDs),
+					IDs:      ToIDList(*v.ids[storedHash.ID]),
 					Distance: int(result.Dist),
-					Hash:     vphash.Hash,
+					Hash:     storedHash.Hash,
 				})
 			} else {
 				matches = append(matches, Result{
-					IDs:      ToIDList(vphash.IDs),
+					IDs:      ToIDList(*v.ids[storedHash.ID]),
 					Distance: int(result.Dist),
-					Hash:     vphash.Hash,
+					Hash:     storedHash.Hash,
 				})
 			}
 		}
 	}
-	if len(exactMatches) > 0 && exactOnly {
+	if exactOnly {
 		return exactMatches, nil
 	}
-	matches = append(exactMatches[:len(exactMatches):len(exactMatches)], matches...)
+	exactMatches = append(exactMatches, matches...)
 	return matches, nil
+}
+
+func (v *VPTree) getCurrentTree(kind goimagehash.Kind) *vptree.Tree {
+	if kind == goimagehash.AHash {
+		return v.aTree
+	}
+	if kind == goimagehash.DHash {
+		return v.dTree
+	}
+	if kind == goimagehash.PHash {
+		return v.pTree
+	}
+	panic("Unknown hash type: " + kind.String())
 }
 
 func (v *VPTree) MapHashes(ImageHash) {
@@ -63,21 +94,46 @@ func (v *VPTree) MapHashes(ImageHash) {
 }
 
 func (v *VPTree) DecodeHashes(hashes SavedHashes) error {
-	var err error
-	for hashType, sourceHashes := range hashes.Hashes {
-		for hash, idsLocation := range sourceHashes {
-			var (
-				hashKind = goimagehash.Kind(hashType + 1)
-			)
-			hash := &VPHash{Hash{hash, hashKind}, hashes.IDs[idsLocation]}
-			v.hashes[hashType] = append(v.hashes[hashType], hash)
+
+	// Initialize all the known equal IDs
+	for _, ids := range hashes.IDs {
+		for _, id := range ids {
+			v.ids[id] = &ids
 		}
 	}
-	for hashType := range 3 {
-		v.trees[hashType], err = vptree.New(v.hashes[hashType], 3, nil)
-		if err != nil {
-			return err
+	var err error
+	for _, savedHash := range hashes.Hashes {
+		if savedHash.Hash.Kind == goimagehash.AHash {
+			v.aHashes = append(v.aHashes, &VPHash{savedHash})
 		}
+		if savedHash.Hash.Kind == goimagehash.DHash {
+			v.dHashes = append(v.dHashes, &VPHash{savedHash})
+		}
+		if savedHash.Hash.Kind == goimagehash.PHash {
+			v.pHashes = append(v.pHashes, &VPHash{savedHash})
+		}
+
+		if savedHash.ID == (ID{}) {
+			fmt.Println("Empty ID detected")
+			panic(savedHash)
+		}
+		// All known equal IDs are already mapped we can add any missing ones from hashes
+		if _, ok := v.ids[savedHash.ID]; !ok {
+			v.ids[savedHash.ID] = &[]ID{savedHash.ID}
+		}
+	}
+
+	v.aTree, err = vptree.New(v.aHashes, 3, nil)
+	if err != nil {
+		return err
+	}
+	v.dTree, err = vptree.New(v.dHashes, 3, nil)
+	if err != nil {
+		return err
+	}
+	v.pTree, err = vptree.New(v.pHashes, 3, nil)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -90,16 +146,31 @@ func (v *VPTree) AssociateIDs(newIDs []NewIDs) error {
 }
 
 func (v *VPTree) GetIDs(id ID) IDList {
-	return nil
+	ids, found := v.ids[id]
+	if !found {
+		return nil
+	}
+	return ToIDList(*ids)
 }
 
 func NewVPStorage() (HashStorage, error) {
-
-	return &VPTree{
-		hashes: [3][]vptree.Comparable{
-			make([]vptree.Comparable, 0, 1_000_000),
-			make([]vptree.Comparable, 0, 1_000_000),
-			make([]vptree.Comparable, 0, 1_000_000),
-		},
-	}, nil
+	var err error
+	v := &VPTree{
+		aHashes: []vptree.Comparable{},
+		dHashes: []vptree.Comparable{},
+		pHashes: []vptree.Comparable{},
+	}
+	v.aTree, err = vptree.New(v.aHashes, 3, nil)
+	if err != nil {
+		return v, err
+	}
+	v.dTree, err = vptree.New(v.dHashes, 3, nil)
+	if err != nil {
+		return v, err
+	}
+	v.pTree, err = vptree.New(v.pHashes, 3, nil)
+	if err != nil {
+		return v, err
+	}
+	return v, nil
 }

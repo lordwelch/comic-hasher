@@ -14,155 +14,215 @@ import (
 type basicMapStorage struct {
 	hashMutex *sync.RWMutex
 
-	ids    map[ID]*[]ID
-	hashes [3][]structHash
+	ids     map[ID]*[]ID
+	aHashes []SavedHash
+	dHashes []SavedHash
+	pHashes []SavedHash
 }
 
-type structHash struct {
-	hash uint64
-	ids  *[]ID
-}
+// atleast must have a read lock before using
+func (b *basicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, searchHash uint64) []Result {
+	matchingHashes := make([]Result, 0, 20) // hope that we don't need more
 
-func (b *basicMapStorage) Atleast(hashKind goimagehash.Kind, maxDistance int, searchHash uint64) []Result {
-	hashType := int(hashKind) - 1
-	matchingHashes := make([]Result, 0, 100) // hope that we don't need all of them
-	b.hashMutex.RLock()
-	defer b.hashMutex.RUnlock()
-	for _, storedHash := range b.hashes[hashType] {
-		distance := bits.OnesCount64(searchHash ^ storedHash.hash)
+	mappedIds := map[*[]ID]bool{}
+	for _, storedHash := range *b.getCurrentHashes(kind) {
+		distance := bits.OnesCount64(searchHash ^ storedHash.Hash.Hash)
 		if distance <= maxDistance {
-			matchingHashes = append(matchingHashes, Result{ToIDList(*storedHash.ids), distance, Hash{storedHash.hash, hashKind}})
+			ids := b.ids[storedHash.ID]
+			if mappedIds[ids] {
+				continue
+			}
+			mappedIds[ids] = true
+			matchingHashes = append(matchingHashes, Result{ToIDList(*b.ids[storedHash.ID]), distance, storedHash.Hash})
 		}
 	}
 	return matchingHashes
 }
+
 func (b *basicMapStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error) {
-	var foundMatches []Result
-	resetTime()
-	defer logTime(fmt.Sprintf("Search Complete: max: %v ExactOnly: %v", max, exactOnly))
+	var (
+		foundMatches []Result
+		tl           timeLog
+	)
+	tl.resetTime()
+	defer tl.logTime(fmt.Sprintf("Search Complete: max: %v ExactOnly: %v", max, exactOnly))
+	b.hashMutex.RLock()
+	defer b.hashMutex.RUnlock()
 
 	if exactOnly { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
 		for _, hash := range hashes {
-			hashType := int(hash.Kind) - 1
-			b.hashMutex.RLock()
-			index, hashFound := b.findHash(hashType, hash.Hash)
-			if hashFound {
-				foundMatches = append(foundMatches, Result{
-					Distance: 0,
-					Hash:     hash,
-					IDs:      ToIDList(*b.hashes[hashType][index].ids),
-				})
+			mappedIds := map[*[]ID]bool{}
+
+			index, count := b.findHash(hash)
+			if count > 0 {
+				for _, storedHash := range (*b.getCurrentHashes(hash.Kind))[index : index+count] {
+					ids := b.ids[storedHash.ID]
+					if mappedIds[ids] {
+						continue
+					}
+					mappedIds[ids] = true
+
+					foundMatches = append(foundMatches, Result{
+						Distance: 0,
+						Hash:     storedHash.Hash,
+						IDs:      ToIDList(*b.ids[storedHash.ID]),
+					})
+				}
 			}
-			b.hashMutex.RUnlock()
+
 		}
 
-		logTime("Search Exact")
-		// If we have exact matches don't bother with other matches
-		if len(foundMatches) > 0 && exactOnly {
-			return foundMatches, nil
-		}
+		tl.logTime("Search Exact")
+
+		return foundMatches, nil
 	}
 
 	foundHashes := make(map[uint64]struct{})
 	totalPartialHashes := 0
+
 	for _, hash := range hashes {
-		for _, match := range b.Atleast(hash.Kind, max, hash.Hash) {
-			_, alreadyMatched := foundHashes[match.Hash.Hash]
-			if alreadyMatched {
-				continue
-			}
-			foundHashes[match.Hash.Hash] = struct{}{}
-			foundMatches = append(foundMatches, match)
-		}
+		foundMatches = append(foundMatches, b.atleast(hash.Kind, max, hash.Hash)...)
 
 	}
 	fmt.Println("Total partial hashes tested:", totalPartialHashes, len(foundHashes))
 	return foundMatches, nil
 }
 
-// findHash must have a read lock before using
-func (b *basicMapStorage) findHash(hashType int, hash uint64) (int, bool) {
-	return slices.BinarySearchFunc(b.hashes[hashType], hash, func(e structHash, t uint64) int {
-		return cmp.Compare(e.hash, t)
-	})
+// getCurrentHashes must have a read lock before using
+func (b *basicMapStorage) getCurrentHashes(kind goimagehash.Kind) *[]SavedHash {
+	if kind == goimagehash.AHash {
+		return &b.aHashes
+	}
+	if kind == goimagehash.DHash {
+		return &b.dHashes
+	}
+	if kind == goimagehash.PHash {
+		return &b.pHashes
+	}
+	panic("Unknown hash type: " + kind.String())
 }
 
-// insertHash will take a write lock if the hash is not found
-func (b *basicMapStorage) insertHash(hashType int, hash uint64, ids *[]ID) {
-	b.hashMutex.RLock()
-	index, hashFound := b.findHash(hashType, hash)
-	b.hashMutex.RUnlock()
-	if hashFound {
-		return
+// findHash must have a read lock before using
+// return value is index, count
+// if count < 1 then no results were found
+func (b *basicMapStorage) findHash(hash Hash) (int, int) {
+	currentHashes := *b.getCurrentHashes(hash.Kind)
+	index, found := slices.BinarySearchFunc(currentHashes, hash, func(existing SavedHash, target Hash) int {
+		return cmp.Compare(existing.Hash.Hash, target.Hash)
+	})
+	if !found {
+		return index, 0
 	}
-	b.hashMutex.Lock()
-	b.hashes[hashType] = slices.Insert(b.hashes[hashType], index, structHash{hash, ids})
-	b.hashMutex.Unlock()
+	count := 0
+	for i := index + 1; i < len(currentHashes) && currentHashes[i].Hash.Hash == hash.Hash; i++ {
+		count++
+	}
+	return index, count
+}
+
+// insertHash must already have a lock
+func (b *basicMapStorage) insertHash(hash Hash, id ID) {
+	currentHashes := b.getCurrentHashes(hash.Kind)
+	index, count := b.findHash(hash)
+	max := index + count
+	for ; index < max; index++ {
+		if (*currentHashes)[index].ID == id {
+			return
+		}
+	}
+
+	*currentHashes = slices.Insert(*currentHashes, index, SavedHash{hash, id})
+	if _, mapped := b.ids[id]; !mapped {
+		b.ids[id] = &[]ID{id}
+	}
 }
 
 func (b *basicMapStorage) MapHashes(hash ImageHash) {
+	b.hashMutex.Lock()
+	defer b.hashMutex.Unlock()
 	for _, ih := range hash.Hashes {
-		var (
-			hashType = int(ih.Kind) - 1
-		)
-		b.hashMutex.RLock()
-		ids, ok := b.ids[hash.ID]
-		b.hashMutex.RUnlock()
-		if !ok {
-			b.hashMutex.Lock()
-			ids = &[]ID{hash.ID}
-			b.ids[hash.ID] = ids
-			b.hashMutex.Unlock()
-		}
-
-		b.insertHash(hashType, ih.Hash, ids)
+		b.insertHash(ih, hash.ID)
 	}
 }
 
-// DecodeHashes should already have a lock
+// DecodeHashes must already have a lock
 func (b *basicMapStorage) DecodeHashes(hashes SavedHashes) error {
-	for hashType, sourceHashes := range hashes.Hashes {
-		b.hashes[hashType] = make([]structHash, len(sourceHashes))
-		for savedHash, idlistLocation := range sourceHashes {
-			b.hashes[hashType] = append(b.hashes[hashType], structHash{savedHash, &hashes.IDs[idlistLocation]})
-			for _, id := range hashes.IDs[idlistLocation] {
-				b.ids[id] = &hashes.IDs[idlistLocation]
-			}
+	b.ids = make(map[ID]*[]ID, len(hashes.Hashes))
+
+	// Initialize all the known equal IDs
+	for _, ids := range hashes.IDs {
+		for _, id := range ids {
+			b.ids[id] = &ids
 		}
 	}
-	for hashType := range b.hashes {
-		slices.SortFunc(b.hashes[hashType], func(a, b structHash) int {
-			return cmp.Compare(a.hash, b.hash)
-		})
+
+	slices.SortFunc(hashes.Hashes, func(existing, target SavedHash) int {
+		return cmp.Or(
+			cmp.Compare(existing.Hash.Kind, target.Hash.Kind),
+			cmp.Compare(existing.Hash.Hash, target.Hash.Hash),
+			cmp.Compare(existing.ID.Domain, target.ID.Domain),
+			cmp.Compare(existing.ID.ID, target.ID.ID),
+		)
+	})
+
+	// Assume they are probably fairly equally split between hash types
+	b.aHashes = make([]SavedHash, 0, len(hashes.Hashes)/3)
+	b.dHashes = make([]SavedHash, 0, len(hashes.Hashes)/3)
+	b.pHashes = make([]SavedHash, 0, len(hashes.Hashes)/3)
+	for _, savedHash := range hashes.Hashes {
+
+		if savedHash.Hash.Kind == goimagehash.AHash {
+			b.aHashes = append(b.aHashes, savedHash)
+		}
+		if savedHash.Hash.Kind == goimagehash.DHash {
+			b.dHashes = append(b.dHashes, savedHash)
+		}
+		if savedHash.Hash.Kind == goimagehash.PHash {
+			b.pHashes = append(b.pHashes, savedHash)
+		}
+
+		if savedHash.ID == (ID{}) {
+			fmt.Println("Empty ID detected")
+			panic(savedHash)
+		}
+		// All known equal IDs are already mapped we can add any missing ones from hashes
+		if _, ok := b.ids[savedHash.ID]; !ok {
+			b.ids[savedHash.ID] = &[]ID{savedHash.ID}
+		}
 	}
+
+	hashCmp := func(existing, target SavedHash) int {
+		return cmp.Or(
+			cmp.Compare(existing.Hash.Hash, target.Hash.Hash),
+			cmp.Compare(existing.ID.Domain, target.ID.Domain),
+			cmp.Compare(existing.ID.ID, target.ID.ID),
+		)
+	}
+	slices.SortFunc(b.aHashes, hashCmp)
+	slices.SortFunc(b.dHashes, hashCmp)
+	slices.SortFunc(b.pHashes, hashCmp)
+
 	return nil
 }
 
 // EncodeHashes should already have a lock
 func (b *basicMapStorage) EncodeHashes() (SavedHashes, error) {
-	hashes := SavedHashes{
-		Hashes: [3]map[uint64]int{
-			make(map[uint64]int),
-			make(map[uint64]int),
-			make(map[uint64]int),
-		},
+	savedHashes := SavedHashes{
+		Hashes: make([]SavedHash, 0, len(b.aHashes)+len(b.dHashes)+len(b.pHashes)),
 	}
-	idmap := map[*[]ID]int{}
 
+	// Only keep groups >1 as they will be mapped in SavedHashes.Hashes
 	for _, ids := range b.ids {
-		if _, ok := idmap[ids]; ok {
-			continue
+		if len(*ids) > 1 {
+			savedHashes.IDs = append(savedHashes.IDs, *ids)
 		}
-		idmap[ids] = len(hashes.IDs)
-		hashes.IDs = append(hashes.IDs, *ids)
 	}
 
-	for hashType, hashToID := range b.hashes {
-		for _, hash := range hashToID {
-			hashes.Hashes[hashType][hash.hash] = idmap[hash.ids]
-		}
-	}
-	return hashes, nil
+	savedHashes.Hashes = append(savedHashes.Hashes, b.aHashes...)
+	savedHashes.Hashes = append(savedHashes.Hashes, b.dHashes...)
+	savedHashes.Hashes = append(savedHashes.Hashes, b.pHashes...)
+
+	return savedHashes, nil
 }
 
 func (b *basicMapStorage) AssociateIDs(newids []NewIDs) error {
@@ -171,7 +231,7 @@ func (b *basicMapStorage) AssociateIDs(newids []NewIDs) error {
 		ids, found := b.ids[newid.OldID]
 		b.hashMutex.RUnlock()
 		if !found {
-			msg := "No IDs belonging to " + string(newid.OldID.Domain) + " exist on this server"
+			msg := "ID not found on this server"
 			return errors.New(msg)
 		}
 		b.hashMutex.Lock()
@@ -195,7 +255,9 @@ func NewBasicMapStorage() (HashStorage, error) {
 	storage := &basicMapStorage{
 		hashMutex: &sync.RWMutex{},
 		ids:       make(map[ID]*[]ID),
-		hashes:    [3][]structHash{},
+		aHashes:   []SavedHash{},
+		dHashes:   []SavedHash{},
+		pHashes:   []SavedHash{},
 	}
 	return storage, nil
 }
