@@ -20,6 +20,8 @@ type basicMapStorage struct {
 	pHashes []SavedHash
 }
 
+var ErrIDNotFound = errors.New("ID not found on this server")
+
 // atleast must have a read lock before using
 func (b *basicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, searchHash uint64) []Result {
 	matchingHashes := make([]Result, 0, 20) // hope that we don't need more
@@ -210,17 +212,16 @@ func (b *basicMapStorage) EncodeHashes() (SavedHashes, error) {
 	savedHashes := SavedHashes{
 		Hashes: make([]SavedHash, 0, len(b.aHashes)+len(b.dHashes)+len(b.pHashes)),
 	}
+	savedHashes.Hashes = append(savedHashes.Hashes, b.aHashes...)
+	savedHashes.Hashes = append(savedHashes.Hashes, b.dHashes...)
+	savedHashes.Hashes = append(savedHashes.Hashes, b.pHashes...)
 
-	// Only keep groups >1 as they will be mapped in SavedHashes.Hashes
+	// Only keep groups len>1 as they are mapped in SavedHashes.Hashes
 	for _, ids := range b.ids {
 		if len(*ids) > 1 {
 			savedHashes.IDs = append(savedHashes.IDs, *ids)
 		}
 	}
-
-	savedHashes.Hashes = append(savedHashes.Hashes, b.aHashes...)
-	savedHashes.Hashes = append(savedHashes.Hashes, b.dHashes...)
-	savedHashes.Hashes = append(savedHashes.Hashes, b.pHashes...)
 
 	return savedHashes, nil
 }
@@ -231,8 +232,7 @@ func (b *basicMapStorage) AssociateIDs(newids []NewIDs) error {
 		ids, found := b.ids[newid.OldID]
 		b.hashMutex.RUnlock()
 		if !found {
-			msg := "ID not found on this server"
-			return errors.New(msg)
+			return ErrIDNotFound
 		}
 		b.hashMutex.Lock()
 		*ids = InsertID(*ids, newid.NewID)

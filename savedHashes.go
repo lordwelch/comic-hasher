@@ -75,12 +75,8 @@ func (f *Format) Set(s string) error {
 	return nil
 }
 
-func (s *SavedHashes) InsertHash(hash Hash, id ID) {
-	h := SavedHash{
-		hash,
-		id,
-	}
-	index, itemFound := slices.BinarySearchFunc(s.Hashes, h, func(existing SavedHash, target SavedHash) int {
+func (s *SavedHashes) InsertHash(hash SavedHash) {
+	index, itemFound := slices.BinarySearchFunc(s.Hashes, hash, func(existing SavedHash, target SavedHash) int {
 		return cmp.Or(
 			cmp.Compare(existing.Hash.Hash, target.Hash.Hash),
 			cmp.Compare(existing.Hash.Kind, target.Hash.Kind),
@@ -89,7 +85,7 @@ func (s *SavedHashes) InsertHash(hash Hash, id ID) {
 		)
 	})
 	if !itemFound {
-		s.Hashes = slices.Insert(s.Hashes, index, h)
+		s.Hashes = slices.Insert(s.Hashes, index, hash)
 	}
 }
 
@@ -229,9 +225,6 @@ func DecodeHashes(format Format, hashes []byte) (*SavedHashes, error) {
 		loadedHashes, err := decodeVersion(decode, hashes)
 		if err == nil {
 			return loadedHashes, nil
-		}
-		if !errors.Is(err, NoHashes) {
-			return nil, err
 		}
 	}
 
