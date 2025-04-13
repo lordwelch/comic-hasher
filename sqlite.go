@@ -150,7 +150,10 @@ func (s *sqliteStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Re
 			})
 		}
 
-		return foundMatches, nil
+		tl.logTime("Search Exact")
+		if len(foundMatches) > 0 {
+			return foundMatches, nil
+		}
 	}
 
 	foundHashes := make(map[uint64]struct{})

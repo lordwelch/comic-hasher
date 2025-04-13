@@ -69,7 +69,7 @@ func (v *VPTree) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, e
 			}
 		}
 	}
-	if exactOnly {
+	if exactOnly && len(exactMatches) > 0 {
 		return exactMatches, nil
 	}
 	exactMatches = append(exactMatches, matches...)

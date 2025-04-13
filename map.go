@@ -23,8 +23,13 @@ func (m *MapStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Resul
 	m.hashMutex.RLock()
 	defer m.hashMutex.RUnlock()
 
-	if exactOnly {
-		return m.basicMapStorage.GetMatches(hashes, max, exactOnly)
+	if exactOnly { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
+		foundMatches = m.exactMatches(hashes, max)
+
+		tl.logTime("Search Exact")
+		if len(foundMatches) > 0 {
+			return foundMatches, nil
+		}
 	}
 	tl.resetTime()
 	defer tl.logTime("Search Complete")

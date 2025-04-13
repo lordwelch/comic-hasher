@@ -41,6 +41,32 @@ func (b *basicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, search
 	return matchingHashes
 }
 
+func (b *basicMapStorage) exactMatches(hashes []Hash, max int) []Result {
+	var foundMatches []Result
+	for _, hash := range hashes {
+		mappedIds := map[*[]ID]bool{}
+
+		index, count := b.findHash(hash)
+		if count > 0 {
+			for _, storedHash := range (*b.getCurrentHashes(hash.Kind))[index : index+count] {
+				ids := b.ids[storedHash.ID]
+				if mappedIds[ids] {
+					continue
+				}
+				mappedIds[ids] = true
+
+				foundMatches = append(foundMatches, Result{
+					Distance: 0,
+					Hash:     storedHash.Hash,
+					IDs:      ToIDList(*b.ids[storedHash.ID]),
+				})
+			}
+		}
+
+	}
+	return foundMatches
+}
+
 func (b *basicMapStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error) {
 	var (
 		foundMatches []Result
@@ -52,31 +78,12 @@ func (b *basicMapStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]
 	defer b.hashMutex.RUnlock()
 
 	if exactOnly { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
-		for _, hash := range hashes {
-			mappedIds := map[*[]ID]bool{}
-
-			index, count := b.findHash(hash)
-			if count > 0 {
-				for _, storedHash := range (*b.getCurrentHashes(hash.Kind))[index : index+count] {
-					ids := b.ids[storedHash.ID]
-					if mappedIds[ids] {
-						continue
-					}
-					mappedIds[ids] = true
-
-					foundMatches = append(foundMatches, Result{
-						Distance: 0,
-						Hash:     storedHash.Hash,
-						IDs:      ToIDList(*b.ids[storedHash.ID]),
-					})
-				}
-			}
-
-		}
+		foundMatches = b.exactMatches(hashes, max)
 
 		tl.logTime("Search Exact")
-
-		return foundMatches, nil
+		if len(foundMatches) > 0 {
+			return foundMatches, nil
+		}
 	}
 
 	foundHashes := make(map[uint64]struct{})
