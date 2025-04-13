@@ -15,6 +15,7 @@ require (
 	github.com/vmihailenco/msgpack v4.0.4+incompatible
 	go.etcd.io/bbolt v1.4.0
 	golang.org/x/image v0.24.0
+	golang.org/x/sys v0.30.0
 	golang.org/x/text v0.22.0
 	gonum.org/v1/gonum v0.15.1
 	modernc.org/sqlite v1.35.0
@@ -48,7 +49,6 @@ require (
 	github.com/ulikunitz/xz v0.5.10 // indirect
 	go4.org v0.0.0-20200411211856-f5505b9728dd // indirect
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa // indirect
-	golang.org/x/sys v0.30.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/protobuf v1.36.5 // indirect
 	modernc.org/libc v1.61.13 // indirect

@@ -151,6 +151,7 @@ func DecodeHashesV0(decode Decoder, hashes []byte) (*SavedHashes, error) {
 	if len(loadedHashes) == 0 {
 		return nil, NoHashes
 	}
+	fmt.Println("Loaded V0 hashes")
 	return ConvertHashesV0(loadedHashes), nil
 }
 
@@ -167,6 +168,7 @@ func DecodeHashesV1(decode Decoder, hashes []byte) (*SavedHashes, error) {
 	if hashesCount < 1 {
 		return nil, NoHashes
 	}
+	fmt.Println("Loaded V1 hashes")
 	return ConvertHashesV1(loadedHashes), nil
 }
 
@@ -180,6 +182,7 @@ func DecodeHashesV2(decode Decoder, hashes []byte) (*SavedHashes, error) {
 		return nil, NoHashes
 	}
 
+	fmt.Println("Loaded V2 hashes")
 	return &loadedHashes, nil
 }
 

@@ -322,24 +322,43 @@ func getSimpleResults(fullResults []ch.Result) []SimpleResult {
 	})
 
 	// Deduplicate IDs
-	distance := make(map[int]SimpleResult)
+	idToDistance := make(map[ch.ID]int)
 
 	for _, fullResult := range fullResults {
-		simple, ok := distance[fullResult.Distance]
-		if !ok {
-			simple.IDList = make(ch.IDList)
-		}
-		for source, ids := range fullResult.IDs {
-			for _, id := range ids {
-				simple.IDList[source] = ch.Insert(simple.IDList[source], id)
+		for domain, idlist := range fullResult.IDs {
+			for _, idStr := range idlist {
+				id := ch.ID{
+					Domain: domain,
+					ID:     idStr,
+				}
+				if distance, ok := idToDistance[id]; !ok || fullResult.Distance < distance {
+					idToDistance[id] = fullResult.Distance
+				}
 			}
 		}
 	}
+	// Group by distance
+	distanceMap := make(map[int]SimpleResult)
+	for id, distance := range idToDistance {
+		var (
+			sr SimpleResult
+			ok bool
+		)
+		if sr, ok = distanceMap[distance]; !ok {
+			sr.IDList = make(ch.IDList)
+		}
+		sr.Distance = distance
+		sr.IDList[id.Domain] = append(sr.IDList[id.Domain], id.ID)
+		distanceMap[distance] = sr
+	}
 
 	// turn into array
-	for _, sr := range distance {
+	for _, sr := range distanceMap {
 		simpleResult = append(simpleResult, sr)
 	}
+	slices.SortFunc(simpleResult, func(a, b SimpleResult) int {
+		return cmp.Compare(a.Distance, b.Distance)
+	})
 	return simpleResult
 }
 
