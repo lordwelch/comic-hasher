@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"runtime/pprof"
 	"slices"
 	"strconv"
@@ -44,7 +45,7 @@ import (
 
 type Server struct {
 	httpServer     *http.Server
-	mux            *http.ServeMux
+	mux            *CHMux
 	BaseURL        *url.URL
 	hashes         ch.HashStorage
 	Context        context.Context
@@ -54,6 +55,7 @@ type Server struct {
 	hashingQueue   chan ch.Im
 	mappingQueue   chan ch.ImageHash
 	onlyHashNewIDs bool
+	version        string
 }
 
 var bufPool = &sync.Pool{
@@ -128,12 +130,28 @@ type Opts struct {
 	onlyHashNewIDs     bool
 	deleteHashedImages bool
 	path               string
+	version            string
+	addr               string
+	debugPort          string
 
 	cv CVOpts
 }
 
 func main() {
-	opts := Opts{format: ch.Msgpack, storageType: BasicMap} // flag is weird
+	version := "devel"
+	buildInfo, buildInfoFound := debug.ReadBuildInfo()
+	versionInfo := strings.SplitN(buildInfo.Main.Version, "-", 3)
+	if buildInfoFound {
+		switch len(versionInfo) {
+		default:
+			version = buildInfo.Main.Version
+		case 2:
+			version = versionInfo[1]
+		case 3:
+			version = versionInfo[0] + "-" + versionInfo[2]
+		}
+	}
+	opts := Opts{format: ch.Msgpack, storageType: BasicMap, version: version} // flag is weird
 	wd, err := os.Getwd()
 	fmt.Println(err)
 	if err != nil {
@@ -141,10 +159,9 @@ func main() {
 	} else {
 		wd = filepath.Join(wd, "comic-hasher")
 	}
-	go func() {
-		log.Println(http.ListenAndServe("localhost:6060", nil))
-	}()
 	flag.StringVar(&opts.cpuprofile, "cpuprofile", "", "Write cpu profile to file")
+	flag.StringVar(&opts.addr, "listen", ":8080", "Address to listen on")
+	flag.StringVar(&opts.debugPort, "debug-port", "", "Port to listen to for debug info")
 
 	flag.StringVar(&opts.path, "path", wd, "Path for comic-hasher to store files")
 	flag.StringVar(&opts.coverPath, "cover-path", "", "Path to local covers to add to hash database. Must be in the form '{cover-path}/{domain}/{id}/*' eg for --cover-path /covers it should look like /covers/comicvine.gamespot.com/10000/image.gif")
@@ -166,6 +183,11 @@ func main() {
 	flag.BoolVar(&opts.cv.keepDownloaded, "cv-keep-downloaded", true, "Keep downloaded images. When set to false does not ever write to the filesystem, a crash or exiting can mean some images need to be re-downloaded")
 	flag.Parse()
 
+	if opts.debugPort != "" {
+		go func() {
+			log.Println(http.ListenAndServe("127.0.0.1:"+opts.debugPort, nil))
+		}()
+	}
 	if opts.coverPath != "" {
 		_, err := os.Stat(opts.coverPath)
 		if err != nil {
@@ -765,6 +787,14 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 	}
 }
 
+type CHMux struct {
+	version string
+	*http.ServeMux
+}
+
+func (CHM *CHMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Server", "Comic-Hasher "+CHM.version)
+}
 func startServer(opts Opts) {
 	imaging.SetMaxProcs(2)
 	if opts.cpuprofile != "" {
@@ -776,7 +806,7 @@ func startServer(opts Opts) {
 		defer pprof.StopCPUProfile()
 	}
 
-	mux := http.NewServeMux()
+	mux := &CHMux{opts.version, &http.ServeMux{}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	server := Server{
@@ -788,13 +818,14 @@ func startServer(opts Opts) {
 		mappingQueue: make(chan ch.ImageHash, 1),
 		mux:          mux,
 		httpServer: &http.Server{
-			Addr:           ":8080",
+			Addr:           opts.addr,
 			Handler:        mux,
 			ReadTimeout:    10 * time.Second,
 			WriteTimeout:   10 * time.Second,
 			MaxHeaderBytes: 1 << 20,
 		},
 		onlyHashNewIDs: opts.onlyHashNewIDs,
+		version:        opts.version,
 	}
 	Notify(server.signalQueue)
 	var err error
