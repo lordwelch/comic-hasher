@@ -794,6 +794,7 @@ type CHMux struct {
 
 func (CHM *CHMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "Comic-Hasher "+CHM.version)
+	CHM.ServeMux.ServeHTTP(w, r)
 }
 func startServer(opts Opts) {
 	imaging.SetMaxProcs(2)
