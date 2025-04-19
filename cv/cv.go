@@ -34,8 +34,9 @@ type Download struct {
 }
 
 type Issue struct {
-	ID    int `json:"id"`
-	Image struct {
+	ID          int    `json:"id"`
+	IssueNumber string `json:"issue_number"`
+	Image       struct {
 		IconURL        string `json:"icon_url,omitempty"`
 		MediumURL      string `json:"medium_url,omitempty"`
 		ScreenURL      string `json:"screen_url,omitempty"`
@@ -86,8 +87,12 @@ type CVDownloader struct {
 }
 
 var (
-	ErrQuit        = errors.New("Quit")
-	ErrInvalidPage = errors.New("Invalid ComicVine Page")
+	ErrQuit         = errors.New("quit")
+	ErrInvalidPage  = errors.New("invalid ComicVine page")
+	ErrInvalidIndex = errors.New("invalid page index")
+	ErrDownloadFail = errors.New("download failed")
+	ErrMissingPage  = errors.New("page missing")
+	ErrUpdateNeeded = errors.New("update needed")
 )
 
 func (c *CVDownloader) readJson() ([]*CVResult, error) {
@@ -145,9 +150,57 @@ func getOffset(name string) int {
 	return i
 }
 
+func (c *CVDownloader) findDownloadedPage(offset int) int {
+	index := offset / 100
+	if index < len(c.fileList) && getOffset(c.fileList[index]) == offset { // If it's in order and it's not missing it should be here
+		return index
+	}
+	index, found := slices.BinarySearchFunc(c.fileList, offset, func(a string, b int) int {
+		return cmp.Compare(getOffset(a), b)
+	})
+	if found {
+		return index
+	}
+	return -1
+}
+func (c *CVDownloader) getDownloadedIssues(offset int, update bool) (*CVResult, error) {
+	index := c.findDownloadedPage(offset)
+	if index < 0 {
+		return nil, ErrMissingPage
+	}
+	issue, err := c.loadIssues(c.fileList[index])
+	if err != nil || issue == nil {
+		err = fmt.Errorf("Failed to read page at offset %d: %w", offset, err)
+		os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
+		c.fileList = slices.Delete(c.fileList, index, index+1)
+		return nil, err
+	}
+
+	c.totalResults = max(c.totalResults, issue.NumberOfTotalResults)
+
+	if update && (len(issue.Results) == 0 || issue.Results[0].IssueNumber == "") {
+		err = fmt.Errorf("Deleting page %d to update records from cv", offset)
+		os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
+		c.fileList = slices.Delete(c.fileList, index, index+1)
+		return nil, err
+	}
+
+	if c.totalResults == issue.Offset+issue.NumberOfPageResults {
+		if index != len(c.fileList)-1 {
+			err = fmt.Errorf("Wrong index: expected %d got %d", len(c.fileList), index)
+			return nil, err
+		}
+		log.Println("Deleting the last page to detect new comics")
+		os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
+		c.fileList = slices.Delete(c.fileList, index, index+1)
+	}
+
+	return issue, nil
+}
+
 // updateIssues  c.downloadQueue must not be closed before this function has returned
-func (c *CVDownloader) updateIssues() int {
-	base_url, err := url.Parse("https://comicvine.gamespot.com/api/issues/?sort=date_added,id:asc&format=json&field_list=id,image,volume")
+func (c *CVDownloader) updateIssues() (int, error) {
+	base_url, err := url.Parse("https://comicvine.gamespot.com/api/issues/?sort=date_added,id:asc&format=json&field_list=id,issue_number,image,volume")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -182,84 +235,44 @@ func (c *CVDownloader) updateIssues() int {
 		offset -= 100
 		return failCount < 15
 	}
+	updated := 0
 	for offset = 0; offset <= c.totalResults; offset += 100 {
-		index := offset / 100
 		if c.hasQuit() {
-			return offset - 100
+			return offset - 100, ErrQuit
 		}
-		if index < len(c.fileList) {
-			if getOffset(c.fileList[index]) == offset { // If it's in order and it's not missing it should be here
-				if issue, err := c.loadIssues(c.fileList[index]); err == nil && issue != nil {
-					c.totalResults = max(c.totalResults, issue.NumberOfTotalResults)
-					prev = -1
-					failCount = 0
-					// When canceled one of these will randomly be chosen, c.downloadQueue won't be closed until after this function returns
-					if c.totalResults == issue.Offset+issue.NumberOfPageResults {
-						if index != len(c.fileList)-1 {
-							log.Printf("Wrong index: expected %d got %d", len(c.fileList), index)
-							return offset - 100
-						}
-						log.Println("Deleting the last page to detect new comics")
-						os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
-						c.fileList = slices.Delete(c.fileList, index, index+1)
-					} else {
-						select {
-						case <-c.Context.Done():
-						case c.downloadQueue <- issue:
-						}
-						continue
-					}
-				} else {
-					log.Println("Failed to read page at offset", offset, issue, err)
-					os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
-					c.fileList = slices.Delete(c.fileList, index, index+1)
-				}
-			} else {
-				log.Printf("Expected Offset %d got Offset %d", offset, getOffset(c.fileList[index]))
+
+		issue, err := c.getDownloadedIssues(offset, updated < 9)
+		if err == nil && issue != nil {
+
+			prev = -1
+			failCount = 0
+			select {
+			case <-c.Context.Done(): // allows us to return immediately even during a timeout
+				return offset - 100, ErrQuit
+			case c.downloadQueue <- issue:
 			}
+			continue
 		}
-		index, found := slices.BinarySearchFunc(c.fileList, offset, func(a string, b int) int {
-			return cmp.Compare(getOffset(a), b)
-		})
-		if found {
-			if issue, err := c.loadIssues(c.fileList[index]); err == nil && issue != nil {
-				prev = -1
-				failCount = 0
-				// When canceled one of these will randomly be chosen, c.downloadQueue won't be closed until after this function returns
-				select {
-				case <-c.Context.Done():
-				case c.downloadQueue <- issue:
-				}
-				if c.totalResults == issue.Offset+issue.NumberOfPageResults {
-					if index != len(c.fileList)-1 {
-						log.Printf("Wrong index: expected %d got %d", len(c.fileList), index)
-						return offset - 100
-					}
-					log.Println("Deleting the last page to detect new comics")
-					os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
-					c.fileList = slices.Delete(c.fileList, index, index+1)
-				} else {
-					continue
-				}
-			} else {
-				log.Println("Failed to read page at offset", offset, issue, err)
-				os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
-				c.fileList = slices.Delete(c.fileList, index, (index)+1)
-			}
+		if errors.Is(err, ErrInvalidIndex) {
+			return offset - 100, err
+		}
+		if err != nil && !errors.Is(err, ErrMissingPage) {
+			log.Println(err)
 		}
 
 		log.Println("Starting download at offset", offset)
-		issue := &CVResult{}
+		issue = &CVResult{}
 		URI := (*base_url)
 		query = base_url.Query()
 		query.Add("offset", strconv.Itoa(offset))
 		URI.RawQuery = query.Encode()
 
 		select {
-		case <-c.Context.Done(): // allows us to return immediately even during a timeout
-			return offset - 100
-		case <-time.After(10 * time.Second):
+		case <-c.Context.Done(): // Allows us to return immediately even during a timeout
+			return offset - 100, ErrQuit
+		case <-time.After(10 * time.Second): // Enforces a minimum 10s wait between API hits
 		}
+
 		resp, err, cancelDownloadCTX := Get(URI.String())
 		if err != nil {
 			cancelDownloadCTX()
@@ -267,7 +280,7 @@ func (c *CVDownloader) updateIssues() int {
 				continue
 			}
 			// Fail and let comic-hasher try the whole thing again later
-			return offset - 100
+			return offset - 100, fmt.Errorf("%w: %w", ErrDownloadFail, err)
 		}
 		if resp.StatusCode != 200 {
 			cancelDownloadCTX()
@@ -275,14 +288,11 @@ func (c *CVDownloader) updateIssues() int {
 				_ = resp.Body.Close()
 				continue
 			}
-			log.Println("Failed to download this page, we'll wait for an hour to see if it clears up")
-			select {
-			case <-c.Context.Done(): // allows us to return immediately even during a timeout
-				_ = resp.Body.Close()
-				return offset - 100
-			case <-time.After(1 * time.Hour):
-			}
+			msg, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			return offset - 100, fmt.Errorf("%w: response code: %d Message: %s", ErrDownloadFail, resp.StatusCode, string(msg))
 		}
+
 		file, err := os.Create(filepath.Join(c.JSONPath, "cv-"+strconv.Itoa(offset)+".json"))
 		if err != nil {
 			log.Fatal(err)
@@ -297,7 +307,7 @@ func (c *CVDownloader) updateIssues() int {
 			if retry(URI.String(), err) {
 				continue
 			}
-			return offset - 100
+			return offset - 100, fmt.Errorf("%w: %w", ErrDownloadFail, err)
 		}
 		cancelDownloadCTX()
 		if issue.NumberOfTotalResults > c.totalResults {
@@ -305,13 +315,14 @@ func (c *CVDownloader) updateIssues() int {
 		}
 		prev = -1
 		failCount = 0
+		updated += 1
 		select {
 		case c.downloadQueue <- issue:
 		}
 		c.fileList = ch.Insert(c.fileList, fmt.Sprintf("cv-%v.json", offset))
 		log.Printf("Downloaded %s/cv-%v.json", c.JSONPath, offset)
 	}
-	return offset
+	return offset, nil
 }
 
 type download struct {
@@ -645,7 +656,10 @@ func DownloadCovers(c *CVDownloader) {
 		dwg.Done()
 	}()
 
-	offset := c.updateIssues()
+	offset, err := c.updateIssues()
+	if err != nil {
+		log.Printf("Failed to download CV Covers: %s", err)
+	}
 	issueCount := len(c.fileList) * 100
 
 	log.Println("Number of issues", issueCount, " expected:", c.totalResults)
