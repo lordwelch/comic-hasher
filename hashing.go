@@ -56,11 +56,11 @@ type ID struct {
 }
 
 type Result struct {
-	IDs      IDList
-	Distance int
-	Hash     Hash
+	Hash          Hash
+	ID            ID
+	Distance      int
+	EquivalentIDs []ID
 }
-
 type Im struct {
 	Im      image.Image
 	Format  string

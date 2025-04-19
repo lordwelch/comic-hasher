@@ -26,26 +26,26 @@ type sqliteStorage struct {
 	idExists   *sql.Stmt
 }
 
-func (s *sqliteStorage) findExactHashes(statement *sql.Stmt, hash Hash) ([]ID, error) {
+func (s *sqliteStorage) findExactHashes(statement *sql.Stmt, hash Hash) (map[ID][]ID, error) {
 	if statement == nil {
 		statement = s.hashExactMatchStatement
 	}
-	hashes := []ID{}
+	hashes := map[ID][]ID{}
 	rows, err := statement.Query(hash.Kind, int64(hash.Hash))
 	if err != nil {
 		return hashes, err
 	}
-
 	for rows.Next() {
 		var (
-			r = ID{}
+			id      ID
+			foundID ID
 		)
-		err = rows.Scan(&r.Domain, &r.ID)
+		err = rows.Scan(&foundID.Domain, &foundID.ID, &id.Domain, &id.ID)
 		if err != nil {
 			rows.Close()
 			return hashes, err
 		}
-		hashes = append(hashes, r)
+		hashes[foundID] = append(hashes[foundID], id)
 	}
 	rows.Close()
 	return hashes, nil
@@ -61,28 +61,31 @@ func (s *sqliteStorage) findPartialHashes(tl timeLog, statement *sql.Stmt, max i
 		return hashResults, err
 	}
 
-	results := map[Hash][]ID{}
+	results := map[SavedHash][]ID{}
 	for rows.Next() {
 		var (
 			tmpHash int64
-			sqlHash = Hash{Kind: hash.Kind}
-			id      ID
+			sqlHash = SavedHash{
+				Hash: Hash{Kind: hash.Kind},
+			}
+			id ID
 		)
-		err = rows.Scan(&tmpHash, &id.Domain, &id.ID)
+		err = rows.Scan(&sqlHash.ID.Domain, &sqlHash.ID.ID, &tmpHash, &id.Domain, &id.ID)
 		if err != nil {
 			rows.Close()
 			return hashResults, err
 		}
-		sqlHash.Hash = uint64(tmpHash)
+		sqlHash.Hash.Hash = uint64(tmpHash)
 		results[sqlHash] = append(results[sqlHash], id)
 	}
 	for sqlHash, ids := range results {
 		res := Result{
-			Hash:     sqlHash,
-			Distance: bits.OnesCount64(hash.Hash ^ sqlHash.Hash),
+			Hash:          sqlHash.Hash,
+			ID:            sqlHash.ID,
+			Distance:      bits.OnesCount64(hash.Hash ^ sqlHash.Hash.Hash),
+			EquivalentIDs: ids,
 		}
 		if res.Distance <= max {
-			res.IDs = ToIDList(ids)
 			hashResults = append(hashResults, res)
 		}
 	}
@@ -144,10 +147,14 @@ func (s *sqliteStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Re
 			if err != nil {
 				return foundMatches, err
 			}
-			foundMatches = append(foundMatches, Result{
-				IDs:  ToIDList(idlist),
-				Hash: hash,
-			})
+			for id, equivalentIDs := range idlist {
+				foundMatches = append(foundMatches, Result{
+					Hash:          hash,
+					ID:            id,
+					Distance:      0,
+					EquivalentIDs: equivalentIDs,
+				})
+			}
 		}
 
 		tl.logTime("Search Exact")
@@ -430,7 +437,7 @@ func (s *sqliteStorage) PrepareStatements() error {
 		return fmt.Errorf("failed to prepare database statements: %w", err)
 	}
 	s.hashExactMatchStatement, err = s.db.Prepare(`
-        select IDs.domain, IDs.stringid from IDs
+        select QIDs.domain, QIDs.stringid, IDs.domain, IDs.stringid from IDs
         join IDsToEquivalantIDs as IEIDs on IDs.id=IEIDs.idid
         join (
             select QEIDs.id as id from EquivalentIDs as QEIDs
@@ -444,7 +451,7 @@ func (s *sqliteStorage) PrepareStatements() error {
 		return fmt.Errorf("failed to prepare database statements: %w", err)
 	}
 	s.hashPartialMatchStatement, err = s.db.Prepare(`
-        select EIDs.hash, IDs.domain, IDs.stringid from IDs
+        select QIDs.domain, QIDs.stringid, EIDs.hash, IDs.domain, IDs.stringid from IDs
         join IDsToEquivalantIDs as IEIDs on IDs.id=IEIDs.idid
         join (
             select Hashes.hash as hash, QEIDs.id as id from EquivalentIDs as QEIDs

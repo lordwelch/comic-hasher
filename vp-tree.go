@@ -56,15 +56,17 @@ func (v *VPTree) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, e
 			mappedIds[ids] = true
 			if result.Dist == 0 {
 				exactMatches = append(exactMatches, Result{
-					IDs:      ToIDList(*v.ids[storedHash.ID]),
-					Distance: int(result.Dist),
-					Hash:     storedHash.Hash,
+					Hash:          storedHash.Hash,
+					ID:            storedHash.ID,
+					Distance:      0,
+					EquivalentIDs: *v.ids[storedHash.ID],
 				})
 			} else {
 				matches = append(matches, Result{
-					IDs:      ToIDList(*v.ids[storedHash.ID]),
-					Distance: int(result.Dist),
-					Hash:     storedHash.Hash,
+					Hash:          storedHash.Hash,
+					ID:            storedHash.ID,
+					Distance:      0,
+					EquivalentIDs: *v.ids[storedHash.ID],
 				})
 			}
 		}

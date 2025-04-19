@@ -35,7 +35,12 @@ func (b *basicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, search
 				continue
 			}
 			mappedIds[ids] = true
-			matchingHashes = append(matchingHashes, Result{ToIDList(*b.ids[storedHash.ID]), distance, storedHash.Hash})
+			matchingHashes = append(matchingHashes, Result{
+				Hash:          storedHash.Hash,
+				ID:            storedHash.ID,
+				Distance:      distance,
+				EquivalentIDs: *b.ids[storedHash.ID],
+			})
 		}
 	}
 	return matchingHashes
@@ -56,9 +61,10 @@ func (b *basicMapStorage) exactMatches(hashes []Hash, max int) []Result {
 				mappedIds[ids] = true
 
 				foundMatches = append(foundMatches, Result{
-					Distance: 0,
-					Hash:     storedHash.Hash,
-					IDs:      ToIDList(*b.ids[storedHash.ID]),
+					Hash:          storedHash.Hash,
+					ID:            storedHash.ID,
+					Distance:      0,
+					EquivalentIDs: *b.ids[storedHash.ID],
 				})
 			}
 		}

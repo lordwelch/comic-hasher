@@ -52,6 +52,7 @@ type SavedHash struct {
 	Hash Hash
 	ID   ID
 }
+
 type Encoder func(any) ([]byte, error)
 type Decoder func([]byte, interface{}) error
 type versionDecoder func(Decoder, []byte) (*SavedHashes, error)

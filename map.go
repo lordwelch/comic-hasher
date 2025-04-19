@@ -61,9 +61,10 @@ func (m *MapStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Resul
 				mappedIds[ids] = true
 
 				foundMatches = append(foundMatches, Result{
-					Distance: 0,
-					Hash:     storedHash.Hash,
-					IDs:      ToIDList(*m.ids[storedHash.ID]),
+					Hash:          storedHash.Hash,
+					ID:            storedHash.ID,
+					Distance:      0,
+					EquivalentIDs: *m.ids[storedHash.ID],
 				})
 
 			}
