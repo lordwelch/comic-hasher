@@ -112,7 +112,7 @@ func ConvertHashesV0(oldHashes OldSavedHashes) *SavedHashes {
 			}
 		}
 	}
-	fmt.Println("length of hashes", len(t.Hashes))
+	fmt.Println("Length of hashes", len(t.Hashes))
 	fmt.Println("Length of ID lists", len(t.IDs))
 	return &t
 }
@@ -138,7 +138,7 @@ func ConvertHashesV1(oldHashes SavedHashesv1) *SavedHashes {
 			}
 		}
 	}
-	fmt.Println("length of hashes", len(t.Hashes))
+	fmt.Println("Length of hashes", len(t.Hashes))
 	fmt.Println("Length of ID lists", len(t.IDs))
 	return &t
 }
