@@ -447,12 +447,19 @@ func (c *CVDownloader) downloadImages() {
 	for list := range c.downloadQueue {
 		log.Printf("Checking downloads at offset %v\r", list.Offset)
 		for _, issue := range list.Results {
-			type i struct {
+			type image struct {
 				url  string
 				name string
 			}
-			imageURLs := []i{{issue.Image.IconURL, "icon_url"}, {issue.Image.MediumURL, "medium_url"}, {issue.Image.ScreenURL, "screen_url"}, {issue.Image.ScreenLargeURL, "screen_large_url"}, {issue.Image.SmallURL, "small_url"}, {issue.Image.SuperURL, "super_url"}, {issue.Image.ThumbURL, "thumb_url"}, {issue.Image.TinyURL, "tiny_url"}, {issue.Image.OriginalURL, "original_url"}}
+			imageURLs := []image{{issue.Image.IconURL, "icon_url"}, {issue.Image.MediumURL, "medium_url"}, {issue.Image.ScreenURL, "screen_url"}, {issue.Image.ScreenLargeURL, "screen_large_url"}, {issue.Image.SmallURL, "small_url"}, {issue.Image.SuperURL, "super_url"}, {issue.Image.ThumbURL, "thumb_url"}, {issue.Image.TinyURL, "tiny_url"}, {issue.Image.OriginalURL, "original_url"}}
 			for _, image := range imageURLs {
+				if len(c.ImageTypes) > 0 && !slices.Contains(c.ImageTypes, image.name) {
+					continue
+				}
+				if c.chdb.CheckURL(image.url) {
+					log.Printf("Skipping known bad url %s", image.url)
+					continue
+				}
 				if strings.HasSuffix(image.url, "6373148-blank.png") {
 					c.notFound <- download{
 						url:      image.url,
@@ -460,14 +467,6 @@ func (c *CVDownloader) downloadImages() {
 						volumeID: issue.Volume.ID,
 						issueID:  issue.ID,
 					}
-					continue
-				}
-
-				if len(c.ImageTypes) > 0 && !slices.Contains(c.ImageTypes, image.name) {
-					continue
-				}
-				if c.chdb.CheckURL(image.url) {
-					log.Printf("Skipping known bad url %s", image.url)
 					continue
 				}
 
