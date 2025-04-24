@@ -319,7 +319,7 @@ func (c *CVDownloader) updateIssues() (int, error) {
 		select {
 		case c.downloadQueue <- issue:
 		}
-		c.fileList = ch.Insert(c.fileList, fmt.Sprintf("cv-%v.json", offset))
+		c.insertIssuePage(offset)
 		log.Printf("Downloaded %s/cv-%v.json", c.JSONPath, offset)
 	}
 	return offset, nil
@@ -599,6 +599,15 @@ func (c *CVDownloader) cleanDirs() {
 		return nil
 	})
 }
+func (c *CVDownloader) insertIssuePage(offset int) {
+	index, found := slices.BinarySearchFunc(c.fileList, offset, func(a string, b int) int {
+		return cmp.Compare(getOffset(a), b)
+	})
+	if found {
+		return
+	}
+	c.fileList = slices.Insert(c.fileList, index, fmt.Sprintf("cv-%v.json", offset))
+}
 
 func NewCVDownloader(ctx context.Context, bufPool *sync.Pool, only_hash_new_ids bool, get_id func(id ch.ID) ch.IDList, chdb ch.CHDB, workPath, APIKey string, imageTypes []string, keepDownloadedImages, sendExistingImages bool, finishedDownloadQueue chan Download) *CVDownloader {
 	return &CVDownloader{
@@ -606,7 +615,7 @@ func NewCVDownloader(ctx context.Context, bufPool *sync.Pool, only_hash_new_ids 
 		JSONPath:              filepath.Join(workPath, "_json"),
 		ImagePath:             filepath.Join(workPath, "_image"),
 		APIKey:                APIKey,
-		bufPool:               bufPool, // Only used if keepDownloadedImages is false to save space on byte buffers. The buffers get sent back via finishedDownloadQueue
+		bufPool:               bufPool, // Only used if keepDownloadedImages is false to save memory on byte buffers. The buffers get sent back via finishedDownloadQueue
 		FinishedDownloadQueue: finishedDownloadQueue,
 		SendExistingImages:    sendExistingImages,
 		KeepDownloadedImages:  keepDownloadedImages,
