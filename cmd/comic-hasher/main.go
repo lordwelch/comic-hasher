@@ -271,13 +271,17 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 		}
 		break
 	}
+	if errors.Is(err, ch.NoHashes) {
+		log.Println("No saved hashes to load")
+		return loadedHashes
+	}
 	if err != nil {
 		panic(fmt.Sprintf("Failed to decode hashes: %s", err))
 	}
 	fmt.Printf("Loaded %s hashes\n", format)
 	return loadedHashes
 }
-func saveHashes(opts Opts, hashes ch.SavedHashes) error {
+func saveHashes(opts Opts, hashes *ch.SavedHashes) error {
 	if opts.loadEmbeddedHashes && !opts.saveEmbeddedHashes {
 		return errors.New("refusing to save embedded hashes")
 	}
@@ -424,7 +428,7 @@ func startServer(opts Opts) {
 
 	// DecodeHashes would normally need a write lock
 	// nothing else has been started yet so we don't need one
-	if err := server.hashes.DecodeHashes(*loadHashes(opts)); err != nil {
+	if err := server.hashes.DecodeHashes(loadHashes(opts)); err != nil {
 		panic(err)
 	}
 

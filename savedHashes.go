@@ -235,7 +235,7 @@ func DecodeHashes(format Format, hashes []byte) (*SavedHashes, error) {
 	return nil, NoHashes
 }
 
-func EncodeHashes(hashes SavedHashes, format Format) ([]byte, error) {
+func EncodeHashes(hashes *SavedHashes, format Format) ([]byte, error) {
 	var encoder Encoder
 	switch format {
 	case Msgpack:

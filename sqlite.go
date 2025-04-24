@@ -246,7 +246,7 @@ func (s *sqliteStorage) MapHashes(hash ImageHash) {
 	}
 }
 
-func (s *sqliteStorage) DecodeHashes(hashes SavedHashes) error {
+func (s *sqliteStorage) DecodeHashes(hashes *SavedHashes) error {
 	return nil
 	err := s.dropIndexes()
 	if err != nil {
@@ -302,16 +302,16 @@ func (s *sqliteStorage) DecodeHashes(hashes SavedHashes) error {
 	return nil
 }
 
-func (s *sqliteStorage) EncodeHashes() (SavedHashes, error) {
+func (s *sqliteStorage) EncodeHashes() (*SavedHashes, error) {
 	hashes := SavedHashes{}
 	tx, err := s.db.Begin()
 	if err != nil {
-		return hashes, err
+		return &hashes, err
 	}
 
 	rows, err := tx.Query("SELECT Hashes.kind, Hashes.hash, IDs.domain, IDs.stringid FROM Hashes JOIN IDs ON Hashes.id=IDs.id ORDER BY Hashes.kind, Hashes.hash;")
 	if err != nil {
-		return hashes, err
+		return &hashes, err
 	}
 	for rows.Next() {
 		var (
@@ -320,14 +320,14 @@ func (s *sqliteStorage) EncodeHashes() (SavedHashes, error) {
 		)
 		err = rows.Scan(&hash.Hash.Kind, &tmpHash, &hash.ID.Domain, &hash.ID.ID)
 		if err != nil {
-			return hashes, err
+			return &hashes, err
 		}
 		hash.Hash.Hash = uint64(tmpHash)
 		hashes.InsertHash(hash)
 	}
 	rows, err = tx.Query("SELECT IEIDs.equivalentid, IDs.domain, IDs.stringid FROM IDs JOIN IDsToEquivalantIDs AS IEIDs ON IDs.id=IEIDs.idid ORDER BY IEIDs.equivalentid, IDs.domain, IDs.stringid;")
 	if err != nil {
-		return hashes, err
+		return &hashes, err
 	}
 	var (
 		previousEid int64 = -1
@@ -340,7 +340,7 @@ func (s *sqliteStorage) EncodeHashes() (SavedHashes, error) {
 		)
 		err = rows.Scan(&newEid, &id.Domain, &id.Domain)
 		if err != nil {
-			return hashes, err
+			return &hashes, err
 		}
 		if newEid != previousEid {
 			previousEid = newEid
@@ -352,7 +352,7 @@ func (s *sqliteStorage) EncodeHashes() (SavedHashes, error) {
 		}
 		ids = append(ids, id)
 	}
-	return hashes, nil
+	return &hashes, nil
 }
 
 func (s *sqliteStorage) AssociateIDs(newIDs []NewIDs) error {

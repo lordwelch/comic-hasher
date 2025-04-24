@@ -95,7 +95,10 @@ func (v *VPTree) MapHashes(ImageHash) {
 	panic("Not Implemented")
 }
 
-func (v *VPTree) DecodeHashes(hashes SavedHashes) error {
+func (v *VPTree) DecodeHashes(hashes *SavedHashes) error {
+	if hashes == nil {
+		return nil
+	}
 
 	// Initialize all the known equal IDs
 	for _, ids := range hashes.IDs {
@@ -139,8 +142,8 @@ func (v *VPTree) DecodeHashes(hashes SavedHashes) error {
 	}
 	return nil
 }
-func (v *VPTree) EncodeHashes() (SavedHashes, error) {
-	return SavedHashes{}, errors.New("Not Implemented")
+func (v *VPTree) EncodeHashes() (*SavedHashes, error) {
+	return &SavedHashes{}, errors.New("Not Implemented")
 }
 
 func (v *VPTree) AssociateIDs(newIDs []NewIDs) error {

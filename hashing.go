@@ -110,8 +110,8 @@ type NewIDs struct {
 type HashStorage interface {
 	GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error)
 	MapHashes(ImageHash)
-	DecodeHashes(hashes SavedHashes) error
-	EncodeHashes() (SavedHashes, error)
+	DecodeHashes(hashes *SavedHashes) error
+	EncodeHashes() (*SavedHashes, error)
 	AssociateIDs(newIDs []NewIDs) error
 	GetIDs(id ID) IDList
 }

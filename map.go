@@ -98,7 +98,10 @@ func (m *MapStorage) MapHashes(hash ImageHash) {
 	}
 }
 
-func (m *MapStorage) DecodeHashes(hashes SavedHashes) error {
+func (m *MapStorage) DecodeHashes(hashes *SavedHashes) error {
+	if hashes == nil {
+		return nil
+	}
 	if err := m.basicMapStorage.DecodeHashes(hashes); err != nil {
 		return err
 	}

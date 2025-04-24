@@ -161,7 +161,10 @@ func (b *basicMapStorage) MapHashes(hash ImageHash) {
 }
 
 // DecodeHashes must already have a lock
-func (b *basicMapStorage) DecodeHashes(hashes SavedHashes) error {
+func (b *basicMapStorage) DecodeHashes(hashes *SavedHashes) error {
+	if hashes == nil {
+		return nil
+	}
 	b.ids = make(map[ID]*[]ID, len(hashes.Hashes))
 
 	// Initialize all the known equal IDs
@@ -221,7 +224,7 @@ func (b *basicMapStorage) DecodeHashes(hashes SavedHashes) error {
 }
 
 // EncodeHashes should already have a lock
-func (b *basicMapStorage) EncodeHashes() (SavedHashes, error) {
+func (b *basicMapStorage) EncodeHashes() (*SavedHashes, error) {
 	savedHashes := SavedHashes{
 		Hashes: make([]SavedHash, 0, len(b.aHashes)+len(b.dHashes)+len(b.pHashes)),
 	}
@@ -236,7 +239,7 @@ func (b *basicMapStorage) EncodeHashes() (SavedHashes, error) {
 		}
 	}
 
-	return savedHashes, nil
+	return &savedHashes, nil
 }
 
 func (b *basicMapStorage) AssociateIDs(newids []NewIDs) error {
