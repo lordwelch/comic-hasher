@@ -644,6 +644,11 @@ func DownloadCovers(c *CVDownloader) {
 	var d *os.File
 	d, err = os.Open(c.JSONPath)
 	c.fileList, err = d.Readdirnames(-1)
+	for i := len(c.fileList) - 1; i >= 0; i-- {
+		if !strings.Contains(c.fileList[i], "json") {
+			c.fileList = slices.Delete(c.fileList, i, i+1)
+		}
+	}
 	if err != nil {
 		panic(fmt.Errorf("Unable to open path for json files: %w", err))
 	}
