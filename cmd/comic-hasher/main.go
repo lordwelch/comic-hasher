@@ -18,6 +18,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"runtime/pprof"
 	"strings"
@@ -98,6 +99,7 @@ type CVOpts struct {
 }
 type Opts struct {
 	cpuprofile         string
+	memprofile         string
 	coverPath          string
 	sqlitePath         string
 	loadEmbeddedHashes bool
@@ -138,6 +140,7 @@ func main() {
 		wd = filepath.Join(wd, "comic-hasher")
 	}
 	flag.StringVar(&opts.cpuprofile, "cpuprofile", "", "Write cpu profile to file")
+	flag.StringVar(&opts.memprofile, "memprofile", "", "Write mem profile to file")
 	flag.StringVar(&opts.addr, "listen", ":8080", "Address to listen on")
 	flag.StringVar(&opts.debugPort, "debug-port", "", "Port to listen to for debug info")
 
@@ -235,17 +238,19 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 			if err != nil {
 				panic(fmt.Sprintf("Failed to read embedded hashes: %s", err))
 			}
+			gr.Close()
 		}
 	} else {
 		fmt.Println("Loading saved hashes")
 		if f, err := os.Open(opts.hashesPath); err == nil {
-			var buf io.Reader = f
-			if gr, err := gzip.NewReader(buf); err == nil {
-				buf = bufio.NewReader(gr)
+			var r io.ReadCloser = f
+			if gr, err := gzip.NewReader(f); err == nil {
+				r = gr
 			} else {
 				_, _ = f.Seek(0, io.SeekStart)
 			}
-			hashes, err = io.ReadAll(buf)
+			hashes, err = io.ReadAll(r)
+			r.Close()
 			f.Close()
 			if err != nil {
 				panic(fmt.Sprintf("Failed to load hashes from disk: %s", err))
@@ -272,7 +277,7 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 		break
 	}
 	if errors.Is(err, ch.NoHashes) {
-		log.Println("No saved hashes to load")
+		log.Println("No saved hashes to load", loadedHashes, err)
 		return loadedHashes
 	}
 	if err != nil {
@@ -362,6 +367,16 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 		}
 		server.hashingQueue <- im
 	}
+}
+func printMemStats(m runtime.MemStats) {
+	fmt.Printf("Alloc = %v MiB\n", bToKb(m.Alloc))
+	fmt.Printf("TotalAlloc = %v MiB\n", bToKb(m.TotalAlloc))
+	fmt.Printf("Sys = %v MiB\n", bToKb(m.Sys))
+	fmt.Printf("NumGC = %v\n", m.NumGC)
+}
+
+func bToKb(b uint64) uint64 {
+	return b / 1024 / 1024
 }
 
 func startServer(opts Opts) {
@@ -474,6 +489,24 @@ func startServer(opts Opts) {
 
 	go signalHandler(&server)
 	log.Println("Listening on ", server.httpServer.Addr)
+	if opts.memprofile != "" {
+		f, err := os.Create(opts.memprofile)
+		if err != nil {
+			log.Fatal("could not create memory profile: ", err)
+		}
+		defer f.Close() // error handling omitted for example
+		runtime.GC()    // get up-to-date statistics
+		// Lookup("allocs") creates a profile similar to go test -memprofile.
+		// Alternatively, use Lookup("heap") for a profile
+		// that has inuse_space as the default index.
+		m := runtime.MemStats{}
+		runtime.ReadMemStats(&m)
+		printMemStats(m)
+		if err := pprof.Lookup("heap").WriteTo(f, 0); err != nil {
+			log.Fatal("could not write memory profile: ", err)
+		}
+
+	}
 	err = server.httpServer.ListenAndServe()
 	if err != nil {
 		log.Println(err)

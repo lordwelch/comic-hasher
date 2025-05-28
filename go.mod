@@ -8,6 +8,7 @@ require (
 	gitea.narnian.us/lordwelch/goimagehash v0.0.0-20250130004139-e91c39c79e0d
 	github.com/disintegration/imaging v1.6.3-0.20201218193011-d40f48ce0f09
 	github.com/fmartingr/go-comicinfo/v2 v2.0.2
+	github.com/json-iterator/go v1.1.12
 	github.com/kr/pretty v0.1.0
 	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/mholt/archiver/v4 v4.0.0-alpha.8
@@ -39,6 +40,8 @@ require (
 	github.com/klauspost/pgzip v1.2.5 // indirect
 	github.com/kr/text v0.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 // indirect
+	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/nwaples/rardecode/v2 v2.0.0-beta.2 // indirect

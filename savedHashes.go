@@ -2,11 +2,14 @@ package ch
 
 import (
 	"cmp"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
+
+	// json "github.com/goccy/go-json"
+	json "github.com/json-iterator/go"
+	// "encoding/json"
 
 	"gitea.narnian.us/lordwelch/goimagehash"
 	"github.com/vmihailenco/msgpack"
@@ -183,6 +186,8 @@ func DecodeHashesV2(decode Decoder, hashes []byte) (*SavedHashes, error) {
 		return nil, NoHashes
 	}
 
+	fmt.Println("Length of hashes", len(loadedHashes.Hashes))
+	fmt.Println("Length of ID lists", len(loadedHashes.IDs))
 	fmt.Println("Loaded V2 hashes")
 	return &loadedHashes, nil
 }

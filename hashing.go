@@ -7,7 +7,6 @@ import (
 	"image"
 	"log"
 	"math/bits"
-	"runtime"
 	"slices"
 
 	"gitea.narnian.us/lordwelch/goimagehash"
@@ -89,8 +88,21 @@ func ToIDList(ids []ID) IDList {
 	}
 	return idlist
 }
+func InsertIDp(ids []*ID, id *ID) []*ID {
+	index, itemFound := slices.BinarySearchFunc(ids, id, func(existing, target *ID) int {
+		return cmp.Or(
+			cmp.Compare(existing.Domain, target.Domain),
+			cmp.Compare(existing.ID, target.ID),
+		)
+	})
+	if itemFound {
+		return ids
+	}
+	return slices.Insert(ids, index, id)
+}
+
 func InsertID(ids []ID, id ID) []ID {
-	index, itemFound := slices.BinarySearchFunc(ids, id, func(existing ID, target ID) int {
+	index, itemFound := slices.BinarySearchFunc(ids, id, func(existing, target ID) int {
 		return cmp.Or(
 			cmp.Compare(existing.Domain, target.Domain),
 			cmp.Compare(existing.ID, target.ID),
@@ -127,14 +139,6 @@ func Atleast(maxDistance int, searchHash uint64, hashes []uint64) []Match {
 	return matchingHashes
 }
 
-func Insert[S ~[]E, E cmp.Ordered](slice S, item E) S {
-	index, itemFound := slices.BinarySearch(slice, item)
-	if itemFound {
-		return slice
-	}
-	return slices.Insert(slice, index, item)
-}
-
 func InsertIdx[S ~[]E, E cmp.Ordered](slice S, item E) (S, int) {
 	index, itemFound := slices.BinarySearch(slice, item)
 	if itemFound {
@@ -143,10 +147,9 @@ func InsertIdx[S ~[]E, E cmp.Ordered](slice S, item E) (S, int) {
 	return slices.Insert(slice, index, item), index
 }
 
-func MemStats() uint64 {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	return m.Alloc
+func Insert[S ~[]E, E cmp.Ordered](slice S, item E) S {
+	slice, _ = InsertIdx(slice, item)
+	return slice
 }
 
 func HashImage(i Im) ImageHash {

@@ -45,7 +45,7 @@ func (m *MapStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Resul
 		}
 
 		totalPartialHashes += len(potentialMatches)
-		mappedIds := map[*[]ID]bool{}
+		mappedIds := map[int]bool{}
 
 		for _, match := range Atleast(max, searchHash.Hash, potentialMatches) {
 			matchedHash := Hash{match.Hash, searchHash.Kind}
@@ -54,17 +54,17 @@ func (m *MapStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Resul
 				continue
 			}
 			for _, storedHash := range currentHashes[index : index+count] {
-				ids := m.ids[storedHash.ID]
-				if mappedIds[ids] {
+				idIndex, _ := m.ids.FindID(&storedHash.ID)
+				if mappedIds[idIndex] {
 					continue
 				}
-				mappedIds[ids] = true
+				mappedIds[idIndex] = true
 
 				foundMatches = append(foundMatches, Result{
 					Hash:          storedHash.Hash,
 					ID:            storedHash.ID,
 					Distance:      0,
-					EquivalentIDs: *m.ids[storedHash.ID],
+					EquivalentIDs: m.ids.GetIDs(&storedHash.ID),
 				})
 
 			}
@@ -122,10 +122,12 @@ func NewMapStorage() (HashStorage, error) {
 	storage := &MapStorage{
 		basicMapStorage: basicMapStorage{
 			hashMutex: &sync.RWMutex{},
-			ids:       make(map[ID]*[]ID),
-			aHashes:   []SavedHash{},
-			dHashes:   []SavedHash{},
-			pHashes:   []SavedHash{},
+			ids: IDMap{
+				ids: []IDs{},
+			},
+			aHashes: []SavedHash{},
+			dHashes: []SavedHash{},
+			pHashes: []SavedHash{},
 		},
 		partialAHash: newPartialHash(),
 		partialDHash: newPartialHash(),
