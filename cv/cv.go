@@ -489,7 +489,7 @@ func (c *CVDownloader) downloadImages() {
 				path := filepath.Join(dir, image.name+ext)
 
 				ids := c.get_id(ch.ID{
-					Domain: ch.ComicVine,
+					Domain: ch.NewSource(ch.ComicVine),
 					ID:     strconv.Itoa(issue.ID),
 				})
 				if c.chdb.PathDownloaded(path) || c.only_hash_new_ids && len(ids) > 0 {

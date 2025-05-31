@@ -84,7 +84,7 @@ func (s *SavedHashes) InsertHash(hash SavedHash) {
 		return cmp.Or(
 			cmp.Compare(existing.Hash.Hash, target.Hash.Hash),
 			cmp.Compare(existing.Hash.Kind, target.Hash.Kind),
-			cmp.Compare(existing.ID.Domain, target.ID.Domain),
+			cmp.Compare(*existing.ID.Domain, *target.ID.Domain),
 			cmp.Compare(existing.ID.ID, target.ID.ID),
 		)
 	})
@@ -99,18 +99,16 @@ func ConvertHashesV0(oldHashes OldSavedHashes) *SavedHashes {
 	for _, ids := range oldHashes {
 		idcount += len(ids)
 	}
-	t.IDs = make([][]ID, 0, idcount)
 	t.Hashes = make([]SavedHash, 0, idcount)
 	for domain, sourceHashes := range oldHashes {
 		for id, hashes := range sourceHashes {
-			t.IDs = append(t.IDs, []ID{{domain, id}})
 			for hashType, hash := range hashes {
 				t.Hashes = append(t.Hashes, SavedHash{
 					Hash: Hash{
 						Kind: goimagehash.Kind(hashType + 1),
 						Hash: hash,
 					},
-					ID: ID{domain, id},
+					ID: ID{NewSource(domain), id},
 				})
 			}
 		}
@@ -132,7 +130,7 @@ func ConvertHashesV1(oldHashes SavedHashesv1) *SavedHashes {
 		for hash, index := range sourceHashes {
 			for _, id := range oldHashes.IDs[index] {
 				t.Hashes = append(t.Hashes, SavedHash{
-					ID: id,
+					ID: ID{NewSource(*id.Domain), id.ID},
 					Hash: Hash{
 						Kind: goimagehash.Kind(hashType + 1),
 						Hash: hash,
@@ -177,6 +175,7 @@ func DecodeHashesV1(decode Decoder, hashes []byte) (*SavedHashes, error) {
 }
 
 func DecodeHashesV2(decode Decoder, hashes []byte) (*SavedHashes, error) {
+	fmt.Println("Decode v2 hashes")
 	loadedHashes := SavedHashes{}
 	err := decode(hashes, &loadedHashes)
 	if err != nil {
@@ -211,8 +210,10 @@ func DecodeHashes(format Format, hashes []byte) (*SavedHashes, error) {
 	switch format {
 	case Msgpack:
 		decode = msgpack.Unmarshal
+		fmt.Println("Decode Msgpack")
 	case JSON:
 		decode = json.Unmarshal
+		fmt.Println("Decode JSON")
 
 	default:
 		return nil, fmt.Errorf("Unknown format: %v", format)

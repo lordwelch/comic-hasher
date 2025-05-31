@@ -27,38 +27,32 @@ type IDMap struct {
 	ids []IDs
 }
 
-func (m *IDMap) insertID(id *ID, idList *[]*ID) {
+func (m *IDMap) InsertID(id *ID) *ID {
+	return m.insertID(id, &[]*ID{id})
+}
+
+func (m *IDMap) insertID(id *ID, idList *[]*ID) *ID {
 	index, found := slices.BinarySearchFunc(m.ids, id, func(id IDs, target *ID) int {
-		return cmp.Or(
-			cmp.Compare(id.id.Domain, target.Domain),
-			cmp.Compare(id.id.ID, target.ID),
-		)
+		return id.id.Compare(*target)
 	})
-	if found {
-		return
+	if !found {
+		m.ids = slices.Insert(m.ids, index, IDs{
+			id,
+			idList,
+		})
 	}
-	m.ids = slices.Insert(m.ids, index, IDs{
-		id,
-		idList,
-	})
+	return m.ids[index].id
 }
 
 func (m *IDMap) sort() {
 	slices.SortFunc(m.ids, func(a, b IDs) int {
-		return cmp.Or(
-			cmp.Compare(a.id.Domain, b.id.Domain),
-			cmp.Compare(a.id.ID, b.id.ID),
-			// cmp.Compare(len(*a.idList), len(*b.idList)),
-		)
+		return a.id.Compare(*b.id)
 	})
 }
 
 func (m *IDMap) FindID(id *ID) (int, bool) {
 	return slices.BinarySearchFunc(m.ids, id, func(id IDs, target *ID) int {
-		return cmp.Or(
-			cmp.Compare(id.id.Domain, target.Domain),
-			cmp.Compare(id.id.ID, target.ID),
-		)
+		return id.id.Compare(*target)
 	})
 }
 
@@ -87,6 +81,17 @@ func (m *IDMap) AssociateIDs(newids []NewIDs) error {
 	return nil
 }
 
+// func (m *IDMap) NewID(domain Source, id string) *ID {
+// 	newID := ID{domain, id}
+// 	index, found := slices.BinarySearchFunc(m.idList, newID, func(id *ID, target ID) int {
+// 		return id.Compare(*target)
+// 	})
+// 	if !found {
+// 		m.idList = slices.Insert(m.idList, index, &newID)
+// 	}
+// 	return m.idList[index]
+// }
+
 var ErrIDNotFound = errors.New("ID not found on this server")
 
 // atleast must have a read lock before using
@@ -94,7 +99,8 @@ func (b *basicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, search
 	matchingHashes := make([]Result, 0, 20) // hope that we don't need more
 
 	mappedIds := map[int]bool{}
-	for _, storedHash := range *b.getCurrentHashes(kind) {
+	storedHash := SavedHash{} // reduces allocations and ensures queries are <1s
+	for _, storedHash = range *b.getCurrentHashes(kind) {
 		distance := bits.OnesCount64(searchHash ^ storedHash.Hash.Hash)
 		if distance <= maxDistance {
 			index, _ := b.ids.FindID(&storedHash.ID)
@@ -213,10 +219,9 @@ func (b *basicMapStorage) insertHash(hash Hash, id ID) {
 		}
 	}
 
-	*currentHashes = slices.Insert(*currentHashes, index, SavedHash{hash, id})
-	if _, found := b.ids.FindID(&id); !found {
-		b.ids.insertID(&id, &[]*ID{&id})
-	}
+	sh := SavedHash{hash, id}
+	*currentHashes = slices.Insert(*currentHashes, index, sh)
+	b.ids.InsertID(&sh.ID)
 }
 
 func (b *basicMapStorage) MapHashes(hash ImageHash) {
@@ -251,8 +256,8 @@ func (b *basicMapStorage) DecodeHashes(hashes *SavedHashes) error {
 
 	slices.SortFunc(hashes.Hashes, func(existing, target SavedHash) int {
 		return cmp.Or(
-			cmp.Compare(existing.ID.Domain, target.ID.Domain), // Sorted for id insertion efficiency
-			cmp.Compare(existing.ID.ID, target.ID.ID),         // Sorted for id insertion efficiency
+			cmp.Compare(*existing.ID.Domain, *target.ID.Domain), // Sorted for id insertion efficiency
+			cmp.Compare(existing.ID.ID, target.ID.ID),           // Sorted for id insertion efficiency
 			cmp.Compare(existing.Hash.Kind, target.Hash.Kind),
 			cmp.Compare(existing.Hash.Hash, target.Hash.Hash),
 		)
@@ -295,13 +300,13 @@ func (b *basicMapStorage) DecodeHashes(hashes *SavedHashes) error {
 		}
 		// TODO: Make loading this more efficient
 		// All known equal IDs are already mapped we can add any missing ones from hashes
-		b.ids.insertID(&hashes.Hashes[i].ID, &[]*ID{&hashes.Hashes[i].ID})
+		b.ids.InsertID(&hashes.Hashes[i].ID)
 	}
 
 	hashCmp := func(existing, target SavedHash) int {
 		return cmp.Or(
 			cmp.Compare(existing.Hash.Hash, target.Hash.Hash),
-			cmp.Compare(existing.ID.Domain, target.ID.Domain),
+			cmp.Compare(*existing.ID.Domain, *target.ID.Domain),
 			cmp.Compare(existing.ID.ID, target.ID.ID),
 		)
 	}

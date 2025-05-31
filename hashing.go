@@ -8,8 +8,12 @@ import (
 	"log"
 	"math/bits"
 	"slices"
+	"strings"
+	"sync"
 
 	"gitea.narnian.us/lordwelch/goimagehash"
+	json "github.com/json-iterator/go"
+	"github.com/vmihailenco/msgpack"
 )
 
 //go:embed hashes.gz
@@ -42,6 +46,8 @@ const (
 	SavedHashVersion int    = 2
 )
 
+var sources *sync.Map = newSourceMap()
+
 type Source string
 
 type Match struct {
@@ -50,7 +56,7 @@ type Match struct {
 }
 
 type ID struct {
-	Domain Source
+	Domain *Source
 	ID     string
 }
 
@@ -77,21 +83,71 @@ type Hash struct {
 	Kind goimagehash.Kind
 }
 
+func (id *ID) Compare(target ID) int {
+	return cmp.Or(
+		strings.Compare(string(*id.Domain), string(*target.Domain)),
+		strings.Compare(id.ID, target.ID),
+	)
+}
+
+func newSourceMap() *sync.Map {
+	m := &sync.Map{}
+	for s := range []Source{ComicVine} {
+		m.Store(s, &s)
+	}
+	return m
+}
+
+func NewSource[E string | Source](s E) *Source {
+	s2 := Source(strings.ToLower(string(s)))
+	sp, _ := sources.LoadOrStore(s2, &s2)
+	return sp.(*Source)
+}
+
 // IDList is a map of domain to ID eg IDs["comicvine.gamespot.com"] = []string{"1235"}
 // Maps are extremely expensive in go for small maps this should only be used to return info to a user or as a map containing all IDs for a source
 type IDList map[Source][]string
 
+func (a *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
+	var s struct {
+		Domain, ID string
+	}
+	err := dec.Decode(&s)
+	if err != nil {
+		return err
+	}
+
+	a.ID = s.ID
+	a.Domain = NewSource(s.Domain)
+
+	return nil
+}
+
+func (a *ID) UnmarshalJSON(b []byte) error {
+	var s struct {
+		Domain, ID string
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+
+	a.ID = s.ID
+	a.Domain = NewSource(s.Domain)
+
+	return nil
+}
+
 func ToIDList(ids []ID) IDList {
 	idlist := IDList{}
 	for _, id := range ids {
-		idlist[id.Domain] = Insert(idlist[id.Domain], id.ID)
+		idlist[*id.Domain] = Insert(idlist[*id.Domain], id.ID)
 	}
 	return idlist
 }
 func InsertIDp(ids []*ID, id *ID) []*ID {
 	index, itemFound := slices.BinarySearchFunc(ids, id, func(existing, target *ID) int {
 		return cmp.Or(
-			cmp.Compare(existing.Domain, target.Domain),
+			cmp.Compare(*existing.Domain, *target.Domain),
 			cmp.Compare(existing.ID, target.ID),
 		)
 	})
@@ -104,7 +160,7 @@ func InsertIDp(ids []*ID, id *ID) []*ID {
 func InsertID(ids []ID, id ID) []ID {
 	index, itemFound := slices.BinarySearchFunc(ids, id, func(existing, target ID) int {
 		return cmp.Or(
-			cmp.Compare(existing.Domain, target.Domain),
+			cmp.Compare(*existing.Domain, *target.Domain),
 			cmp.Compare(existing.ID, target.ID),
 		)
 	})

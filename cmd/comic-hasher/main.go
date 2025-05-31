@@ -323,7 +323,7 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 		close(server.hashingQueue)
 	}()
 	for path := range imagePaths {
-		id := ch.ID{Domain: ch.ComicVine, ID: path.IssueID}
+		id := ch.ID{Domain: ch.NewSource(ch.ComicVine), ID: path.IssueID}
 		if opts.onlyHashNewIDs && len(server.hashes.GetIDs(id)) > 0 {
 			continue
 		}

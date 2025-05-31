@@ -103,11 +103,11 @@ func (s *Server) associateIDs(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Attempting to associate %s:%s to %s:%s", domain, ID, newDomain, newID)
 	err := s.hashes.AssociateIDs([]ch.NewIDs{{
 		OldID: ch.ID{
-			Domain: domain,
+			Domain: &domain,
 			ID:     ID,
 		},
 		NewID: ch.ID{
-			Domain: newDomain,
+			Domain: &newDomain,
 			ID:     newID,
 		},
 	}})
@@ -266,7 +266,7 @@ func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 		return
 	default:
 	}
-	s.hashingQueue <- ch.Im{Im: i, Format: format, ID: ch.ID{Domain: ch.Source(domain), ID: ID}}
+	s.hashingQueue <- ch.Im{Im: i, Format: format, ID: ch.ID{Domain: ch.NewSource(domain), ID: ID}}
 	writeJson(w, http.StatusOK, result{Msg: "Success"})
 }
 
@@ -286,7 +286,7 @@ func (s *Server) hasher(workerID int, done func(int)) {
 			continue
 		}
 		hash := ch.HashImage(image)
-		if hash.ID.Domain == "" || hash.ID.ID == "" {
+		if *hash.ID.Domain == "" || hash.ID.ID == "" {
 			continue
 		}
 
@@ -304,7 +304,11 @@ func (s *Server) hasher(workerID int, done func(int)) {
 func (s *Server) reader(workerID int, done func(i int)) {
 	defer done(workerID)
 	for path := range s.readerQueue {
-		id := ch.ID{Domain: ch.Source(filepath.Base(filepath.Dir(filepath.Dir(path)))), ID: filepath.Base(filepath.Dir(path))}
+
+		id := ch.ID{
+			Domain: ch.NewSource(filepath.Base(filepath.Dir(filepath.Dir(path)))),
+			ID:     filepath.Base(filepath.Dir(path)),
+		}
 		if len(s.hashes.GetIDs(id)) > 0 {
 			continue
 		}
