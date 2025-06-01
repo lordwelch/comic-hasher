@@ -5,17 +5,17 @@ import (
 	"time"
 )
 
-type timeLog struct {
+type TimeLog struct {
 	total time.Duration
 	last  time.Time
 }
 
-func (t *timeLog) resetTime() {
+func (t *TimeLog) ResetTime() {
 	t.total = 0
 	t.last = time.Now()
 }
 
-func (t *timeLog) logTime(log string) {
+func (t *TimeLog) LogTime(log string) {
 	now := time.Now()
 	diff := now.Sub(t.last)
 	t.last = now

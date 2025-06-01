@@ -1,6 +1,6 @@
 //go:build cgo && !gokrazy
 
-package ch
+package storage
 
 import (
 	_ "github.com/mattn/go-sqlite3"

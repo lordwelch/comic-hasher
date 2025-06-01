@@ -83,6 +83,19 @@ func (f *Format) Set(s string) error {
 	return nil
 }
 
+func (h *SavedHash) Clone() SavedHash {
+	return SavedHash{
+		Hash: Hash{
+			Hash: h.Hash.Hash,
+			Kind: h.Hash.Kind,
+		},
+		ID: ID{
+			Domain: NewSource(*h.ID.Domain),
+			ID:     strings.Clone(h.ID.ID),
+		},
+	}
+}
+
 func (s *SavedHashes) InsertHash(hash SavedHash) {
 	index, itemFound := slices.BinarySearchFunc(s.Hashes, hash, func(existing SavedHash, target SavedHash) int {
 		return cmp.Or(

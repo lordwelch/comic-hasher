@@ -35,6 +35,7 @@ import (
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
 	"gitea.narnian.us/lordwelch/comic-hasher/cv"
+	"gitea.narnian.us/lordwelch/comic-hasher/storage"
 )
 
 var bufPool = &sync.Pool{
@@ -215,15 +216,15 @@ func signalHandler(s *Server) {
 func initializeStorage(opts Opts) (ch.HashStorage, error) {
 	switch opts.storageType {
 	case Map:
-		return ch.NewMapStorage()
+		return storage.NewMapStorage()
 	case BasicMap:
-		return ch.NewBasicMapStorage()
+		return storage.NewBasicMapStorage()
 	case Sqlite:
-		return ch.NewSqliteStorage("sqlite", opts.sqlitePath)
+		return storage.NewSqliteStorage("sqlite", opts.sqlitePath)
 	case Sqlite3:
-		return ch.NewSqliteStorage("sqlite3", opts.sqlitePath)
+		return storage.NewSqliteStorage("sqlite3", opts.sqlitePath)
 	case VPTree:
-		return ch.NewVPStorage()
+		return storage.NewVPStorage()
 	}
 	return nil, errors.New("Unknown storage type provided")
 }
