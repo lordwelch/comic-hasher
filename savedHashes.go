@@ -24,7 +24,11 @@ const (
 	CurrentSavedHashesVersion int = 2
 )
 
-var versionMap map[int]versionDecoder
+var versionMap = map[int]versionDecoder{
+	0: DecodeHashesV0,
+	1: DecodeHashesV1,
+	2: DecodeHashesV2,
+}
 
 var formatNames = map[Format]string{
 	JSON:    "json",

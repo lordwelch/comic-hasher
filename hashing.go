@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unsafe"
 
 	"gitea.narnian.us/lordwelch/goimagehash"
 	json "github.com/json-iterator/go"
@@ -99,7 +100,7 @@ func newSourceMap() *sync.Map {
 }
 
 func NewSource[E string | Source](s E) *Source {
-	s2 := Source(strings.ToLower(string(s)))
+	s2 := Source(strings.ToLower(Clone(string(s))))
 	sp, _ := sources.LoadOrStore(s2, &s2)
 	return sp.(*Source)
 }
@@ -108,6 +109,7 @@ func NewSource[E string | Source](s E) *Source {
 // Maps are extremely expensive in go for small maps this should only be used to return info to a user or as a map containing all IDs for a source
 type IDList map[Source][]string
 
+//go:noinline pragma
 func (a *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
 	var s struct {
 		Domain, ID string
@@ -117,12 +119,23 @@ func (a *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
 		return err
 	}
 
-	a.ID = s.ID
+	a.ID = Clone(s.ID)
 	a.Domain = NewSource(s.Domain)
 
 	return nil
 }
 
+//go:noinline pragma
+func Clone(s string) string {
+	if len(s) == 0 {
+		return ""
+	}
+	b := make([]byte, len(s))
+	copy(b, s)
+	return unsafe.String(&b[0], len(b))
+}
+
+//go:noinline pragma
 func (a *ID) UnmarshalJSON(b []byte) error {
 	var s struct {
 		Domain, ID string
@@ -131,8 +144,9 @@ func (a *ID) UnmarshalJSON(b []byte) error {
 		return err
 	}
 
-	a.ID = s.ID
-	a.Domain = NewSource(s.Domain)
+	a.ID = Clone(s.ID)
+	domain := Clone(s.Domain)
+	a.Domain = NewSource(domain)
 
 	return nil
 }

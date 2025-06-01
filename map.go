@@ -75,7 +75,7 @@ func (m *MapStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]Resul
 }
 
 // getCurrentHashes must have a read lock before using
-func (m *MapStorage) getCurrentHashes(kind goimagehash.Kind) ([]SavedHash, [8]map[uint8][]uint64) {
+func (m *MapStorage) getCurrentHashes(kind goimagehash.Kind) ([]bmHash, [8]map[uint8][]uint64) {
 	if kind == goimagehash.AHash {
 		return m.aHashes, m.partialAHash
 	}
@@ -125,9 +125,9 @@ func NewMapStorage() (HashStorage, error) {
 			ids: IDMap{
 				ids: []IDs{},
 			},
-			aHashes: []SavedHash{},
-			dHashes: []SavedHash{},
-			pHashes: []SavedHash{},
+			aHashes: []bmHash{},
+			dHashes: []bmHash{},
+			pHashes: []bmHash{},
 		},
 		partialAHash: newPartialHash(),
 		partialDHash: newPartialHash(),
@@ -149,7 +149,7 @@ func newPartialHash() [8]map[uint8][]uint64 {
 	}
 }
 
-func mapPartialHashes(hashes []SavedHash, partialHashMap [8]map[uint8][]uint64) {
+func mapPartialHashes(hashes []bmHash, partialHashMap [8]map[uint8][]uint64) {
 	for _, savedHash := range hashes {
 		for i, partialHash := range SplitHash(savedHash.Hash.Hash) {
 			partialHashMap[i][partialHash] = append(partialHashMap[i][partialHash], savedHash.Hash.Hash)

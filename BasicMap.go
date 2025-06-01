@@ -6,18 +6,34 @@ import (
 	"fmt"
 	"math/bits"
 	"slices"
+	"strings"
 	"sync"
 
 	"gitea.narnian.us/lordwelch/goimagehash"
 )
-
+type bmHash struct {
+	Hash Hash
+	ID   ID
+}
+func NewbmHash(data SavedHash) bmHash {
+	return bmHash{
+		Hash: Hash{
+			Hash: data.Hash.Hash,
+			Kind: data.Hash.Kind,
+		},
+		ID: ID{
+			Domain: data.ID.Domain,
+			ID: strings.Clone(data.ID.ID),
+		},
+	}
+}
 type basicMapStorage struct {
 	hashMutex *sync.RWMutex
 
 	ids     IDMap
-	aHashes []SavedHash
-	dHashes []SavedHash
-	pHashes []SavedHash
+	aHashes []bmHash
+	dHashes []bmHash
+	pHashes []bmHash
 }
 type IDs struct {
 	id     *ID
@@ -99,7 +115,7 @@ func (b *basicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, search
 	matchingHashes := make([]Result, 0, 20) // hope that we don't need more
 
 	mappedIds := map[int]bool{}
-	storedHash := SavedHash{} // reduces allocations and ensures queries are <1s
+	storedHash := bmHash{} // reduces allocations and ensures queries are <1s
 	for _, storedHash = range *b.getCurrentHashes(kind) {
 		distance := bits.OnesCount64(searchHash ^ storedHash.Hash.Hash)
 		if distance <= maxDistance {
@@ -177,7 +193,7 @@ func (b *basicMapStorage) GetMatches(hashes []Hash, max int, exactOnly bool) ([]
 }
 
 // getCurrentHashes must have a read lock before using
-func (b *basicMapStorage) getCurrentHashes(kind goimagehash.Kind) *[]SavedHash {
+func (b *basicMapStorage) getCurrentHashes(kind goimagehash.Kind) *[]bmHash {
 	if kind == goimagehash.AHash {
 		return &b.aHashes
 	}
@@ -195,7 +211,7 @@ func (b *basicMapStorage) getCurrentHashes(kind goimagehash.Kind) *[]SavedHash {
 // if count < 1 then no results were found
 func (b *basicMapStorage) findHash(hash Hash) (int, int) {
 	currentHashes := *b.getCurrentHashes(hash.Kind)
-	index, found := slices.BinarySearchFunc(currentHashes, hash, func(existing SavedHash, target Hash) int {
+	index, found := slices.BinarySearchFunc(currentHashes, hash, func(existing bmHash, target Hash) int {
 		return cmp.Compare(existing.Hash.Hash, target.Hash)
 	})
 	if !found {
@@ -219,7 +235,7 @@ func (b *basicMapStorage) insertHash(hash Hash, id ID) {
 		}
 	}
 
-	sh := SavedHash{hash, id}
+	sh := bmHash{hash, id}
 	*currentHashes = slices.Insert(*currentHashes, index, sh)
 	b.ids.InsertID(&sh.ID)
 }
@@ -279,19 +295,19 @@ func (b *basicMapStorage) DecodeHashes(hashes *SavedHashes) error {
 	}
 
 	// Assume they are probably fairly equally split between hash types
-	b.aHashes = make([]SavedHash, 0, aHashCount)
-	b.dHashes = make([]SavedHash, 0, dHashCount)
-	b.pHashes = make([]SavedHash, 0, pHashCount)
+	b.aHashes = make([]bmHash, 0, aHashCount)
+	b.dHashes = make([]bmHash, 0, dHashCount)
+	b.pHashes = make([]bmHash, 0, pHashCount)
 	for i := range hashes.Hashes {
-
+		bmhash := NewbmHash(hashes.Hashes[i])
 		if hashes.Hashes[i].Hash.Kind == goimagehash.AHash {
-			b.aHashes = append(b.aHashes, hashes.Hashes[i])
+			b.aHashes = append(b.aHashes, bmhash)
 		}
 		if hashes.Hashes[i].Hash.Kind == goimagehash.DHash {
-			b.dHashes = append(b.dHashes, hashes.Hashes[i])
+			b.dHashes = append(b.dHashes, bmhash)
 		}
 		if hashes.Hashes[i].Hash.Kind == goimagehash.PHash {
-			b.pHashes = append(b.pHashes, hashes.Hashes[i])
+			b.pHashes = append(b.pHashes, bmhash)
 		}
 
 		if hashes.Hashes[i].ID == (ID{}) {
@@ -300,10 +316,10 @@ func (b *basicMapStorage) DecodeHashes(hashes *SavedHashes) error {
 		}
 		// TODO: Make loading this more efficient
 		// All known equal IDs are already mapped we can add any missing ones from hashes
-		b.ids.InsertID(&hashes.Hashes[i].ID)
+		b.ids.InsertID(&bmhash.ID)
 	}
 
-	hashCmp := func(existing, target SavedHash) int {
+	hashCmp := func(existing, target bmHash) int {
 		return cmp.Or(
 			cmp.Compare(existing.Hash.Hash, target.Hash.Hash),
 			cmp.Compare(*existing.ID.Domain, *target.ID.Domain),
@@ -322,21 +338,21 @@ func (b *basicMapStorage) EncodeHashes() (*SavedHashes, error) {
 	savedHashes := SavedHashes{
 		Hashes: make([]SavedHash, 0, len(b.aHashes)+len(b.dHashes)+len(b.pHashes)),
 	}
-	savedHashes.Hashes = append(savedHashes.Hashes, b.aHashes...)
-	savedHashes.Hashes = append(savedHashes.Hashes, b.dHashes...)
-	savedHashes.Hashes = append(savedHashes.Hashes, b.pHashes...)
+	// savedHashes.Hashes = append(savedHashes.Hashes, b.aHashes...)
+	// savedHashes.Hashes = append(savedHashes.Hashes, b.dHashes...)
+	// savedHashes.Hashes = append(savedHashes.Hashes, b.pHashes...)
 
-	// Only keep groups len>1 as they are mapped in SavedHashes.Hashes
-	for _, ids := range b.ids.ids {
-		if len(*ids.idList) > 1 {
-			idl := make([]ID, 0, len(*ids.idList))
-			for _, id := range *ids.idList {
-				idl = append(idl, *id)
-			}
+	// // Only keep groups len>1 as they are mapped in SavedHashes.Hashes
+	// for _, ids := range b.ids.ids {
+	// 	if len(*ids.idList) > 1 {
+	// 		idl := make([]ID, 0, len(*ids.idList))
+	// 		for _, id := range *ids.idList {
+	// 			idl = append(idl, *id)
+	// 		}
 
-			savedHashes.IDs = append(savedHashes.IDs, idl)
-		}
-	}
+	// 		savedHashes.IDs = append(savedHashes.IDs, idl)
+	// 	}
+	// }
 
 	return &savedHashes, nil
 }
@@ -360,9 +376,9 @@ func NewBasicMapStorage() (HashStorage, error) {
 		ids: IDMap{
 			ids: []IDs{},
 		},
-		aHashes: []SavedHash{},
-		dHashes: []SavedHash{},
-		pHashes: []SavedHash{},
+		aHashes: []bmHash{},
+		dHashes: []bmHash{},
+		pHashes: []bmHash{},
 	}
 	return storage, nil
 }
