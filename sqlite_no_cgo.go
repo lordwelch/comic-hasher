@@ -1,4 +1,4 @@
-//go:build !cgo && !moderncOnly
+//go:build !cgo && !gokrazy
 
 package ch
 

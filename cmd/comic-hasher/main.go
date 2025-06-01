@@ -140,7 +140,7 @@ func main() {
 		wd = filepath.Join(wd, "comic-hasher")
 	}
 	flag.StringVar(&opts.cpuprofile, "cpuprofile", "", "Write cpu profile to file")
-	flag.StringVar(&opts.memprofile, "memprofile", "", "Write mem profile to file")
+	flag.StringVar(&opts.memprofile, "memprofile", "", "Write mem profile to file after loading hashes")
 	flag.StringVar(&opts.addr, "listen", ":8080", "Address to listen on")
 	flag.StringVar(&opts.debugPort, "debug-port", "", "Port to listen to for debug info")
 
@@ -488,13 +488,13 @@ func startServer(opts Opts) {
 	}
 
 	go signalHandler(&server)
-	log.Println("Listening on ", server.httpServer.Addr)
 	if opts.memprofile != "" {
 		f, err := os.Create(opts.memprofile)
 		if err != nil {
 			log.Fatal("could not create memory profile: ", err)
 		}
 		defer f.Close() // error handling omitted for example
+		runtime.GC()    // get up-to-date statistics
 		runtime.GC()    // get up-to-date statistics
 		// Lookup("allocs") creates a profile similar to go test -memprofile.
 		// Alternatively, use Lookup("heap") for a profile
@@ -511,6 +511,7 @@ func startServer(opts Opts) {
 	if err != nil {
 		log.Println(err)
 	}
+	log.Println("Listening on ", server.httpServer.Addr)
 
 	close(server.readerQueue)
 	log.Println("waiting on readers")
