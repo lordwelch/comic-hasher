@@ -41,11 +41,13 @@ var formatValues = map[string]Format{
 	"msgpack": Msgpack,
 }
 
-type OldSavedHashes map[Source]map[string][3]uint64
-type SavedHashesv1 struct {
-	IDs    [][]ID
-	Hashes [3]map[uint64]int
-}
+type (
+	OldSavedHashes map[Source]map[string][3]uint64
+	SavedHashesv1  struct {
+		IDs    [][]ID
+		Hashes [3]map[uint64]int
+	}
+)
 
 // SavedHashes The IDs and Hashes fields have no direct correlation
 // It is perfectly valid to have an empty IDs or an empty Hashes field
@@ -61,12 +63,16 @@ type SavedHash struct {
 	ID   ID
 }
 
-type Encoder func(any) ([]byte, error)
-type Decoder func([]byte, any) error
-type versionDecoder func(Decoder, []byte) (*SavedHashes, error)
+type (
+	Encoder        func(any) ([]byte, error)
+	Decoder        func([]byte, any) error
+	versionDecoder func(Decoder, []byte) (*SavedHashes, error)
+)
 
-var NoHashes = errors.New("no hashes")
-var DecodeError = errors.New("decoder failure")
+var (
+	ErrNoHashes   = errors.New("no hashes")
+	ErrDecodeFail = errors.New("decoder failure")
+)
 
 func (f Format) String() string {
 	if name, known := formatNames[f]; known {
@@ -79,7 +85,7 @@ func (f *Format) Set(s string) error {
 	if format, known := formatValues[strings.ToLower(s)]; known {
 		*f = format
 	} else {
-		return fmt.Errorf("Unknown format: %d", f)
+		return fmt.Errorf("unknown format: %d", f)
 	}
 	return nil
 }
@@ -167,10 +173,10 @@ func DecodeHashesV0(decode Decoder, hashes []byte) (*SavedHashes, error) {
 	loadedHashes := OldSavedHashes{}
 	err := decode(hashes, &loadedHashes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", DecodeError, err)
+		return nil, fmt.Errorf("%w: %w", ErrDecodeFail, err)
 	}
 	if len(loadedHashes) == 0 {
-		return nil, NoHashes
+		return nil, ErrNoHashes
 	}
 	fmt.Println("Loaded V0 hashes")
 	return ConvertHashesV0(loadedHashes), nil
@@ -181,14 +187,14 @@ func DecodeHashesV1(decode Decoder, hashes []byte) (*SavedHashes, error) {
 	loadedHashes := SavedHashesv1{}
 	err := decode(hashes, &loadedHashes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", DecodeError, err)
+		return nil, fmt.Errorf("%w: %w", ErrDecodeFail, err)
 	}
 	hashesCount := 0
 	for _, hashes := range loadedHashes.Hashes {
 		hashesCount += len(hashes)
 	}
 	if hashesCount < 1 {
-		return nil, NoHashes
+		return nil, ErrNoHashes
 	}
 	fmt.Println("Loaded V1 hashes")
 	return ConvertHashesV1(loadedHashes), nil
@@ -199,10 +205,10 @@ func DecodeHashesV2(decode Decoder, hashes []byte) (*SavedHashes, error) {
 	loadedHashes := SavedHashes{}
 	err := decode(hashes, &loadedHashes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", DecodeError, err)
+		return nil, fmt.Errorf("%w: %w", ErrDecodeFail, err)
 	}
 	if len(loadedHashes.Hashes) < 1 && len(loadedHashes.IDs) < 1 {
-		return nil, NoHashes
+		return nil, ErrNoHashes
 	}
 
 	fmt.Println("Length of hashes", len(loadedHashes.Hashes))
@@ -219,15 +225,16 @@ func getSavedHashesVersion(decode Decoder, hashes []byte) (int, error) {
 	var savedVersion version
 	err := decode(hashes, &savedVersion)
 	if err != nil {
-		log.Println("Failed to decode saved hashes version: %v", err)
-		return -1, fmt.Errorf("%w: %w", DecodeError, err)
+		log.Printf("Failed to decode saved hashes version: %v", err)
+		return -1, fmt.Errorf("%w: %w", ErrDecodeFail, err)
 	}
 	if savedVersion.Version > 1 {
-		log.Println("Decoded saved hashes version: %v", savedVersion.Version)
+		log.Printf("Decoded saved hashes version: %v", savedVersion.Version)
 		return savedVersion.Version, nil
 	}
 	return -1, nil
 }
+
 func DecodeHashes(format Format, hashes []byte) (*SavedHashes, error) {
 	var decode Decoder
 	switch format {
@@ -239,7 +246,7 @@ func DecodeHashes(format Format, hashes []byte) (*SavedHashes, error) {
 		fmt.Println("Decode JSON")
 
 	default:
-		return nil, fmt.Errorf("Unknown format: %v", format)
+		return nil, fmt.Errorf("unknown format: %v", format)
 	}
 	version, err := getSavedHashesVersion(decode, hashes)
 	if err != nil {
@@ -261,7 +268,7 @@ func DecodeHashes(format Format, hashes []byte) (*SavedHashes, error) {
 		}
 	}
 
-	return nil, NoHashes
+	return nil, ErrNoHashes
 }
 
 func EncodeHashes(hashes *SavedHashes, format Format) ([]byte, error) {
@@ -272,7 +279,7 @@ func EncodeHashes(hashes *SavedHashes, format Format) ([]byte, error) {
 	case JSON:
 		encoder = json.Marshal
 	default:
-		return nil, fmt.Errorf("Unknown format: %v", format)
+		return nil, fmt.Errorf("unknown format: %v", format)
 	}
 
 	hashes.Version = CurrentSavedHashesVersion

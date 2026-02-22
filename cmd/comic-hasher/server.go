@@ -73,31 +73,31 @@ func (s *Server) associateIDs(w http.ResponseWriter, r *http.Request) {
 	if ID == "" {
 		msg := "No ID Provided"
 		log.Println(msg)
-		writeJson(w, http.StatusBadRequest, result{Msg: msg})
+		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
 		return
 	}
 	if domain == "" {
 		msg := "No domain Provided"
 		log.Println(msg)
-		writeJson(w, http.StatusBadRequest, result{Msg: msg})
+		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
 		return
 	}
 	if newID == "" {
 		msg := "No newID Provided"
 		log.Println(msg)
-		writeJson(w, http.StatusBadRequest, result{Msg: msg})
+		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
 		return
 	}
 	if newDomain == "" {
 		msg := "No newDomain Provided"
 		log.Println(msg)
-		writeJson(w, http.StatusBadRequest, result{Msg: msg})
+		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
 		return
 	}
 	if newDomain == domain {
 		msg := "newDomain cannot be the same as the existing domain"
 		log.Println(msg)
-		writeJson(w, http.StatusBadRequest, result{Msg: msg})
+		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
 		return
 	}
 	log.Printf("Attempting to associate %s:%s to %s:%s", domain, ID, newDomain, newID)
@@ -113,9 +113,9 @@ func (s *Server) associateIDs(w http.ResponseWriter, r *http.Request) {
 	}})
 
 	if err == nil {
-		writeJson(w, http.StatusOK, result{Msg: "New ID added"})
+		writeJSON(w, http.StatusOK, result{Msg: "New ID added"})
 	} else {
-		writeJson(w, http.StatusOK, result{Msg: err.Error()})
+		writeJSON(w, http.StatusOK, result{Msg: err.Error()})
 	}
 }
 
@@ -124,7 +124,7 @@ type result struct {
 	Msg     string      `json:"msg,omitempty"`
 }
 
-func writeJson(w http.ResponseWriter, status int, res result) {
+func writeJSON(w http.ResponseWriter, status int, res result) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	var (
@@ -156,20 +156,19 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		ahash     uint64
 		dhash     uint64
 		phash     uint64
-		max       int = 8
-		max_tmp   int
+		max       int
 		err       error
 		hashes    []ch.Hash
 	)
 
 	if simple {
-		writeJson(w, http.StatusBadRequest, result{Msg: "Simple results are no longer Supported"})
+		writeJSON(w, http.StatusBadRequest, result{Msg: "Simple results are no longer Supported"})
 		return
 	}
 
 	if ahash, err = strconv.ParseUint(ahashStr, 16, 64); err != nil && ahashStr != "" {
 		log.Printf("could not parse ahash: %s", ahashStr)
-		writeJson(w, http.StatusBadRequest, result{Msg: "hash parse failed"})
+		writeJSON(w, http.StatusBadRequest, result{Msg: "hash parse failed"})
 		return
 	}
 	if ahash > 0 {
@@ -177,7 +176,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 	if dhash, err = strconv.ParseUint(dhashStr, 16, 64); err != nil && dhashStr != "" {
 		log.Printf("could not parse dhash: %s", dhashStr)
-		writeJson(w, http.StatusBadRequest, result{Msg: "hash parse failed"})
+		writeJSON(w, http.StatusBadRequest, result{Msg: "hash parse failed"})
 		return
 	}
 	if dhash > 0 {
@@ -185,24 +184,23 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 	if phash, err = strconv.ParseUint(phashStr, 16, 64); err != nil && phashStr != "" {
 		log.Printf("could not parse phash: %s", phashStr)
-		writeJson(w, http.StatusBadRequest, result{Msg: "hash parse failed"})
+		writeJSON(w, http.StatusBadRequest, result{Msg: "hash parse failed"})
 		return
 	}
 	if phash > 0 {
 		hashes = append(hashes, ch.Hash{Hash: phash, Kind: goimagehash.PHash})
 	}
-	if max_tmp, err = strconv.Atoi(maxStr); err != nil && maxStr != "" {
+	if tmpMax, err := strconv.Atoi(maxStr); err != nil && maxStr != "" {
 		log.Printf("Invalid Max: %s", maxStr)
-		writeJson(w, http.StatusBadRequest, result{Msg: fmt.Sprintf("Invalid Max: %s", maxStr)})
+		writeJSON(w, http.StatusBadRequest, result{Msg: fmt.Sprintf("Invalid Max: %s", maxStr)})
 		return
-	}
-	if maxStr != "" {
-		max = max_tmp
+	} else {
+		max = tmpMax
 	}
 
 	if max > 8 {
 		log.Printf("Max must be less than 9: %d", max)
-		writeJson(w, http.StatusBadRequest, result{Msg: fmt.Sprintf("Max must be less than 9: %d", max)})
+		writeJSON(w, http.StatusBadRequest, result{Msg: fmt.Sprintf("Max must be less than 9: %d", max)})
 		return
 	}
 	matches, err := s.hashes.GetMatches(hashes, max, exactOnly)
@@ -211,19 +209,19 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	})
 	log.Println(err)
 	if len(matches) > 0 {
-		var msg string = ""
+		var msg string
 		if err != nil {
 			msg = err.Error()
 		}
 
-		writeJson(w, http.StatusOK, result{
+		writeJSON(w, http.StatusOK, result{
 			Results: matches,
 			Msg:     msg,
 		})
 		return
 	}
 
-	writeJson(w, http.StatusNotFound, result{Msg: "No hashes found"})
+	writeJSON(w, http.StatusNotFound, result{Msg: "No hashes found"})
 }
 
 func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
@@ -244,19 +242,19 @@ func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 
 	if ID == "" {
 		log.Println("No ID Provided")
-		writeJson(w, http.StatusBadRequest, result{Msg: "No ID Provided"})
+		writeJSON(w, http.StatusBadRequest, result{Msg: "No ID Provided"})
 		return
 	}
 	if domain == "" {
 		log.Println("No domain Provided")
-		writeJson(w, http.StatusBadRequest, result{Msg: "No Domain Provided"})
+		writeJSON(w, http.StatusBadRequest, result{Msg: "No Domain Provided"})
 		return
 	}
 	i, format, err := image.Decode(r.Body)
 	if err != nil {
 		msg := fmt.Sprintf("Failed to decode Image: %s", err)
 		log.Println(msg)
-		writeJson(w, http.StatusBadRequest, result{Msg: msg})
+		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
 		return
 	}
 	log.Printf("Decoded %s image from %s", format, user)
@@ -267,7 +265,7 @@ func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 	default:
 	}
 	s.hashingQueue <- ch.Im{Im: i, Format: format, ID: ch.ID{Domain: ch.NewSource(domain), ID: ID}}
-	writeJson(w, http.StatusOK, result{Msg: "Success"})
+	writeJSON(w, http.StatusOK, result{Msg: "Success"})
 }
 
 func (s *Server) mapper(done func()) {

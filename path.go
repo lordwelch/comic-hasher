@@ -10,7 +10,12 @@ func RmdirP(path string) error {
 	if err != nil {
 		return err
 	}
-	dir, _ := filepath.Split(path)
-	_ = RmdirP(dir) // We only care about errors for the first directory we always expect atleast one to fail
+	for path != "" {
+		dir, _ := filepath.Split(path)
+		err := os.Remove(dir)
+		if err != nil {
+			return nil // We only care about errors for the first directory we always expect atleast one to fail
+		}
+	}
 	return nil
 }

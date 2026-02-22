@@ -2,6 +2,7 @@ package ch
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -11,25 +12,26 @@ import (
 )
 
 type CHDBSqlite struct {
-	comicvinePath  string
+	path           string
 	sql            *sql.DB
 	deleteExisting bool
 }
 
-func OpenCHDBSqlite(path string, comicvinePath string, deleteExisting bool) (CHDBSqlite, error) {
-	path, _ = filepath.Abs(path)
-	err := os.MkdirAll(filepath.Dir(path), 0o755)
+func OpenCHDBSqlite(path string, deleteExisting bool) (CHDBSqlite, error) {
+	path, err := filepath.Abs(path)
 	if err != nil {
-		panic("Unable to create directory " + filepath.Dir(path))
+		return CHDBSqlite{path, nil, deleteExisting}, fmt.Errorf("find path to database: %w", err)
 	}
-	println(fmt.Sprintf("file://%s?&_pragma=busy_timeout(500)&_pragma=journal_mode(wal)", path))
-	sql, err := sql.Open("sqlite", fmt.Sprintf("file://%s?&_pragma=busy_timeout(500)&_pragma=journal_mode(wal)", path))
+	dbPath := filepath.Join(path, "chdb.db")
+	dbURL := fmt.Sprintf("file://%s?&_pragma=busy_timeout(500)&_pragma=journal_mode(wal)", dbPath)
+	log.Println("Opening sqlite chdb", dbURL)
+	sql, err := sql.Open("sqlite", dbURL)
 	if err != nil {
-		return CHDBSqlite{comicvinePath, sql, deleteExisting}, fmt.Errorf("Failed to open database: %w", err)
+		return CHDBSqlite{path, sql, deleteExisting}, fmt.Errorf("failed to open database: %w", err)
 	}
 	err = sql.Ping()
 	if err != nil {
-		return CHDBSqlite{comicvinePath, sql, deleteExisting}, fmt.Errorf("Failed to open database: %w", err)
+		return CHDBSqlite{path, sql, deleteExisting}, fmt.Errorf("failed to open database: %w", err)
 	}
 	_, err = sql.Exec(`
 CREATE TABLE IF NOT EXISTS paths(
@@ -40,13 +42,12 @@ CREATE TABLE IF NOT EXISTS bad_urls(
 );
 `)
 	if err != nil {
-		err = fmt.Errorf("Failed to create table: %w", err)
+		err = fmt.Errorf("failed to create table: %w", err)
 	}
-	return CHDBSqlite{comicvinePath, sql, deleteExisting}, err
+	return CHDBSqlite{path, sql, deleteExisting}, err
 }
 
-func (s CHDBSqlite) Dump() (paths []string, bad_urls []string) {
-
+func (s CHDBSqlite) Dump() (paths []string, badURLs []string) {
 	rows, err := s.sql.Query("SELECT path from paths")
 	if err != nil {
 		panic(err)
@@ -73,21 +74,25 @@ func (s CHDBSqlite) Dump() (paths []string, bad_urls []string) {
 		if err != nil {
 			panic(err)
 		}
-		bad_urls = append(bad_urls, value)
+		badURLs = append(badURLs, value)
 	}
 	rows.Close()
-	return paths, bad_urls
+	return paths, badURLs
 }
 
 func (s CHDBSqlite) PathHashed(path string) bool {
-	path, _ = filepath.Rel(s.comicvinePath, path)
-	dbPath := ""
-
+	if filepath.IsAbs(path) {
+		log.Panic("Absolute path given to chdb:", path)
+	}
+	var dbPath string
 	if s.deleteExisting {
 		_ = s.sql.QueryRow("SELECT path FROM paths where path=?", path).Scan(&dbPath)
 
 		if dbPath == path {
-			os.Remove(filepath.Join(s.comicvinePath, path))
+			err := os.Remove(filepath.Join(s.path, path))
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				log.Println("Failed to delete hashed image:", err)
+			}
 		}
 		return dbPath == path
 	}
@@ -97,10 +102,11 @@ func (s CHDBSqlite) PathHashed(path string) bool {
 }
 
 func (s CHDBSqlite) PathDownloaded(path string) bool {
-	relPath, _ := filepath.Rel(s.comicvinePath, path)
-
+	if filepath.IsAbs(path) {
+		log.Panic("Absolute path given to chdb:", path)
+	}
 	count := 0
-	_ = s.sql.QueryRow("SELECT count(path) FROM paths where path=?", relPath).Scan(&count)
+	_ = s.sql.QueryRow("SELECT count(path) FROM paths where path=?", path).Scan(&count)
 	if count != 1 {
 		f, err := os.Open(path)
 		if err == nil {
@@ -112,14 +118,19 @@ func (s CHDBSqlite) PathDownloaded(path string) bool {
 }
 
 func (s CHDBSqlite) AddPath(path string) {
-	relPath, _ := filepath.Rel(s.comicvinePath, path)
-	_, err := s.sql.Exec("INSERT INTO paths VALUES(?) ON CONFLICT DO NOTHING", relPath)
+	if filepath.IsAbs(path) {
+		log.Panic("Absolute path given to chdb:", path)
+	}
+	_, err := s.sql.Exec("INSERT INTO paths VALUES(?) ON CONFLICT DO NOTHING", path)
 	if err != nil {
-		log.Println(fmt.Errorf("Failed to insert %v into paths: %w", relPath, err))
+		log.Println(fmt.Errorf("failed to insert %v into paths: %w", path, err))
 	}
 
 	if s.deleteExisting {
-		_ = os.Remove(path)
+		err = os.Remove(filepath.Join(s.path, path))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Println("Failed to delete hashed image:", err)
+		}
 		_ = RmdirP(filepath.Dir(path))
 	}
 }
@@ -133,7 +144,7 @@ func (s CHDBSqlite) CheckURL(url string) bool {
 func (s CHDBSqlite) AddURL(url string) {
 	_, err := s.sql.Exec("INSERT INTO bad_urls VALUES(?) ON CONFLICT DO NOTHING", url)
 	if err != nil {
-		log.Println(fmt.Errorf("Failed to insert %v into bad_urls: %w", url, err))
+		log.Println(fmt.Errorf("failed to insert %v into bad_urls: %w", url, err))
 	}
 }
 

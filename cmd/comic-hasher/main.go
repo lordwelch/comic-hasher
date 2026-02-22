@@ -84,7 +84,7 @@ func (f *Storage) Set(s string) error {
 	if storage, known := storageValues[strings.ToLower(s)]; known {
 		*f = storage
 	} else {
-		return fmt.Errorf("Unknown storage type: %d", f)
+		return fmt.Errorf("unknown storage type: %d", f)
 	}
 	return nil
 }
@@ -92,7 +92,6 @@ func (f *Storage) Set(s string) error {
 type CVOpts struct {
 	downloadCovers bool
 	APIKey         string
-	path           string
 	thumbOnly      bool
 	originalOnly   bool
 	hashDownloaded bool
@@ -102,11 +101,9 @@ type Opts struct {
 	cpuprofile         string
 	memprofile         string
 	coverPath          string
-	sqlitePath         string
 	loadEmbeddedHashes bool
 	saveEmbeddedHashes bool
 	format             ch.Format
-	hashesPath         string
 	storageType        Storage
 	onlyHashNewIDs     bool
 	deleteHashedImages bool
@@ -142,25 +139,22 @@ func main() {
 	}
 	flag.StringVar(&opts.cpuprofile, "cpuprofile", "", "Write cpu profile to file")
 	flag.StringVar(&opts.memprofile, "memprofile", "", "Write mem profile to file after loading hashes")
-	flag.StringVar(&opts.addr, "listen", ":8080", "Address to listen on")
+	flag.StringVar(&opts.addr, "listen", "127.0.0.1:8080", "Address to listen on")
 	flag.StringVar(&opts.debugPort, "debug-port", "", "Port to listen to for debug info")
 
 	flag.StringVar(&opts.path, "path", wd, "Path for comic-hasher to store files")
 	flag.StringVar(&opts.coverPath, "cover-path", "", "Path to local covers to add to hash database. Must be in the form '{cover-path}/{domain}/{id}/*' eg for --cover-path /covers it should look like /covers/comicvine.gamespot.com/10000/image.gif")
-	flag.StringVar(&opts.sqlitePath, "sqlite-path", "", fmt.Sprintf("Path to sqlite database to use for matching hashes, substantialy reduces memory usage (default %v)", filepath.Join(wd, "tmp.sqlite")))
 	flag.BoolVar(&opts.loadEmbeddedHashes, "use-embedded-hashes", true, "Use hashes embedded in the application as a starting point")
 	flag.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", false, "Save hashes even if we loaded the embedded hashes")
-	flag.StringVar(&opts.hashesPath, "hashes", "", fmt.Sprintf("Path to optionally gziped hashes in msgpack or json format. You must disable embedded hashes to use this option (default %v)", filepath.Join(wd, "hashes.gz")))
 	flag.Var(&opts.format, "save-format", "Specify the format to export hashes to (json, msgpack)")
 	flag.Var(&opts.storageType, "storage-type", "Specify the storage type used internally to search hashes (sqlite,sqlite3,map,basicmap,vptree)")
 	flag.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers from CV/local path (Note: If there are multiple covers for the same ID they may get queued at the same time and hashed on the first run, implies -cv-thumb-only if -delete-hashed-images is true or -cv-keep-downloaded is false)")
 	flag.BoolVar(&opts.deleteHashedImages, "delete-hashed-images", false, "Deletes downloaded images after hashing them, useful to save space, paths are recorded in ch.sqlite")
 
-	flag.BoolVar(&opts.cv.downloadCovers, "cv-dl-covers", false, "Downloads all covers from ComicVine and adds them to the server")
+	flag.BoolVar(&opts.cv.downloadCovers, "cv-dl-covers", false, "Downloads covers from ComicVine hashes them and adds them to the database")
 	flag.StringVar(&opts.cv.APIKey, "cv-api-key", "", "API Key to use to access the ComicVine API")
-	flag.StringVar(&opts.cv.path, "cv-path", "", fmt.Sprintf("Path to store ComicVine data in (default %v)", filepath.Join(wd, "comicvine")))
-	flag.BoolVar(&opts.cv.thumbOnly, "cv-thumb-only", true, "Only downloads the thumbnail image from comicvine, when false sets -only-hash-new-ids=false")
-	flag.BoolVar(&opts.cv.originalOnly, "cv-original-only", true, "Only downloads the original image from comicvine, when false sets -only-hash-new-ids=false")
+	flag.BoolVar(&opts.cv.thumbOnly, "cv-thumb-only", true, "Only downloads the thumbnail image from comicvine (quicker than hashing the full-size original), when false sets -only-hash-new-ids=false")
+	flag.BoolVar(&opts.cv.originalOnly, "cv-original-only", true, "Only downloads the original image from comicvine (much quicker than hashing all variations), when false sets -only-hash-new-ids=false")
 	flag.BoolVar(&opts.cv.hashDownloaded, "cv-hash-downloaded", true, "Hash already downloaded images")
 	flag.BoolVar(&opts.cv.keepDownloaded, "cv-keep-downloaded", true, "Keep downloaded images. When set to false does not ever write to the filesystem, a crash or exiting can mean some images need to be re-downloaded")
 	flag.Parse()
@@ -181,19 +175,8 @@ func main() {
 			log.Fatal("No ComicVine API Key provided")
 		}
 	}
+
 	opts.path, _ = filepath.Abs(opts.path)
-	if opts.hashesPath == "" {
-		opts.hashesPath = filepath.Join(opts.path, "hashes.gz")
-	}
-	opts.hashesPath, _ = filepath.Abs(opts.hashesPath)
-	if opts.sqlitePath == "" {
-		opts.sqlitePath = filepath.Join(opts.path, "tmp.sqlite")
-	}
-	opts.sqlitePath, _ = filepath.Abs(opts.sqlitePath)
-	if opts.cv.path == "" {
-		opts.cv.path = filepath.Join(opts.path, "comicvine")
-	}
-	opts.cv.path, _ = filepath.Abs(opts.cv.path)
 	pretty.Log(opts)
 
 	// TODO: Fix options
@@ -220,16 +203,19 @@ func initializeStorage(opts Opts) (ch.HashStorage, error) {
 	case BasicMap:
 		return storage.NewBasicMapStorage()
 	case Sqlite:
-		return storage.NewSqliteStorage("sqlite", opts.sqlitePath)
+		return storage.NewSqliteStorage("sqlite", filepath.Join(opts.path, "tmp.sqlite"))
 	case Sqlite3:
-		return storage.NewSqliteStorage("sqlite3", opts.sqlitePath)
+		return storage.NewSqliteStorage("sqlite3", filepath.Join(opts.path, "tmp.sqlite"))
 	case VPTree:
 		return storage.NewVPStorage()
 	}
-	return nil, errors.New("Unknown storage type provided")
+	return nil, errors.New("unknown storage type provided")
 }
 
+const hashesFilename = "hashes.gz"
+
 func loadHashes(opts Opts) *ch.SavedHashes {
+	hashesPath := filepath.Join(opts.path, hashesFilename)
 	var hashes []byte
 	if opts.loadEmbeddedHashes && len(ch.Hashes) != 0 {
 		fmt.Println("Loading embedded hashes")
@@ -243,7 +229,7 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 		}
 	} else {
 		fmt.Println("Loading saved hashes")
-		if f, err := os.Open(opts.hashesPath); err == nil {
+		if f, err := os.Open(hashesPath); err == nil {
 			var r io.ReadCloser = f
 			if gr, err := gzip.NewReader(f); err == nil {
 				r = gr
@@ -272,12 +258,12 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 		err          error
 	)
 	for _, format = range []ch.Format{ch.Msgpack, ch.JSON} {
-		if loadedHashes, err = ch.DecodeHashes(format, hashes); errors.Is(err, ch.DecodeError) {
+		if loadedHashes, err = ch.DecodeHashes(format, hashes); errors.Is(err, ch.ErrDecodeFail) {
 			continue
 		}
 		break
 	}
-	if errors.Is(err, ch.NoHashes) {
+	if errors.Is(err, ch.ErrNoHashes) {
 		log.Println("No saved hashes to load", loadedHashes, err)
 		return loadedHashes
 	}
@@ -287,16 +273,18 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 	fmt.Printf("Loaded %s hashes\n", format)
 	return loadedHashes
 }
+
 func saveHashes(opts Opts, hashes *ch.SavedHashes) error {
 	if opts.loadEmbeddedHashes && !opts.saveEmbeddedHashes {
 		return errors.New("refusing to save embedded hashes")
 	}
+	hashesPath := filepath.Join(opts.path, hashesFilename)
 
 	encodedHashes, err := ch.EncodeHashes(hashes, opts.format)
 	if err != nil {
 		return fmt.Errorf("unable to encode hashes as %v: %w", opts.format, err)
 	}
-	f, err := os.Create(opts.hashesPath)
+	f, err := os.Create(hashesPath)
 	if err != nil {
 		return fmt.Errorf("unabled to save hashes: %w", err)
 	}
@@ -337,7 +325,7 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 			err  error
 		)
 		if path.Image == nil {
-			file, err = os.OpenFile(path.Dest, os.O_RDWR, 0666)
+			file, err = os.OpenFile(path.Dest, os.O_RDWR, 0o666)
 			if err != nil {
 				panic(err)
 			}
@@ -369,6 +357,7 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 		server.hashingQueue <- im
 	}
 }
+
 func printMemStats(m runtime.MemStats) {
 	fmt.Printf("Alloc = %v MiB\n", bToKb(m.Alloc))
 	fmt.Printf("TotalAlloc = %v MiB\n", bToKb(m.TotalAlloc))
@@ -449,7 +438,7 @@ func startServer(opts Opts) {
 	}
 
 	server.HashLocalImages(opts)
-	chdb, err := ch.OpenCHDBBolt(filepath.Join(opts.path, "chdb.bolt"), opts.cv.path, opts.deleteHashedImages)
+	chdb, err := ch.OpenCHDBBolt(opts.path, opts.deleteHashedImages)
 	if err != nil {
 		panic(err)
 	}
@@ -472,7 +461,7 @@ func startServer(opts Opts) {
 		} else if opts.cv.originalOnly {
 			imageTypes = append(imageTypes, "original_url")
 		}
-		cvdownloader := cv.NewCVDownloader(server.Context, bufPool, opts.onlyHashNewIDs, server.hashes.GetIDs, chdb, opts.cv.path, opts.cv.APIKey, imageTypes, opts.cv.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
+		cvdownloader := cv.NewCVDownloader(server.Context, bufPool, opts.onlyHashNewIDs, server.hashes.GetIDs, chdb, filepath.Join(opts.path, "comicvine"), opts.cv.APIKey, imageTypes, opts.cv.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
 		go func() {
 			defer dwg.Done()
 			cv.DownloadCovers(cvdownloader)
@@ -556,7 +545,7 @@ func startServer(opts Opts) {
 	// the server has been stopped so it's not needed here
 	hashes, err := server.hashes.EncodeHashes()
 	if err != nil {
-		panic(fmt.Errorf("Failed to save hashes: %w", err))
+		panic(fmt.Errorf("uailed to save hashes: %w", err))
 	}
 	if err = saveHashes(opts, hashes); err != nil {
 		panic(err)

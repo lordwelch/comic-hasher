@@ -109,8 +109,7 @@ func NewSource[E string | Source](s E) *Source {
 // Maps are extremely expensive in go for small maps this should only be used to return info to a user or as a map containing all IDs for a source
 type IDList map[Source][]string
 
-//go:noinline pragma
-func (a *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
+func (id *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
 	var s struct {
 		Domain, ID string
 	}
@@ -119,13 +118,12 @@ func (a *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
 		return err
 	}
 
-	a.ID = Clone(s.ID)
-	a.Domain = NewSource(s.Domain)
+	id.ID = Clone(s.ID)
+	id.Domain = NewSource(s.Domain)
 
 	return nil
 }
 
-//go:noinline pragma
 func Clone(s string) string {
 	if len(s) == 0 {
 		return ""
@@ -135,8 +133,7 @@ func Clone(s string) string {
 	return unsafe.String(&b[0], len(b))
 }
 
-//go:noinline pragma
-func (a *ID) UnmarshalJSON(b []byte) error {
+func (id *ID) UnmarshalJSON(b []byte) error {
 	var s struct {
 		Domain, ID string
 	}
@@ -144,9 +141,9 @@ func (a *ID) UnmarshalJSON(b []byte) error {
 		return err
 	}
 
-	a.ID = Clone(s.ID)
+	id.ID = Clone(s.ID)
 	domain := Clone(s.Domain)
-	a.Domain = NewSource(domain)
+	id.Domain = NewSource(domain)
 
 	return nil
 }
@@ -158,6 +155,7 @@ func ToIDList(ids []ID) IDList {
 	}
 	return idlist
 }
+
 func InsertIDp(ids []*ID, id *ID) []*ID {
 	index, itemFound := slices.BinarySearchFunc(ids, id, func(existing, target *ID) int {
 		return cmp.Or(
@@ -227,9 +225,7 @@ func HashImage(i Im) ImageHash {
 		i.Im = goimagehash.FancyUpscale(i.Im.(*image.YCbCr))
 	}
 
-	var (
-		err error
-	)
+	var err error
 
 	ahash, err := goimagehash.AverageHash(i.Im)
 	if err != nil {
