@@ -4,8 +4,8 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
-	"slices"
 	"log"
+	"slices"
 	"strings"
 
 	// json "github.com/goccy/go-json"
@@ -62,7 +62,7 @@ type SavedHash struct {
 }
 
 type Encoder func(any) ([]byte, error)
-type Decoder func([]byte, interface{}) error
+type Decoder func([]byte, any) error
 type versionDecoder func(Decoder, []byte) (*SavedHashes, error)
 
 var NoHashes = errors.New("no hashes")
