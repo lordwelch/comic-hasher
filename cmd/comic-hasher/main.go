@@ -157,7 +157,13 @@ func main() {
 	flag.BoolVar(&opts.cv.originalOnly, "cv-original-only", true, "Only downloads the original image from comicvine (much quicker than hashing all variations), when false sets -only-hash-new-ids=false")
 	flag.BoolVar(&opts.cv.hashDownloaded, "cv-hash-downloaded", true, "Hash already downloaded images")
 	flag.BoolVar(&opts.cv.keepDownloaded, "cv-keep-downloaded", true, "Keep downloaded images. When set to false does not ever write to the filesystem, a crash or exiting can mean some images need to be re-downloaded")
+	showVersion := flag.Bool("version", false, "show version and quit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("comic-hasher version:", opts.version)
+		os.Exit(0)
+	}
 
 	if opts.debugPort != "" {
 		go func() {
