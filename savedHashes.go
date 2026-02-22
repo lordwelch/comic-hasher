@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"log"
 	"strings"
 
 	// json "github.com/goccy/go-json"
@@ -162,6 +163,7 @@ func ConvertHashesV1(oldHashes SavedHashesv1) *SavedHashes {
 }
 
 func DecodeHashesV0(decode Decoder, hashes []byte) (*SavedHashes, error) {
+	log.Println("Attempting to decode v0 hashes")
 	loadedHashes := OldSavedHashes{}
 	err := decode(hashes, &loadedHashes)
 	if err != nil {
@@ -175,6 +177,7 @@ func DecodeHashesV0(decode Decoder, hashes []byte) (*SavedHashes, error) {
 }
 
 func DecodeHashesV1(decode Decoder, hashes []byte) (*SavedHashes, error) {
+	log.Println("Attempting to decode v1 hashes")
 	loadedHashes := SavedHashesv1{}
 	err := decode(hashes, &loadedHashes)
 	if err != nil {
@@ -192,7 +195,7 @@ func DecodeHashesV1(decode Decoder, hashes []byte) (*SavedHashes, error) {
 }
 
 func DecodeHashesV2(decode Decoder, hashes []byte) (*SavedHashes, error) {
-	fmt.Println("Decode v2 hashes")
+	log.Println("Attempting to decode v2 hashes")
 	loadedHashes := SavedHashes{}
 	err := decode(hashes, &loadedHashes)
 	if err != nil {
@@ -212,12 +215,15 @@ func getSavedHashesVersion(decode Decoder, hashes []byte) (int, error) {
 	type version struct {
 		Version int
 	}
+	log.Println("Attempting to decode saved hashes version")
 	var savedVersion version
 	err := decode(hashes, &savedVersion)
 	if err != nil {
+		log.Println("Failed to decode saved hashes version: %v", err)
 		return -1, fmt.Errorf("%w: %w", DecodeError, err)
 	}
 	if savedVersion.Version > 1 {
+		log.Println("Decoded saved hashes version: %v", savedVersion.Version)
 		return savedVersion.Version, nil
 	}
 	return -1, nil

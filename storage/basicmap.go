@@ -171,7 +171,6 @@ func (b *basicMapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) 
 
 	for _, hash := range hashes {
 		foundMatches = append(foundMatches, b.atleast(hash.Kind, max, hash.Hash)...)
-
 	}
 	fmt.Println("Total partial hashes tested:", totalPartialHashes, len(foundHashes))
 	return foundMatches, nil
