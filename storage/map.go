@@ -25,7 +25,7 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 	defer m.hashMutex.RUnlock()
 
 	if exactOnly { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
-		foundMatches = m.exactMatches(hashes, max)
+		foundMatches = m.exactMatches(hashes)
 
 		tl.LogTime("Search Exact")
 		if len(foundMatches) > 0 {
@@ -122,7 +122,6 @@ func (m *MapStorage) DecodeHashes(hashes *ch.SavedHashes) error {
 }
 
 func NewMapStorage() (ch.HashStorage, error) {
-
 	storage := &MapStorage{
 		basicMapStorage: basicMapStorage{
 			hashMutex: &sync.RWMutex{},
@@ -142,14 +141,14 @@ func NewMapStorage() (ch.HashStorage, error) {
 
 func newPartialHash() [8]map[uint8][]uint64 {
 	return [8]map[uint8][]uint64{
-		map[uint8][]uint64{},
-		map[uint8][]uint64{},
-		map[uint8][]uint64{},
-		map[uint8][]uint64{},
-		map[uint8][]uint64{},
-		map[uint8][]uint64{},
-		map[uint8][]uint64{},
-		map[uint8][]uint64{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
 	}
 }
 

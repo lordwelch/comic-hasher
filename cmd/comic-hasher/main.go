@@ -224,7 +224,7 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 	hashesPath := filepath.Join(opts.path, hashesFilename)
 	var hashes []byte
 	if opts.loadEmbeddedHashes && len(ch.Hashes) != 0 {
-		fmt.Println("Loading embedded hashes")
+		log.Println("Loading embedded hashes")
 		hashes = ch.Hashes
 		if gr, err := gzip.NewReader(bytes.NewReader(ch.Hashes)); err == nil {
 			hashes, err = io.ReadAll(gr)
@@ -234,7 +234,7 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 			gr.Close()
 		}
 	} else {
-		fmt.Println("Loading saved hashes")
+		log.Println("Loading saved hashes")
 		if f, err := os.Open(hashesPath); err == nil {
 			var r io.ReadCloser = f
 			if gr, err := gzip.NewReader(f); err == nil {
@@ -250,7 +250,7 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 			}
 		} else {
 			if errors.Is(err, os.ErrNotExist) {
-				log.Println("No saved hashes to load")
+				log.Println("No saved hashes to load at", hashesPath)
 			} else {
 				log.Println("Unable to load saved hashes", err)
 			}
@@ -274,9 +274,9 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 		return loadedHashes
 	}
 	if err != nil {
-		panic(fmt.Sprintf("Failed to decode hashes: %s", err))
+		log.Panicf("Failed to decode hashes: %s", err)
 	}
-	fmt.Printf("Loaded %s hashes\n", format)
+	log.Printf("Loaded %s hashes\n", format)
 	return loadedHashes
 }
 
@@ -284,6 +284,11 @@ func saveHashes(opts Opts, hashes *ch.SavedHashes) error {
 	if opts.loadEmbeddedHashes && !opts.saveEmbeddedHashes {
 		return errors.New("refusing to save embedded hashes")
 	}
+	if len(hashes.Hashes) < 1 {
+		log.Println("Refusing to write empty hashes")
+		return nil
+	}
+
 	hashesPath := filepath.Join(opts.path, hashesFilename)
 
 	encodedHashes, err := ch.EncodeHashes(hashes, opts.format)
@@ -308,7 +313,9 @@ func saveHashes(opts Opts, hashes *ch.SavedHashes) error {
 	if err = f.Close(); err != nil {
 		return fmt.Errorf("failed to write hashes: %w", err)
 	}
-	log.Println("Successfully saved hashes")
+	log.Println("Hashes saved", len(hashes.Hashes))
+	log.Println("ID lists saved", len(hashes.IDs))
+	log.Println("Successfully Saved V2 hashes")
 	return nil
 }
 
@@ -513,7 +520,7 @@ func startServer(opts Opts) {
 	log.Println("waiting on readers")
 	rwg.Wait()
 	for dw := range server.readerQueue {
-		fmt.Println("Skipping read", dw)
+		log.Println("Skipping read", dw)
 	}
 
 	log.Println("waiting on downloaders")
@@ -523,26 +530,26 @@ func startServer(opts Opts) {
 	close(finishedDownloadQueue)
 	dcwg.Wait() // Wait for the download processor to finish
 	for dw := range finishedDownloadQueue {
-		fmt.Println("Skipping download", dw.IssueID)
+		log.Println("Skipping download", dw.IssueID)
 	}
 
 	// close(server.hashingQueue) // Closed by downloadProcessor
 	log.Println("waiting on hashers")
 	hwg.Wait()
 	for dw := range server.hashingQueue {
-		fmt.Println("Skipping hashing", dw.ID)
+		log.Println("Skipping hashing", dw.ID)
 	}
 
 	close(server.mappingQueue)
 	log.Println("waiting on mapper")
 	mwg.Wait()
 	for dw := range server.mappingQueue {
-		fmt.Println("Skipping mapping", dw.ID)
+		log.Println("Skipping mapping", dw.ID)
 	}
 
 	close(server.signalQueue)
 	for dw := range server.signalQueue {
-		fmt.Println("Skipping", dw)
+		log.Println("Skipping", dw)
 	}
 
 	_ = chdb.Close()
@@ -551,9 +558,9 @@ func startServer(opts Opts) {
 	// the server has been stopped so it's not needed here
 	hashes, err := server.hashes.EncodeHashes()
 	if err != nil {
-		panic(fmt.Errorf("uailed to save hashes: %w", err))
+		log.Panicf("Failed to save hashes: %v", err)
 	}
 	if err = saveHashes(opts, hashes); err != nil {
-		panic(err)
+		log.Panic(err)
 	}
 }

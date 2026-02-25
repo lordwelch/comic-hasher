@@ -13,7 +13,7 @@ import (
 	// "encoding/json"
 
 	"gitea.narnian.us/lordwelch/goimagehash"
-	"github.com/vmihailenco/msgpack"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 type Format int
@@ -137,8 +137,8 @@ func ConvertHashesV0(oldHashes OldSavedHashes) *SavedHashes {
 			}
 		}
 	}
-	fmt.Println("Length of hashes", len(t.Hashes))
-	fmt.Println("Length of ID lists", len(t.IDs))
+	log.Println("Length of hashes", len(t.Hashes))
+	log.Println("Length of ID lists", len(t.IDs))
 	return &t
 }
 
@@ -163,8 +163,8 @@ func ConvertHashesV1(oldHashes SavedHashesv1) *SavedHashes {
 			}
 		}
 	}
-	fmt.Println("Length of hashes", len(t.Hashes))
-	fmt.Println("Length of ID lists", len(t.IDs))
+	log.Println("Length of hashes", len(t.Hashes))
+	log.Println("Length of ID lists", len(t.IDs))
 	return &t
 }
 
@@ -178,7 +178,7 @@ func DecodeHashesV0(decode Decoder, hashes []byte) (*SavedHashes, error) {
 	if len(loadedHashes) == 0 {
 		return nil, ErrNoHashes
 	}
-	fmt.Println("Loaded V0 hashes")
+	log.Println("Loaded V0 hashes")
 	return ConvertHashesV0(loadedHashes), nil
 }
 
@@ -196,7 +196,7 @@ func DecodeHashesV1(decode Decoder, hashes []byte) (*SavedHashes, error) {
 	if hashesCount < 1 {
 		return nil, ErrNoHashes
 	}
-	fmt.Println("Loaded V1 hashes")
+	log.Println("Loaded V1 hashes")
 	return ConvertHashesV1(loadedHashes), nil
 }
 
@@ -211,9 +211,9 @@ func DecodeHashesV2(decode Decoder, hashes []byte) (*SavedHashes, error) {
 		return nil, ErrNoHashes
 	}
 
-	fmt.Println("Length of hashes", len(loadedHashes.Hashes))
-	fmt.Println("Length of ID lists", len(loadedHashes.IDs))
-	fmt.Println("Loaded V2 hashes")
+	log.Println("Length of hashes", len(loadedHashes.Hashes))
+	log.Println("Length of ID lists", len(loadedHashes.IDs))
+	log.Println("Loaded V2 hashes")
 	return &loadedHashes, nil
 }
 

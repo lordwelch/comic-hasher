@@ -14,7 +14,7 @@ import (
 
 	"gitea.narnian.us/lordwelch/goimagehash"
 	json "github.com/json-iterator/go"
-	"github.com/vmihailenco/msgpack"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 //go:embed hashes.gz
@@ -42,9 +42,10 @@ const (
 	Shift7
 )
 
+var ComicVine Source = "comicvine.gamespot.com"
+
 const (
-	ComicVine        Source = "comicvine.gamespot.com"
-	SavedHashVersion int    = 2
+	SavedHashVersion int = 2
 )
 
 var sources *sync.Map = newSourceMap()
@@ -93,8 +94,16 @@ func (id *ID) Compare(target ID) int {
 
 func newSourceMap() *sync.Map {
 	m := &sync.Map{}
-	for s := range []Source{ComicVine} {
+	for _, s := range []Source{ComicVine} {
 		m.Store(s, &s)
+	}
+	_, ok := m.Load(ComicVine)
+	if !ok {
+		log.Panicf("sync.Map really doesn't work, %#v", ComicVine)
+	}
+	_, ok = m.Load(Source(strings.ToLower(string(ComicVine))))
+	if !ok {
+		log.Panic("sync.Map doesn't work")
 	}
 	return m
 }

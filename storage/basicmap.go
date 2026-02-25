@@ -120,7 +120,7 @@ func (b *basicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, search
 	return matchingHashes
 }
 
-func (b *basicMapStorage) exactMatches(hashes []ch.Hash, max int) []ch.Result {
+func (b *basicMapStorage) exactMatches(hashes []ch.Hash) []ch.Result {
 	var foundMatches []ch.Result
 	for _, hash := range hashes {
 		mappedIds := map[int]bool{}
@@ -158,7 +158,7 @@ func (b *basicMapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) 
 	defer b.hashMutex.RUnlock()
 
 	if exactOnly { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
-		foundMatches = b.exactMatches(hashes, max)
+		foundMatches = b.exactMatches(hashes)
 
 		tl.LogTime("Search Exact")
 		if len(foundMatches) > 0 {
@@ -244,14 +244,14 @@ func (b *basicMapStorage) DecodeHashes(hashes *ch.SavedHashes) error {
 
 	// Initialize all the known equal IDs
 	for _, ids := range hashes.IDs {
-		new_ids := make([]*ch.ID, 0, len(ids))
+		newIDs := make([]*ch.ID, 0, len(ids))
 		for _, id := range ids {
-			new_ids = append(new_ids, &id)
+			newIDs = append(newIDs, &id)
 		}
-		for _, id := range new_ids {
+		for _, id := range newIDs {
 			b.ids.ids = append(b.ids.ids, IDs{
 				id,
-				&new_ids,
+				&newIDs,
 			})
 		}
 	}
@@ -325,21 +325,21 @@ func (b *basicMapStorage) EncodeHashes() (*ch.SavedHashes, error) {
 	savedHashes := ch.SavedHashes{
 		Hashes: make([]ch.SavedHash, 0, len(b.aHashes)+len(b.dHashes)+len(b.pHashes)),
 	}
-	// savedHashes.Hashes = append(savedHashes.Hashes, b.aHashes...)
-	// savedHashes.Hashes = append(savedHashes.Hashes, b.dHashes...)
-	// savedHashes.Hashes = append(savedHashes.Hashes, b.pHashes...)
+	savedHashes.Hashes = append(savedHashes.Hashes, b.aHashes...)
+	savedHashes.Hashes = append(savedHashes.Hashes, b.dHashes...)
+	savedHashes.Hashes = append(savedHashes.Hashes, b.pHashes...)
 
-	// // Only keep groups len>1 as they are mapped in SavedHashes.Hashes
-	// for _, ids := range b.ids.ids {
-	// 	if len(*ids.idList) > 1 {
-	// 		idl := make([]ID, 0, len(*ids.idList))
-	// 		for _, id := range *ids.idList {
-	// 			idl = append(idl, *id)
-	// 		}
+	// Only keep groups len>1 as they are mapped in SavedHashes.Hashes
+	for _, ids := range b.ids.ids {
+		if len(*ids.idList) > 1 {
+			idl := make([]ch.ID, 0, len(*ids.idList))
+			for _, id := range *ids.idList {
+				idl = append(idl, *id)
+			}
 
-	// 		savedHashes.IDs = append(savedHashes.IDs, idl)
-	// 	}
-	// }
+			savedHashes.IDs = append(savedHashes.IDs, idl)
+		}
+	}
 
 	return &savedHashes, nil
 }
