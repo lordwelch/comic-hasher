@@ -18,9 +18,11 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"runtime/debug"
 	"runtime/pprof"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +34,8 @@ import (
 	_ "golang.org/x/image/vp8"
 	_ "golang.org/x/image/vp8l"
 	_ "golang.org/x/image/webp"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
 	"gitea.narnian.us/lordwelch/comic-hasher/cv"
@@ -90,12 +94,10 @@ func (f *Storage) Set(s string) error {
 }
 
 type CVOpts struct {
-	downloadCovers bool
+	enabled        bool
 	APIKey         string
-	thumbOnly      bool
-	originalOnly   bool
+	images         cv.Images
 	hashDownloaded bool
-	keepDownloaded bool
 }
 type Opts struct {
 	cpuprofile         string
@@ -107,6 +109,7 @@ type Opts struct {
 	storageType        Storage
 	onlyHashNewIDs     bool
 	deleteHashedImages bool
+	keepDownloaded     bool
 	path               string
 	version            string
 	addr               string
@@ -114,6 +117,114 @@ type Opts struct {
 
 	cv CVOpts
 }
+
+func isZeroValue(currentFlag *flag.Flag, value string) (ok bool, err error) {
+	// Build a zero value of the flag's Value type, and see if the
+	// result of calling its String method equals the value passed in.
+	// This works unless the Value type is itself an interface type.
+	typ := reflect.TypeOf(currentFlag.Value)
+	var z reflect.Value
+	if typ.Kind() == reflect.Pointer {
+		z = reflect.New(typ.Elem())
+	} else {
+		z = reflect.Zero(typ)
+	}
+	// Catch panics calling the String method, which shouldn't prevent the
+	// usage message from being printed, but that we should report to the
+	// user so that they know to fix their code.
+	defer func() {
+		if e := recover(); e != nil {
+			if typ.Kind() == reflect.Pointer {
+				typ = typ.Elem()
+			}
+			err = fmt.Errorf("panic calling String method on zero %v for flag %s: %v", typ, currentFlag.Name, e)
+		}
+	}()
+	return value == z.Interface().(flag.Value).String(), nil
+}
+
+func Usage(f *flag.FlagSet) {
+	fmt.Fprintf(f.Output(), "Usage of %s:\n", f.Name())
+	var isZeroValueErrs []error
+	helpItems := make(map[string][]string)
+	f.VisitAll(func(currentFlag *flag.Flag) {
+		var b strings.Builder
+		fmt.Fprintf(&b, "  -%s", currentFlag.Name) // Two spaces before -; see next two comments.
+		name, usage := flag.UnquoteUsage(currentFlag)
+		if len(name) > 0 {
+			b.WriteString(" ")
+			b.WriteString(name)
+		}
+		// Boolean flags of one ASCII letter are so common we
+		// treat them specially, putting their usage on the same line.
+		if b.Len() <= 4 { // space, space, '-', 'x'.
+			b.WriteString("\t")
+		} else {
+			// Four spaces before the tab triggers good alignment
+			// for both 4- and 8-space tab stops.
+			b.WriteString("\n    \t")
+		}
+		b.WriteString(strings.ReplaceAll(usage, "\n", "\n    \t"))
+
+		// Print the default value only if it differs to the zero value
+		// for this flag type.
+		if isZero, err := isZeroValue(currentFlag, currentFlag.DefValue); err != nil {
+			isZeroValueErrs = append(isZeroValueErrs, err)
+		} else if !isZero {
+			if reflect.TypeOf(currentFlag.Value).Name() == "stringValue" {
+				// put quotes on the value
+				fmt.Fprintf(&b, " (default %q)", currentFlag.DefValue)
+			} else {
+				fmt.Fprintf(&b, " (default %v)", currentFlag.DefValue)
+			}
+		}
+		helpItems[groups[currentFlag.Name]] = append(helpItems[groups[currentFlag.Name]], b.String())
+	})
+	toTitle := cases.Title(language.English)
+	for _, group := range groupOrder {
+		groupItems := helpItems[group]
+		if len(groupItems) == 0 {
+			continue
+		}
+		slices.SortFunc(groupItems, func(a, b string) int {
+			return strings.Compare(strings.ToLower(a), strings.ToLower(b))
+		})
+		if group != "" {
+			fmt.Fprintf(f.Output(), "\n%s:\n", toTitle.String(group))
+		}
+		for _, item := range helpItems[group] {
+			fmt.Fprintln(f.Output(), item)
+		}
+	}
+	// If calling String on any zero flag.Values triggered a panic, print
+	// the messages after the full set of defaults so that the programmer
+	// knows to fix the panic.
+	if errs := isZeroValueErrs; len(errs) > 0 {
+		fmt.Fprintln(f.Output())
+		for _, err := range errs {
+			fmt.Fprintln(f.Output(), err)
+		}
+	}
+}
+
+var (
+	groupOrder = []string{"", "file", "hash", "comic vine", "debug"}
+	groups     = map[string]string{
+		"use-embedded-hashes":  "file",
+		"save-embedded-hashes": "file",
+		"save-format":          "file",
+		"storage-type":         "hash",
+		"only-hash-new-ids":    "hash",
+		"keep-downloaded":      "download",
+		"hash-downloaded":      "download",
+		"cv":                   "comic vine",
+		"cv-api-key":           "comic vine",
+		"cv-images":            "comic vine",
+		"cpuprofile":           "debug",
+		"memprofile":           "debug",
+		"debug-port":           "debug",
+	}
+)
 
 func main() {
 	version := "devel"
@@ -129,36 +240,46 @@ func main() {
 			version = versionInfo[0] + "-" + versionInfo[2]
 		}
 	}
-	opts := Opts{format: ch.Msgpack, storageType: BasicMap, version: version} // flag is weird
-	wd, err := os.Getwd()
-	fmt.Println(err)
-	if err != nil {
-		wd = "comic-hasher"
-	} else {
-		wd = filepath.Join(wd, "comic-hasher")
+	opts := Opts{
+		format: ch.Msgpack, storageType: BasicMap, version: version,
+		cv: CVOpts{
+			images: cv.Images{"thumb": {}},
+		},
 	}
-	flag.StringVar(&opts.cpuprofile, "cpuprofile", "", "Write cpu profile to file")
-	flag.StringVar(&opts.memprofile, "memprofile", "", "Write mem profile to file after loading hashes")
-	flag.StringVar(&opts.addr, "listen", "127.0.0.1:8080", "Address to listen on")
-	flag.StringVar(&opts.debugPort, "debug-port", "", "Port to listen to for debug info")
+	wd := "comic-hasher"
+	fs := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ExitOnError)
+	fs.Usage = func() { Usage(fs) }
+	fs.StringVar(&opts.addr, "listen", ":8080", "Address to listen on")
+	fs.StringVar(&opts.path, "path", "./"+wd, "Path for comic-hasher to store files")
+	fs.StringVar(&opts.coverPath, "cover-path", "", "`Path` to local covers to add to hash database.\nMust be in the form '{cover-path}/{domain}/{id}/*'\neg for --cover-path /covers it should look like /covers/comicvine.gamespot.com/10000/image.gif")
 
-	flag.StringVar(&opts.path, "path", wd, "Path for comic-hasher to store files")
-	flag.StringVar(&opts.coverPath, "cover-path", "", "Path to local covers to add to hash database. Must be in the form '{cover-path}/{domain}/{id}/*' eg for --cover-path /covers it should look like /covers/comicvine.gamespot.com/10000/image.gif")
-	flag.BoolVar(&opts.loadEmbeddedHashes, "use-embedded-hashes", true, "Use hashes embedded in the application as a starting point")
-	flag.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", false, "Save hashes even if we loaded the embedded hashes")
-	flag.Var(&opts.format, "save-format", "Specify the format to export hashes to (json, msgpack)")
-	flag.Var(&opts.storageType, "storage-type", "Specify the storage type used internally to search hashes (sqlite,sqlite3,map,basicmap,vptree)")
-	flag.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers from CV/local path (Note: If there are multiple covers for the same ID they may get queued at the same time and hashed on the first run, implies -cv-thumb-only if -delete-hashed-images is true or -cv-keep-downloaded is false)")
-	flag.BoolVar(&opts.deleteHashedImages, "delete-hashed-images", false, "Deletes downloaded images after hashing them, useful to save space, paths are recorded in ch.sqlite")
+	fs.BoolVar(&opts.loadEmbeddedHashes, "use-embedded-hashes", true, "Use hashes embedded in the application as a starting point")
+	fs.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", false, "Save hashes even if we loaded the embedded hashes")
+	fs.Var(&opts.format, "save-format", "Specify the `format` to save hashes in (json, msgpack)")
 
-	flag.BoolVar(&opts.cv.downloadCovers, "cv-dl-covers", false, "Downloads covers from ComicVine hashes them and adds them to the database")
-	flag.StringVar(&opts.cv.APIKey, "cv-api-key", "", "API Key to use to access the ComicVine API")
-	flag.BoolVar(&opts.cv.thumbOnly, "cv-thumb-only", true, "Only downloads the thumbnail image from comicvine (quicker than hashing the full-size original), when false sets -only-hash-new-ids=false")
-	flag.BoolVar(&opts.cv.originalOnly, "cv-original-only", true, "Only downloads the original image from comicvine (much quicker than hashing all variations), when false sets -only-hash-new-ids=false")
-	flag.BoolVar(&opts.cv.hashDownloaded, "cv-hash-downloaded", true, "Hash already downloaded images")
-	flag.BoolVar(&opts.cv.keepDownloaded, "cv-keep-downloaded", true, "Keep downloaded images. When set to false does not ever write to the filesystem, a crash or exiting can mean some images need to be re-downloaded")
-	showVersion := flag.Bool("version", false, "show version and quit")
-	flag.Parse()
+	fs.Var(&opts.storageType, "storage-type", "Specify the `storage type` used internally to search hashes\n(Sqlite,Sqlite3,Map,BasicMap,VPTree)")
+
+	fs.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers\n\nIf multiple image types (-cv-images) are selected more than 1 may get through")
+	fs.BoolVar(&opts.keepDownloaded, "keep-downloaded", false, "Keep newly downloaded images.\nWhen set to false does not ever write images to the filesystem\nA crash or exiting during downloading can mean some images need to be re-downloaded")
+	fs.BoolVar(&opts.cv.hashDownloaded, "hash-downloaded", true, "Hash already downloaded images")
+
+	fs.BoolVar(&opts.cv.enabled, "cv", false, "Enabled automatically downloading covers from ComicVine to add to the database\n(averages 1 api call per hour once cought up)")
+	fs.StringVar(&opts.cv.APIKey, "cv-api-key", "", "API `Key` to use to access the ComicVine API")
+	fs.Var(&opts.cv.images, "cv-images", "Download the selected `image types` from comicvine\n(Original,Thumb,Icon,Medium,Screen,ScreenLarge,Small,Super,Tiny)")
+
+	fs.StringVar(&opts.cpuprofile, "cpuprofile", "", "Write cpu profile to `file`")
+	fs.StringVar(&opts.memprofile, "memprofile", "", "Write mem profile to `file` after loading hashes")
+	fs.StringVar(&opts.debugPort, "debug-port", "", "`Port` to listen to for debug info")
+	showVersion := fs.Bool("version", false, "Show version and quit")
+	fs.BoolVar(showVersion, "V", false, "Show version and quit")
+	// showHelp := fs.Bool("help", false, "Show help quit")
+	// fs.BoolVar(showHelp, "h", false, "Show help quit")
+
+	err := fs.Parse(os.Args[1:])
+	if err != nil {
+		Usage(fs)
+		os.Exit(1)
+	}
 
 	if *showVersion {
 		fmt.Println("comic-hasher version:", opts.version)
@@ -176,7 +297,7 @@ func main() {
 			panic(err)
 		}
 	}
-	if opts.cv.downloadCovers {
+	if opts.cv.enabled {
 		if opts.cv.APIKey == "" {
 			log.Fatal("No ComicVine API Key provided")
 		}
@@ -184,8 +305,6 @@ func main() {
 
 	opts.path, _ = filepath.Abs(opts.path)
 	pretty.Log(opts)
-
-	// TODO: Fix options
 
 	startServer(opts)
 }
@@ -450,7 +569,7 @@ func startServer(opts Opts) {
 		panic(err)
 	}
 
-	server.HashLocalImages(opts)
+	server.HashLocalImages(opts.coverPath)
 	chdb, err := ch.OpenCHDBBolt(opts.path, opts.deleteHashedImages)
 	if err != nil {
 		panic(err)
@@ -466,15 +585,9 @@ func startServer(opts Opts) {
 		downloadProcessor(chdb, opts, finishedDownloadQueue, server)
 	}()
 
-	if opts.cv.downloadCovers {
+	if opts.cv.enabled {
 		dwg.Add(1)
-		imageTypes := []string{}
-		if opts.cv.thumbOnly {
-			imageTypes = append(imageTypes, "thumb_url")
-		} else if opts.cv.originalOnly {
-			imageTypes = append(imageTypes, "original_url")
-		}
-		cvdownloader := cv.NewCVDownloader(server.Context, bufPool, opts.onlyHashNewIDs, server.hashes.GetIDs, chdb, filepath.Join(opts.path, "comicvine"), opts.cv.APIKey, imageTypes, opts.cv.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
+		cvdownloader := cv.NewCVDownloader(server.Context, bufPool, opts.onlyHashNewIDs, server.hashes.GetIDs, chdb, filepath.Join(opts.path, "comicvine"), opts.cv.APIKey, opts.cv.images, opts.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
 		go func() {
 			defer dwg.Done()
 			cv.DownloadCovers(cvdownloader)

@@ -333,14 +333,14 @@ func (s *Server) reader(workerID int, done func(i int)) {
 	}
 }
 
-func (s *Server) HashLocalImages(opts Opts) {
-	if opts.coverPath == "" {
+func (s *Server) HashLocalImages(coverPath string) {
+	if coverPath == "" {
 		return
 	}
 	go func() {
-		log.Println("Hashing covers at ", opts.coverPath)
+		log.Println("Hashing covers at ", coverPath)
 		start := time.Now()
-		err := filepath.WalkDir(opts.coverPath, func(path string, d fs.DirEntry, err error) error {
+		err := filepath.WalkDir(coverPath, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -348,7 +348,7 @@ func (s *Server) HashLocalImages(opts Opts) {
 			case <-s.Context.Done():
 				log.Println("Recieved quit")
 				err = s.httpServer.Shutdown(context.TODO())
-				return fmt.Errorf("Recieved quit: %w", err)
+				return fmt.Errorf("recieved quit: %w", err)
 			default:
 			}
 			if d.IsDir() {

@@ -25,6 +25,45 @@ import (
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
 )
 
+type Images map[string]struct{}
+
+var imageValues = map[string]struct{}{
+	"icon":        {},
+	"medium":      {},
+	"screen":      {},
+	"screenlarge": {},
+	"small":       {},
+	"super":       {},
+	"thumb":       {},
+	"tiny":        {},
+	"original":    {},
+}
+
+func (f Images) String() string {
+	var value strings.Builder
+	for key := range f {
+		value.WriteString(key + ",")
+	}
+	return strings.TrimRight(value.String(), ",")
+}
+
+func (f *Images) Set(s string) error {
+	if (*f) == nil {
+		*f = Images{"started": {}}
+	} else if _, started := (*f)["started"]; !started {
+		*f = Images{"started": {}} // clear the map if this is the first time it's called
+	}
+	images := strings.SplitSeq(strings.ToLower(s), ",")
+	for image := range images {
+		if _, known := imageValues[image]; known {
+			(*f)[s] = struct{}{}
+		} else {
+			return fmt.Errorf("unknown image type: %v", f)
+		}
+	}
+	return nil
+}
+
 type Download struct {
 	URL     string
 	Dest    string
@@ -67,7 +106,7 @@ type CVDownloader struct {
 	APIKey                string
 	JSONPath              string
 	ImagePath             string
-	ImageTypes            []string
+	ImageTypes            Images
 	SendExistingImages    bool
 	KeepDownloadedImages  bool
 	Context               context.Context
@@ -428,9 +467,9 @@ func (c *CVDownloader) downloadImages() {
 				url  string
 				name string
 			}
-			imageURLs := []image{{issue.Image.IconURL, "icon_url"}, {issue.Image.MediumURL, "medium_url"}, {issue.Image.ScreenURL, "screen_url"}, {issue.Image.ScreenLargeURL, "screen_large_url"}, {issue.Image.SmallURL, "small_url"}, {issue.Image.SuperURL, "super_url"}, {issue.Image.ThumbURL, "thumb_url"}, {issue.Image.TinyURL, "tiny_url"}, {issue.Image.OriginalURL, "original_url"}}
+			imageURLs := []image{{issue.Image.IconURL, "icon"}, {issue.Image.MediumURL, "medium"}, {issue.Image.ScreenURL, "screen"}, {issue.Image.ScreenLargeURL, "screenlarge"}, {issue.Image.SmallURL, "small"}, {issue.Image.SuperURL, "super"}, {issue.Image.ThumbURL, "thumb"}, {issue.Image.TinyURL, "tiny"}, {issue.Image.OriginalURL, "original"}}
 			for _, image := range imageURLs {
-				if len(c.ImageTypes) > 0 && !slices.Contains(c.ImageTypes, image.name) {
+				if _, imageAllowed := c.ImageTypes[image.name]; !imageAllowed {
 					continue
 				}
 				if c.chdb.CheckURL(image.url) {
@@ -584,7 +623,7 @@ func (c *CVDownloader) insertIssuePage(offset int) {
 	c.fileList = slices.Insert(c.fileList, index, fmt.Sprintf("cv-%v.json", offset))
 }
 
-func NewCVDownloader(ctx context.Context, bufPool *sync.Pool, onlyHashNewIDs bool, getID func(id ch.ID) ch.IDList, chdb ch.CHDB, workPath, APIKey string, imageTypes []string, keepDownloadedImages, sendExistingImages bool, finishedDownloadQueue chan Download) *CVDownloader {
+func NewCVDownloader(ctx context.Context, bufPool *sync.Pool, onlyHashNewIDs bool, getID func(id ch.ID) ch.IDList, chdb ch.CHDB, workPath, APIKey string, imageTypes Images, keepDownloadedImages, sendExistingImages bool, finishedDownloadQueue chan Download) *CVDownloader {
 	return &CVDownloader{
 		Context:               ctx,
 		JSONPath:              filepath.Join(workPath, "_json"),
