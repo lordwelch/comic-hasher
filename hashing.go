@@ -119,16 +119,39 @@ func NewSource[E string | Source](s E) *Source {
 type IDList map[Source][]string
 
 func (id *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
-	var s struct {
-		Domain, ID string
+	l, err := dec.DecodeMapLen()
+	if err != nil {
+		return err
 	}
-	err := dec.Decode(&s)
+	if l != 2 {
+		return fmt.Errorf("expected two values got: %v", l)
+	}
+	b, err := dec.DecodeBytes()
+	if err != nil {
+		return err
+	}
+	if string(b) != "Domain" {
+		panic("Please don't happen")
+	}
+	b, err = dec.DecodeBytes()
+	if err != nil {
+		return err
+	}
+	id.Domain = NewSource(string(b))
+
+	b, err = dec.DecodeBytes()
+	if err != nil {
+		return err
+	}
+	if string(b) != "ID" {
+		panic("Please don't happen")
+	}
+	b, err = dec.DecodeBytes()
 	if err != nil {
 		return err
 	}
 
-	id.ID = Clone(s.ID)
-	id.Domain = NewSource(s.Domain)
+	id.ID = Clone(string(b))
 
 	return nil
 }
