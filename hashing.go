@@ -109,7 +109,7 @@ func newSourceMap() *sync.Map {
 	return m
 }
 
-func IsLowerU(s string) bool {
+func IsLower(s string) bool {
 	for _, r := range s {
 		if !unicode.IsLower(r) && unicode.IsLetter(r) {
 			return false
@@ -119,7 +119,7 @@ func IsLowerU(s string) bool {
 }
 
 func lower[E string | Source](s E) Source {
-	if !IsLowerU(string(s)) {
+	if !IsLower(string(s)) {
 		return Source(strings.ToLower(string(s)))
 	}
 	return Source(s)
@@ -130,8 +130,7 @@ func NewSource[E string | Source](s E) *Source {
 	if sp, ok := sources.Load(s1); ok {
 		return sp.(*Source)
 	}
-	log.Panicf("This should never happen: %v %v %v, %x", string(s), string(s1), string(s) == string(s1), []byte(ComicVine))
-	s2 := Source(strings.ToLower(strings.Clone(string(s))))
+	s2 := Source(strings.ToLower(Clone(string(s))))
 	sp, _ := sources.LoadOrStore(s2, &s2)
 	return sp.(*Source)
 }
@@ -140,7 +139,10 @@ func NewSource[E string | Source](s E) *Source {
 // Maps are extremely expensive in go for small maps this should only be used to return info to a user or as a map containing all IDs for a source
 type IDList map[Source][]string
 
+var b = make([]byte, len(ComicVine))
+
 func (id *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
+	// b := make([]byte, len(ComicVine))
 	l, err := dec.DecodeMapLen()
 	if err != nil {
 		return err
@@ -148,32 +150,37 @@ func (id *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
 	if l != 2 {
 		return fmt.Errorf("expected two values got: %v", l)
 	}
-	b, err := dec.DecodeBytes()
+	err = dec.Decode(&b)
 	if err != nil {
+		log.Panic(err)
 		return err
 	}
 	if string(b) != "Domain" {
 		panic("Please don't happen")
 	}
-	b, err = dec.DecodeBytes()
+	err = dec.Decode(&b)
 	if err != nil {
+		log.Panic(err)
 		return err
 	}
-	id.Domain = NewSource(string(b))
+	// NewSource will make a copy if it is needed
+	id.Domain = NewSource(unsafe.String(&b[0], len(b)))
 
-	b, err = dec.DecodeBytes()
+	err = dec.Decode(&b)
 	if err != nil {
+		log.Panic(err)
 		return err
 	}
 	if string(b) != "ID" {
 		panic("Please don't happen")
 	}
-	b, err = dec.DecodeBytes()
+	err = dec.Decode(&b)
 	if err != nil {
+		log.Panic(err)
 		return err
 	}
 
-	id.ID = Clone(string(b))
+	id.ID = string(b)
 
 	return nil
 }
@@ -195,9 +202,8 @@ func (id *ID) UnmarshalJSON(b []byte) error {
 		return err
 	}
 
-	id.ID = Clone(s.ID)
-	domain := Clone(s.Domain)
-	id.Domain = NewSource(domain)
+	id.ID = s.ID
+	id.Domain = NewSource(s.Domain)
 
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"log"
 	"math/bits"
 	"slices"
 	"sync"
@@ -29,9 +30,20 @@ type IDMap struct {
 }
 
 func (m *IDMap) InsertID(id *ch.ID) *ch.ID {
-	return m.insertID(id, &[]*ch.ID{id})
+	// return m.insertID(id, &[]*ch.ID{id})
+	index, found := slices.BinarySearchFunc(m.ids, id, func(id IDs, target *ch.ID) int {
+		return id.id.Compare(*target)
+	})
+	if !found {
+		m.ids = slices.Insert(m.ids, index, IDs{
+			id,
+			&[]*ch.ID{id},
+		})
+	}
+	return m.ids[index].id
 }
 
+//go:noinline pragma
 func (m *IDMap) insertID(id *ch.ID, idList *[]*ch.ID) *ch.ID {
 	index, found := slices.BinarySearchFunc(m.ids, id, func(id IDs, target *ch.ID) int {
 		return id.id.Compare(*target)
@@ -285,21 +297,20 @@ func (b *basicMapStorage) DecodeHashes(hashes *ch.SavedHashes) error {
 	b.aHashes = make([]ch.SavedHash, 0, aHashCount)
 	b.dHashes = make([]ch.SavedHash, 0, dHashCount)
 	b.pHashes = make([]ch.SavedHash, 0, pHashCount)
-	for i := range hashes.Hashes {
-		hash := hashes.Hashes[i].Clone() // Not cloning this will keep strings/slices loaded from json wasting memory
-		if hashes.Hashes[i].Hash.Kind == goimagehash.AHash {
+	var hash ch.SavedHash
+	for _, hash = range hashes.Hashes {
+		if hash.Hash.Kind == goimagehash.AHash {
 			b.aHashes = append(b.aHashes, hash)
 		}
-		if hashes.Hashes[i].Hash.Kind == goimagehash.DHash {
+		if hash.Hash.Kind == goimagehash.DHash {
 			b.dHashes = append(b.dHashes, hash)
 		}
-		if hashes.Hashes[i].Hash.Kind == goimagehash.PHash {
+		if hash.Hash.Kind == goimagehash.PHash {
 			b.pHashes = append(b.pHashes, hash)
 		}
 
-		if hashes.Hashes[i].ID == (ch.ID{}) {
-			fmt.Println("Empty ID detected")
-			panic(hashes.Hashes[i])
+		if hash.ID == (ch.ID{}) {
+			log.Panic("Empty ID detected", hash)
 		}
 		// TODO: Make loading this more efficient
 		// All known equal IDs are already mapped we can add any missing ones from hashes

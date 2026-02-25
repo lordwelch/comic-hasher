@@ -98,7 +98,7 @@ func (h *SavedHash) Clone() SavedHash {
 		},
 		ID: ID{
 			Domain: NewSource(*h.ID.Domain),
-			ID:     strings.Clone(h.ID.ID),
+			ID:     Clone(h.ID.ID),
 		},
 	}
 }
