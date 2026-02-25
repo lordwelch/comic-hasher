@@ -281,7 +281,6 @@ func EncodeHashes(hashes *SavedHashes, format Format) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unknown format: %v", format)
 	}
-
 	hashes.Version = CurrentSavedHashesVersion
 	return encoder(hashes)
 }

@@ -678,11 +678,7 @@ func DownloadCovers(c *CVDownloader) {
 	log.Println("Updating issues now")
 
 	dwg := sync.WaitGroup{}
-	dwg.Add(1)
-	go func() {
-		c.downloadImages()
-		dwg.Done()
-	}()
+	dwg.Go(c.downloadImages)
 
 	offset, err := c.updateIssues()
 	if err != nil {

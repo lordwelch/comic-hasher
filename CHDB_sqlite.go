@@ -50,14 +50,14 @@ CREATE TABLE IF NOT EXISTS bad_urls(
 func (s CHDBSqlite) Dump() (paths []string, badURLs []string) {
 	rows, err := s.sql.Query("SELECT path from paths")
 	if err != nil {
-		panic(err)
+		panic(err) // These should only be connection/type errors which are not currently considered recoverable
 	}
 
 	for rows.Next() {
 		var value string
 		err = rows.Scan(&value)
 		if err != nil {
-			panic(err)
+			panic(err) // These should only be connection/type errors which are not currently considered recoverable
 		}
 		paths = append(paths, value)
 	}
@@ -65,14 +65,14 @@ func (s CHDBSqlite) Dump() (paths []string, badURLs []string) {
 
 	rows, err = s.sql.Query("SELECT url from bad_urls")
 	if err != nil {
-		panic(err)
+		panic(err) // These should only be connection/type errors which are not currently considered recoverable
 	}
 
 	for rows.Next() {
 		var value string
 		err = rows.Scan(&value)
 		if err != nil {
-			panic(err)
+			panic(err) // These should only be connection/type errors which are not currently considered recoverable
 		}
 		badURLs = append(badURLs, value)
 	}

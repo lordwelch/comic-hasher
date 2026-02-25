@@ -268,15 +268,15 @@ func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result{Msg: "Success"})
 }
 
-func (s *Server) mapper(done func()) {
-	defer done()
+func (s *Server) mapper(workerID int) {
+	defer log.Println("Mapper", workerID, "completed")
 	for hash := range s.mappingQueue {
 		s.hashes.MapHashes(hash)
 	}
 }
 
-func (s *Server) hasher(workerID int, done func(int)) {
-	defer done(workerID)
+func (s *Server) hasher(workerID int) {
+	defer log.Println("Hasher", workerID, "completed")
 	for image := range s.hashingQueue {
 		start := time.Now()
 		if image.NewOnly && len(s.hashes.GetIDs(image.ID)) > 0 {
@@ -295,24 +295,25 @@ func (s *Server) hasher(workerID int, done func(int)) {
 		}
 
 		elapsed := time.Since(start)
-		log.Printf("Hashing took %v: worker: %v. %s: %064b id: %s\n", elapsed, workerID, hash.Hashes[0].Kind, hash.Hashes[0].Hash, hash.ID)
+		log.Printf("Hashing took %v: worker: %v. %s: %064b id: %v\n", elapsed, workerID, hash.Hashes[0].Kind, hash.Hashes[0].Hash, hash.ID)
 	}
 }
 
-func (s *Server) reader(workerID int, done func(i int)) {
-	defer done(workerID)
+func (s *Server) reader(workerID int) {
+	defer log.Println("Reader", workerID, "completed")
 	for path := range s.readerQueue {
 
 		id := ch.ID{
 			Domain: ch.NewSource(filepath.Base(filepath.Dir(filepath.Dir(path)))),
 			ID:     filepath.Base(filepath.Dir(path)),
 		}
-		if len(s.hashes.GetIDs(id)) > 0 {
+		if s.onlyHashNewIDs && len(s.hashes.GetIDs(id)) > 0 {
 			continue
 		}
 		file, err := os.Open(path)
 		if err != nil {
-			panic(err)
+			log.Printf("Failed to open image %q: %v", path, err)
+			continue
 		}
 		i, format, err := image.Decode(bufio.NewReader(file))
 		file.Close()

@@ -547,21 +547,18 @@ func startServer(opts Opts) {
 	log.Println("Init 10 readers")
 	rwg := sync.WaitGroup{}
 	for i := range 10 {
-		rwg.Add(1)
-		go server.reader(i, func(i int) { log.Println("Reader", i, "completed"); rwg.Done() })
+		rwg.Go(func() { server.reader(i) })
 	}
 
 	log.Println("Init 10 hashers")
 	hwg := sync.WaitGroup{}
 	for i := range 10 {
-		hwg.Add(1)
-		go server.hasher(i, func(i int) { log.Println("Hasher", i, "completed"); hwg.Done() })
+		hwg.Go(func() { server.hasher(i) })
 	}
 
 	log.Println("Init 1 mapper")
 	mwg := sync.WaitGroup{}
-	mwg.Add(1)
-	go server.mapper(func() { log.Println("Mapper 0 completed"); mwg.Done() })
+	mwg.Go(func() { server.mapper(1) })
 
 	// DecodeHashes would normally need a write lock
 	// nothing else has been started yet so we don't need one
@@ -579,28 +576,23 @@ func startServer(opts Opts) {
 	dwg := sync.WaitGroup{}
 	dcwg := sync.WaitGroup{}
 	finishedDownloadQueue := make(chan cv.Download, 1)
-	dcwg.Add(1)
-	go func() {
-		defer dcwg.Done()
+	dcwg.Go(func() {
 		downloadProcessor(chdb, opts, finishedDownloadQueue, server)
-	}()
+	})
 
 	if opts.cv.enabled {
-		dwg.Add(1)
-		cvdownloader := cv.NewCVDownloader(server.Context, bufPool, opts.onlyHashNewIDs, server.hashes.GetIDs, chdb, filepath.Join(opts.path, "comicvine"), opts.cv.APIKey, opts.cv.images, opts.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
-		go func() {
-			defer dwg.Done()
+		dwg.Go(func() {
+			cvdownloader := cv.NewCVDownloader(server.Context, bufPool, opts.onlyHashNewIDs, server.hashes.GetIDs, chdb, filepath.Join(opts.path, "comicvine"), opts.cv.APIKey, opts.cv.images, opts.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
 			cv.DownloadCovers(cvdownloader)
-		f:
 			for {
 				select {
 				case <-time.After(2 * time.Hour):
 					cv.DownloadCovers(cvdownloader)
 				case <-server.Context.Done():
-					break f
+					return
 				}
 			}
-		}()
+		})
 	}
 
 	go signalHandler(&server)
