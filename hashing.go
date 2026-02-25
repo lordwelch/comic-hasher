@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode"
 	"unsafe"
 
 	"gitea.narnian.us/lordwelch/goimagehash"
@@ -108,8 +109,29 @@ func newSourceMap() *sync.Map {
 	return m
 }
 
+func IsLowerU(s string) bool {
+	for _, r := range s {
+		if !unicode.IsLower(r) && unicode.IsLetter(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func lower[E string | Source](s E) Source {
+	if !IsLowerU(string(s)) {
+		return Source(strings.ToLower(string(s)))
+	}
+	return Source(s)
+}
+
 func NewSource[E string | Source](s E) *Source {
-	s2 := Source(strings.ToLower(Clone(string(s))))
+	s1 := lower(s)
+	if sp, ok := sources.Load(s1); ok {
+		return sp.(*Source)
+	}
+	log.Panicf("This should never happen: %v %v %v, %x", string(s), string(s1), string(s) == string(s1), []byte(ComicVine))
+	s2 := Source(strings.ToLower(strings.Clone(string(s))))
 	sp, _ := sources.LoadOrStore(s2, &s2)
 	return sp.(*Source)
 }
