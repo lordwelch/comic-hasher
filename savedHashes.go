@@ -236,14 +236,20 @@ func getSavedHashesVersion(decode Decoder, hashes []byte) (int, error) {
 }
 
 func DecodeHashes(format Format, hashes []byte) (*SavedHashes, error) {
+	if len(hashes) < 18 { // keys in ch.SavedHashes are 18 characters even with no values so if it's less than that we don't have anything to load
+		return nil, ErrNoHashes
+	}
 	var decode Decoder
 	switch format {
 	case Msgpack:
 		decode = msgpack.Unmarshal
-		fmt.Println("Decode Msgpack")
+		log.Println("Decode Msgpack")
 	case JSON:
 		decode = json.Unmarshal
-		fmt.Println("Decode JSON")
+		log.Println("Decode JSON")
+		if len(hashes) < 1 || hashes[0] != '{' {
+			return nil, ErrDecodeFail
+		}
 
 	default:
 		return nil, fmt.Errorf("unknown format: %v", format)

@@ -179,7 +179,7 @@ func Usage(f *flag.FlagSet) {
 	}
 }
 
-func registerOptions(opts Opts) (*bool, *flag.FlagSet) {
+func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 	wd := "comic-hasher"
 	fs := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ExitOnError)
 	fs.Usage = func() { Usage(fs) }
@@ -187,8 +187,8 @@ func registerOptions(opts Opts) (*bool, *flag.FlagSet) {
 	fs.StringVar(&opts.path, "path", "./"+wd, "Path for comic-hasher to store files")
 	fs.StringVar(&opts.coverPath, "cover-path", "", "`Path` to local covers to add to hash database.\nMust be in the form '{cover-path}/{domain}/{id}/*'\neg for --cover-path /covers it should look like /covers/comicvine.gamespot.com/10000/image.gif")
 
-	fs.BoolVar(&opts.loadEmbeddedHashes, "use-embedded-hashes", true, "Use hashes embedded in the application as a starting point")
-	fs.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", false, "Save hashes even if we loaded the embedded hashes")
+	fs.BoolVar(&opts.loadEmbeddedHashes, "load-embedded-hashes", true, "Use hashes embedded in the application if there are no saved hashes to load")
+	fs.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", true, "Allows blocking the saving of the embedded hashes")
 	fs.Var(&opts.format, "save-format", "Specify the `format` to save hashes in (json, msgpack)")
 
 	fs.Var(&opts.storageType, "storage-type", "Specify the `storage type` used internally to search hashes\n(Sqlite,Sqlite3,Map,BasicMap,VPTree)")
@@ -215,7 +215,7 @@ func registerOptions(opts Opts) (*bool, *flag.FlagSet) {
 var (
 	groupOrder = []string{"", "file", "hash", "comic vine", "debug"}
 	groups     = map[string]string{
-		"use-embedded-hashes":  "file",
+		"load-embedded-hashes": "file",
 		"save-embedded-hashes": "file",
 		"save-format":          "file",
 		"storage-type":         "hash",

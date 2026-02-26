@@ -16,6 +16,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -66,7 +67,7 @@ func main() {
 			images: cv.Images{"thumb": {}},
 		},
 	}
-	showVersion, fs := registerOptions(opts)
+	showVersion, fs := registerOptions(&opts)
 	err := fs.Parse(os.Args[1:])
 	if err != nil {
 		Usage(fs)
@@ -134,7 +135,32 @@ const hashesFilename = "hashes.gz"
 func loadHashes(opts Opts) *ch.SavedHashes {
 	hashesPath := filepath.Join(opts.path, hashesFilename)
 	var hashes []byte
-	if opts.loadEmbeddedHashes && len(ch.Hashes) != 0 {
+
+	log.Println("Looking for saved hashes at", hashesPath)
+	f, err := os.Open(hashesPath)
+	if err == nil {
+		var r io.ReadCloser = f
+		if gr, err := gzip.NewReader(f); err == nil {
+			r = gr
+		} else {
+			_, _ = f.Seek(0, io.SeekStart)
+		}
+		hashes, err = io.ReadAll(r)
+		_ = r.Close()
+		_ = f.Close()
+		if err != nil {
+			panic(fmt.Sprintf("Failed to load hashes from disk: %s", err))
+		}
+	} else {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Println("Unable to load saved hashes", err)
+		}
+	}
+	if errors.Is(err, os.ErrNotExist) || len(hashes) < 18 {
+		log.Println("No saved hashes to load")
+	}
+
+	if opts.loadEmbeddedHashes && len(ch.Hashes) != 0 && len(hashes) < 18 {
 		log.Println("Loading embedded hashes")
 		hashes = ch.Hashes
 		if gr, err := gzip.NewReader(bytes.NewReader(ch.Hashes)); err == nil {
@@ -144,44 +170,21 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 			}
 			gr.Close()
 		}
-	} else {
-		log.Println("Loading saved hashes")
-		if f, err := os.Open(hashesPath); err == nil {
-			var r io.ReadCloser = f
-			if gr, err := gzip.NewReader(f); err == nil {
-				r = gr
-			} else {
-				_, _ = f.Seek(0, io.SeekStart)
-			}
-			hashes, err = io.ReadAll(r)
-			r.Close()
-			f.Close()
-			if err != nil {
-				panic(fmt.Sprintf("Failed to load hashes from disk: %s", err))
-			}
-		} else {
-			if errors.Is(err, os.ErrNotExist) {
-				log.Println("No saved hashes to load at", hashesPath)
-			} else {
-				log.Println("Unable to load saved hashes", err)
-			}
-			return nil
-		}
 	}
 
 	var (
 		format       ch.Format
 		loadedHashes *ch.SavedHashes
-		err          error
 	)
+
 	for _, format = range []ch.Format{ch.Msgpack, ch.JSON} {
 		if loadedHashes, err = ch.DecodeHashes(format, hashes); errors.Is(err, ch.ErrDecodeFail) {
 			continue
 		}
 		break
 	}
-	if errors.Is(err, ch.ErrNoHashes) {
-		log.Println("No saved hashes to load", loadedHashes, err)
+	if errors.Is(err, ch.ErrNoHashes) || errors.Is(err, ch.ErrDecodeFail) {
+		log.Println("No saved hashes to load")
 		return loadedHashes
 	}
 	if err != nil {
@@ -443,7 +446,8 @@ func startServer(opts Opts) {
 	for dw := range server.mappingQueue {
 		log.Println("Skipping mapping", dw.ID)
 	}
-
+	log.Println("If you press Ctrl+C after this point the saved hashes will be corrupted")
+	signal.Stop(server.signalQueue)
 	close(server.signalQueue)
 	for dw := range server.signalQueue {
 		log.Println("Skipping", dw)
