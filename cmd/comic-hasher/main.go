@@ -252,7 +252,7 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 			err  error
 		)
 		if path.Image == nil {
-			file, err = os.OpenFile(path.Dest, os.O_RDWR, 0o666)
+			file, err = os.OpenFile(filepath.Join(opts.path, path.Dest), os.O_RDWR, 0o666)
 			if err != nil {
 				panic(err)
 			}

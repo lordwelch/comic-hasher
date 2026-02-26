@@ -102,10 +102,15 @@ type CVResult struct {
 	// Version              string  `json:"version"`
 }
 
+const (
+	workDirectory  = "comicvine"
+	imageDirectory = "_image"
+	jsonDirectory  = "_json"
+)
+
 type CVDownloader struct {
+	basePath              string
 	APIKey                string
-	JSONPath              string
-	ImagePath             string
 	ImageTypes            Images
 	SendExistingImages    bool
 	KeepDownloadedImages  bool
@@ -135,7 +140,7 @@ var (
 
 func (c *CVDownloader) loadIssues(filename string) (*CVResult, error) {
 	tmp := &CVResult{Results: make([]Issue, 0, 100)}
-	file, err := os.Open(filepath.Join(c.JSONPath, filename))
+	file, err := os.Open(filepath.Join(c.basePath, workDirectory, jsonDirectory, filename))
 	if err != nil {
 		return nil, err
 	}
@@ -188,10 +193,11 @@ func (c *CVDownloader) getDownloadedIssues(offset int, update bool) (*CVResult, 
 	if index < 0 {
 		return nil, ErrMissingPage
 	}
+	JSONPath := filepath.Join(c.basePath, jsonDirectory)
 	issue, err := c.loadIssues(c.fileList[index])
 	if err != nil || issue == nil {
 		err = fmt.Errorf("failed to read page at offset %d: %w", offset, err)
-		os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
+		_ = os.Remove(filepath.Join(JSONPath, c.fileList[index]))
 		c.fileList = slices.Delete(c.fileList, index, index+1)
 		return nil, err
 	}
@@ -200,7 +206,7 @@ func (c *CVDownloader) getDownloadedIssues(offset int, update bool) (*CVResult, 
 
 	if update && (len(issue.Results) == 0 || issue.Results[0].IssueNumber == "") {
 		err = fmt.Errorf("deleting page %d to update records from cv", offset)
-		os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
+		_ = os.Remove(filepath.Join(JSONPath, c.fileList[index]))
 		c.fileList = slices.Delete(c.fileList, index, index+1)
 		return nil, err
 	}
@@ -211,7 +217,7 @@ func (c *CVDownloader) getDownloadedIssues(offset int, update bool) (*CVResult, 
 			return nil, err
 		}
 		log.Println("Deleting the last page to detect new comics")
-		os.Remove(filepath.Join(c.JSONPath, c.fileList[index]))
+		_ = os.Remove(filepath.Join(JSONPath, c.fileList[index]))
 		c.fileList = slices.Delete(c.fileList, index, index+1)
 	}
 
@@ -225,6 +231,7 @@ func (c *CVDownloader) updateIssues() (int, error) {
 		log.Fatal(err)
 	}
 
+	JSONPath := filepath.Join(c.basePath, jsonDirectory)
 	query := baseURL.Query()
 	query.Add("api_key", c.APIKey)
 	baseURL.RawQuery = query.Encode()
@@ -313,7 +320,7 @@ func (c *CVDownloader) updateIssues() (int, error) {
 			return offset - 100, fmt.Errorf("%w: response code: %d Message: %s", ErrDownloadFail, resp.StatusCode, string(msg))
 		}
 
-		file, err := os.Create(filepath.Join(c.JSONPath, "cv-"+strconv.Itoa(offset)+".json"))
+		file, err := os.Create(filepath.Join(JSONPath, "cv-"+strconv.Itoa(offset)+".json"))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -322,7 +329,7 @@ func (c *CVDownloader) updateIssues() (int, error) {
 		_ = resp.Body.Close()
 		_ = file.Close()
 		if err != nil || issue.Offset != offset {
-			os.Remove(filepath.Join(c.JSONPath, "cv-"+strconv.Itoa(offset)+".json"))
+			_ = os.Remove(filepath.Join(JSONPath, "cv-"+strconv.Itoa(offset)+".json"))
 			cancelDownloadCTX()
 			if retry(URI.String(), err) {
 				continue
@@ -338,7 +345,7 @@ func (c *CVDownloader) updateIssues() (int, error) {
 		updated += 1
 		c.downloadQueue <- issue
 		c.insertIssuePage(offset)
-		log.Printf("Downloaded %s/cv-%v.json", c.JSONPath, offset)
+		log.Printf("Downloaded %s/cv-%v.json", JSONPath, offset)
 	}
 	return offset, nil
 }
@@ -501,21 +508,20 @@ func (c *CVDownloader) downloadImages() {
 				if ext == "" || (len(ext) > 4 && !slices.Contains([]string{".avif", ".webp", ".tiff", ".heif"}, ext)) {
 					ext = ".jpg"
 				}
-				dir := filepath.Join(c.ImagePath, strconv.Itoa(issue.Volume.ID), strconv.Itoa(issue.ID))
-				path := filepath.Join(dir, image.name+ext)
+				imagePath := filepath.Join(workDirectory, imageDirectory, strconv.Itoa(issue.Volume.ID), strconv.Itoa(issue.ID), image.name+ext)
 
 				ids := c.getID(ch.ID{
 					Domain: ch.NewSource(ch.ComicVine),
 					ID:     strconv.Itoa(issue.ID),
 				})
-				if c.chdb.PathDownloaded(path) || c.onlyHashNewIDs && len(ids) > 0 {
-					if _, err = os.Stat(path); c.SendExistingImages && err == nil {
+				if c.chdb.PathDownloaded(imagePath) || c.onlyHashNewIDs && len(ids) > 0 {
+					if _, err = os.Stat(filepath.Join(c.basePath, imagePath)); c.SendExistingImages && err == nil {
 						// We don't add to the count of added as these should be processed immediately
-						log.Printf("Sending Existing image %v/%v %v", issue.Volume.ID, issue.ID, path)
+						log.Printf("Sending Existing image %v/%v %v", issue.Volume.ID, issue.ID, imagePath)
 						c.imageWG.Add(1)
 						c.imageDownloads <- download{
 							url:      image.url,
-							dest:     path,
+							dest:     imagePath,
 							offset:   list.Offset,
 							volumeID: issue.Volume.ID,
 							issueID:  issue.ID,
@@ -529,7 +535,7 @@ func (c *CVDownloader) downloadImages() {
 				c.imageWG.Add(1)
 				c.imageDownloads <- download{
 					url:      image.url,
-					dest:     path,
+					dest:     imagePath,
 					offset:   list.Offset,
 					volumeID: issue.Volume.ID,
 					issueID:  issue.ID,
@@ -559,19 +565,20 @@ func (c *CVDownloader) downloadImages() {
 
 func (c *CVDownloader) cleanBadURLs() error {
 	var indexesToRemove []int
+	JSONPath := filepath.Join(c.basePath, jsonDirectory)
 list:
 	for i, jsonFile := range c.fileList {
 		list, err := c.loadIssues(jsonFile)
 		if err != nil {
 			indexesToRemove = append(indexesToRemove, i)
-			os.Remove(filepath.Join(c.JSONPath, jsonFile))
+			_ = os.Remove(filepath.Join(JSONPath, jsonFile))
 			continue
 		}
 		for _, issue := range list.Results {
 			for _, url := range []string{issue.Image.IconURL, issue.Image.MediumURL, issue.Image.ScreenURL, issue.Image.ScreenLargeURL, issue.Image.SmallURL, issue.Image.SuperURL, issue.Image.ThumbURL, issue.Image.TinyURL, issue.Image.OriginalURL} {
 				if c.chdb.CheckURL(url) {
 					indexesToRemove = append(indexesToRemove, i)
-					if err := os.Remove(filepath.Join(c.JSONPath, jsonFile)); err != nil {
+					if err := os.Remove(filepath.Join(JSONPath, jsonFile)); err != nil {
 						return err
 					}
 					// We've removed the entire page, lets see if the new url works
@@ -597,7 +604,7 @@ func (c *CVDownloader) hasQuit() bool {
 }
 
 func (c *CVDownloader) cleanDirs() {
-	_ = filepath.WalkDir(c.ImagePath, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(filepath.Join(c.basePath, imageDirectory), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -625,9 +632,8 @@ func (c *CVDownloader) insertIssuePage(offset int) {
 
 func NewCVDownloader(ctx context.Context, bufPool *sync.Pool, onlyHashNewIDs bool, getID func(id ch.ID) ch.IDList, chdb ch.CHDB, workPath, APIKey string, imageTypes Images, keepDownloadedImages, sendExistingImages bool, finishedDownloadQueue chan Download) *CVDownloader {
 	return &CVDownloader{
+		basePath:              workPath,
 		Context:               ctx,
-		JSONPath:              filepath.Join(workPath, "_json"),
-		ImagePath:             filepath.Join(workPath, "_image"),
 		APIKey:                APIKey,
 		bufPool:               bufPool, // Only used if keepDownloadedImages is false to save memory on byte buffers. The buffers get sent back via finishedDownloadQueue
 		FinishedDownloadQueue: finishedDownloadQueue,
@@ -645,8 +651,10 @@ func DownloadCovers(c *CVDownloader) {
 	c.downloadQueue = make(chan *CVResult)    // This is just json it shouldn't take up much more than 122 MB
 	c.imageDownloads = make(chan download, 1) // These are just URLs should only take a few MB
 	c.notFound = make(chan download, 1)       // Same here
-	os.MkdirAll(c.JSONPath, 0o777)
-	f, _ := os.Create(filepath.Join(c.ImagePath, ".keep"))
+	JSONPath := filepath.Join(c.basePath, workDirectory, jsonDirectory)
+	ImagePath := filepath.Join(c.basePath, workDirectory, imageDirectory)
+	_ = os.MkdirAll(JSONPath, 0o777)
+	f, _ := os.Create(filepath.Join(ImagePath, ".keep"))
 	f.Close()
 	if !c.KeepDownloadedImages {
 		log.Println("Cleaning directories")
@@ -654,7 +662,7 @@ func DownloadCovers(c *CVDownloader) {
 	}
 	log.Println("Reading json")
 	var d *os.File
-	d, err = os.Open(c.JSONPath)
+	d, err = os.Open(JSONPath)
 	if err != nil {
 		panic(fmt.Errorf("unable to open path for json files: %w", err))
 	}
