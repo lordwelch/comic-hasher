@@ -125,7 +125,7 @@ func Usage(f *flag.FlagSet) {
 				return string(ch.Lower(currentFlag.Name)) == v
 			},
 		) {
-			fmt.Fprintf(&b, "=true|false")
+			fmt.Fprintf(&b, " true|false")
 		}
 		// Boolean flags of one ASCII letter are so common we
 		// treat them specially, putting their usage on the same line.
@@ -213,7 +213,7 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 }
 
 var (
-	groupOrder = []string{"", "file", "hash", "comic vine", "debug"}
+	groupOrder = []string{"", "file", "hash", "download", "comic vine", "debug"}
 	groups     = map[string]string{
 		"load-embedded-hashes": "file",
 		"save-embedded-hashes": "file",
