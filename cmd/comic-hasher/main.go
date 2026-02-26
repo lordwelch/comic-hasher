@@ -69,6 +69,7 @@ func main() {
 	}
 	showVersion, fs := registerOptions(&opts)
 	err := fs.Parse(os.Args[1:])
+	opts.cv.images.Get()
 	if err != nil {
 		Usage(fs)
 		os.Exit(1)

@@ -47,6 +47,11 @@ func (f Images) String() string {
 	return strings.TrimRight(value.String(), ",")
 }
 
+func (f *Images) Get() any {
+	delete(*f, "started")
+	return *f
+}
+
 func (f *Images) Set(s string) error {
 	if (*f) == nil {
 		*f = Images{"started": {}}
