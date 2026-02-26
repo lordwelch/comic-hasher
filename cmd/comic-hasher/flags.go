@@ -153,6 +153,11 @@ func Usage(f *flag.FlagSet) {
 		helpItems[groups[currentFlag.Name]] = append(helpItems[groups[currentFlag.Name]], b.String())
 	})
 	toTitle := cases.Title(language.English)
+	for section := range helpItems {
+		if !slices.ContainsFunc(groupOrder, func(s string) bool { return ch.Lower(s) == ch.Lower(section) }) {
+			groupOrder = append(groupOrder, section)
+		}
+	}
 	for _, group := range groupOrder {
 		groupItems := helpItems[group]
 		if len(groupItems) == 0 {
