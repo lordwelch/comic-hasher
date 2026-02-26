@@ -118,7 +118,7 @@ func IsLower(s string) bool {
 	return true
 }
 
-func lower[E string | Source](s E) Source {
+func Lower[E string | Source](s E) Source {
 	if !IsLower(string(s)) {
 		return Source(strings.ToLower(string(s)))
 	}
@@ -126,7 +126,7 @@ func lower[E string | Source](s E) Source {
 }
 
 func NewSource[E string | Source](s E) *Source {
-	s1 := lower(s)
+	s1 := Lower(s)
 	if sp, ok := sources.Load(s1); ok {
 		return sp.(*Source)
 	}
