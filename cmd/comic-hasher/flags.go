@@ -212,8 +212,6 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 	showVersion := fs.Bool("version", false, "Show version and quit")
 	fs.BoolVar(showVersion, "V", false, "")
 
-	fmt.Println(showVersion)
-
 	return showVersion, fs
 }
 
