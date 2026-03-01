@@ -363,6 +363,7 @@ func startServer(opts Opts) {
 	}
 
 	server.HashLocalImages(opts.coverPath)
+	_ = os.MkdirAll(opts.path, 0o755)
 	chdb, err := ch.OpenCHDBBolt(opts.path, opts.deleteHashedImages)
 	if err != nil {
 		panic(err)
