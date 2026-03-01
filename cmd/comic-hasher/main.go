@@ -378,7 +378,7 @@ func startServer(opts Opts) {
 
 	if opts.cv.enabled {
 		dwg.Go(func() {
-			cvdownloader := cv.NewCVDownloader(server.Context, bufPool, opts.onlyHashNewIDs, server.hashes.GetIDs, chdb, filepath.Join(opts.path, "comicvine"), opts.cv.APIKey, opts.cv.images, opts.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
+			cvdownloader := cv.NewCVDownloader(server.Context, bufPool, opts.onlyHashNewIDs, server.hashes.GetIDs, chdb, filepath.Join(opts.path, cv.WorkDirectory), opts.cv.APIKey, opts.cv.images, opts.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
 			cv.DownloadCovers(cvdownloader)
 			for {
 				select {

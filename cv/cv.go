@@ -108,7 +108,7 @@ type CVResult struct {
 }
 
 const (
-	workDirectory  = "comicvine"
+	WorkDirectory  = "comicvine"
 	imageDirectory = "_image"
 	jsonDirectory  = "_json"
 )
@@ -145,7 +145,7 @@ var (
 
 func (c *CVDownloader) loadIssues(filename string) (*CVResult, error) {
 	tmp := &CVResult{Results: make([]Issue, 0, 100)}
-	file, err := os.Open(filepath.Join(c.basePath, workDirectory, jsonDirectory, filename))
+	file, err := os.Open(filepath.Join(c.basePath, jsonDirectory, filename))
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +272,7 @@ func (c *CVDownloader) updateIssues() (int, error) {
 		if c.hasQuit() {
 			return offset - 100, ErrQuit
 		}
-
+		// Only update 9 existing pages at a time, assume that covers/issue ids are still accurate
 		issue, err := c.getDownloadedIssues(offset, updated < 9)
 		if err == nil && issue != nil {
 
@@ -364,95 +364,96 @@ type download struct {
 	finished bool
 }
 
+func (c *CVDownloader) downloadWorker(id int) {
+	log.Println("starting downloader", id)
+	for dl := range c.imageDownloads {
+		if dl.finished {
+			c.FinishedDownloadQueue <- Download{
+				URL:     dl.url,
+				Dest:    dl.dest,
+				IssueID: strconv.Itoa(dl.issueID),
+			}
+			c.imageWG.Done()
+			continue
+		}
+		dir := filepath.Dir(dl.dest)
+		resp, cancelDownload, err := Get(dl.url)
+		if err != nil {
+			cancelDownload()
+			log.Println("Failed to download", dl.volumeID, "/", dl.issueID, dl.url, err)
+			c.imageWG.Done()
+			continue
+		}
+		cleanup := func() {
+			_ = resp.Body.Close()
+			cancelDownload()
+			c.imageWG.Done()
+		}
+		if resp.StatusCode == 404 {
+
+			c.notFound <- dl
+			cleanup()
+			continue
+		}
+		if resp.StatusCode != 200 {
+			log.Println("Failed to download", dl.url, resp.StatusCode)
+			cleanup()
+			continue
+		}
+
+		if c.KeepDownloadedImages {
+			_ = os.MkdirAll(dir, 0o755)
+			image, err := os.Create(dl.dest)
+			if err != nil {
+				log.Println("Unable to create image file", dl.dest, err)
+				_ = os.Remove(dl.dest)
+				_ = image.Close()
+				cleanup()
+				continue
+			}
+			log.Println("downloading", dl.dest)
+			_, err = io.Copy(image, resp.Body)
+			_ = image.Close()
+			if err != nil {
+				log.Println("Failed when downloading image", err)
+				_ = os.Remove(dl.dest)
+				cleanup()
+				continue
+			}
+
+			c.FinishedDownloadQueue <- Download{
+				URL:     dl.url,
+				Dest:    dl.dest,
+				IssueID: strconv.Itoa(dl.issueID),
+			}
+
+		} else {
+			image := c.bufPool.Get().(*bytes.Buffer)
+			image.Reset()
+			log.Println("downloading", dl.dest)
+			_, err = io.Copy(image, resp.Body)
+			if err != nil {
+				log.Println("Failed when downloading image", err)
+				cleanup()
+				_ = os.Remove(dl.dest)
+				// Something failed let this buffer GC instead of saving it
+				continue
+			}
+
+			c.FinishedDownloadQueue <- Download{
+				URL:     dl.url,
+				Dest:    dl.dest,
+				IssueID: strconv.Itoa(dl.issueID),
+				Image:   image,
+			}
+		}
+		cleanup()
+	}
+}
+
 func (c *CVDownloader) startDownloader() {
 	for i := range 5 {
-		go func() {
-			log.Println("starting downloader", i)
-			for dl := range c.imageDownloads {
-				if dl.finished {
-
-					c.FinishedDownloadQueue <- Download{
-						URL:     dl.url,
-						Dest:    dl.dest,
-						IssueID: strconv.Itoa(dl.issueID),
-					}
-					c.imageWG.Done()
-					continue
-				}
-				dir := filepath.Dir(dl.dest)
-				resp, cancelDownload, err := Get(dl.url)
-				if err != nil {
-					cancelDownload()
-					log.Println("Failed to download", dl.volumeID, "/", dl.issueID, dl.url, err)
-					c.imageWG.Done()
-					continue
-				}
-				cleanup := func() {
-					resp.Body.Close()
-					cancelDownload()
-					c.imageWG.Done()
-				}
-				if resp.StatusCode == 404 {
-
-					c.notFound <- dl
-					cleanup()
-					continue
-				}
-				if resp.StatusCode != 200 {
-					log.Println("Failed to download", dl.url, resp.StatusCode)
-					cleanup()
-					continue
-				}
-
-				if c.KeepDownloadedImages {
-					_ = os.MkdirAll(dir, 0o755)
-					image, err := os.Create(dl.dest)
-					if err != nil {
-						log.Println("Unable to create image file", dl.dest, err)
-						os.Remove(dl.dest)
-						image.Close()
-						cleanup()
-						continue
-					}
-					log.Println("downloading", dl.dest)
-					_, err = io.Copy(image, resp.Body)
-					image.Close()
-					if err != nil {
-						log.Println("Failed when downloading image", err)
-						os.Remove(dl.dest)
-						cleanup()
-						continue
-					}
-
-					c.FinishedDownloadQueue <- Download{
-						URL:     dl.url,
-						Dest:    dl.dest,
-						IssueID: strconv.Itoa(dl.issueID),
-					}
-
-				} else {
-					image := c.bufPool.Get().(*bytes.Buffer)
-					image.Reset()
-					log.Println("downloading", dl.dest)
-					_, err = io.Copy(image, resp.Body)
-					if err != nil {
-						log.Println("Failed when downloading image", err)
-						cleanup()
-						os.Remove(dl.dest)
-						// Something failed let this buffer GC instead of saving it
-						continue
-					}
-
-					c.FinishedDownloadQueue <- Download{
-						URL:     dl.url,
-						Dest:    dl.dest,
-						IssueID: strconv.Itoa(dl.issueID),
-						Image:   image,
-					}
-				}
-				cleanup()
-			}
-		}()
+		go c.downloadWorker(i)
 	}
 }
 
@@ -473,98 +474,109 @@ func (c *CVDownloader) downloadImages() {
 	go c.handleNotFound()
 	added := 0
 	for list := range c.downloadQueue {
-		log.Printf("Checking downloads at offset %v\r", list.Offset)
-		for _, issue := range list.Results {
-			type image struct {
-				url  string
-				name string
-			}
-			imageURLs := []image{{issue.Image.IconURL, "icon"}, {issue.Image.MediumURL, "medium"}, {issue.Image.ScreenURL, "screen"}, {issue.Image.ScreenLargeURL, "screenlarge"}, {issue.Image.SmallURL, "small"}, {issue.Image.SuperURL, "super"}, {issue.Image.ThumbURL, "thumb"}, {issue.Image.TinyURL, "tiny"}, {issue.Image.OriginalURL, "original"}}
-			for _, image := range imageURLs {
-				if _, imageAllowed := c.ImageTypes[image.name]; !imageAllowed {
-					continue
-				}
-				if c.chdb.CheckURL(image.url) {
-					log.Printf("Skipping known bad url %s", image.url)
-					continue
-				}
-				if strings.HasSuffix(image.url, "6373148-blank.png") {
-					c.notFound <- download{
-						url:      image.url,
-						offset:   list.Offset,
-						volumeID: issue.Volume.ID,
-						issueID:  issue.ID,
-					}
-					continue
-				}
+		c.processDownloadQueue(list, &added)
+	}
+}
 
-				uri, err := url.ParseRequestURI(image.url)
-				if err != nil {
-					c.notFound <- download{
-						url:      image.url,
-						offset:   list.Offset,
-						volumeID: issue.Volume.ID,
-						issueID:  issue.ID,
-						finished: true,
-					}
-					continue
-				}
-				ext := strings.TrimSuffix(strings.ToLower(path.Ext(uri.Path)), "~original")
-				if ext == "" || (len(ext) > 4 && !slices.Contains([]string{".avif", ".webp", ".tiff", ".heif"}, ext)) {
-					ext = ".jpg"
-				}
-				imagePath := filepath.Join(workDirectory, imageDirectory, strconv.Itoa(issue.Volume.ID), strconv.Itoa(issue.ID), image.name+ext)
-
-				ids := c.getID(ch.ID{
-					Domain: ch.NewSource(ch.ComicVine),
-					ID:     strconv.Itoa(issue.ID),
-				})
-				if c.chdb.PathDownloaded(imagePath) || c.onlyHashNewIDs && len(ids) > 0 {
-					if _, err = os.Stat(filepath.Join(c.basePath, imagePath)); c.SendExistingImages && err == nil {
-						// We don't add to the count of added as these should be processed immediately
-						log.Printf("Sending Existing image %v/%v %v", issue.Volume.ID, issue.ID, imagePath)
-						c.imageWG.Add(1)
-						c.imageDownloads <- download{
-							url:      image.url,
-							dest:     imagePath,
-							offset:   list.Offset,
-							volumeID: issue.Volume.ID,
-							issueID:  issue.ID,
-							finished: true,
-						}
-					}
-					continue // If it exists assume it is fine, adding some basic verification might be a good idea later
-				}
-				added++
-
-				c.imageWG.Add(1)
-				c.imageDownloads <- download{
-					url:      image.url,
-					dest:     imagePath,
-					offset:   list.Offset,
-					volumeID: issue.Volume.ID,
-					issueID:  issue.ID,
-				}
-			}
-			if added > 200 {
-				// On a clean single image type run each page would have 100 downloads of a single cover type but stuff happens so we only wait once we have sent 200 to the queue
-				log.Println("waiting for", added, "downloads at offset", list.Offset)
-				beforeWait := time.Now()
-				c.imageWG.Wait()
-				waited := time.Since(beforeWait)
-				added = 0
-				// If we had to wait for the arbitrarily picked time of 7.4 seconds it means we had a backed up queue (slow hashing can also cause it to wait longer), lets wait to give the CV servers a break
-				if waited > time.Duration(7.4*float64(time.Second)) {
-					t := 10 * time.Second
-					log.Println("Waiting for", t, "at offset", list.Offset, "had to wait for", waited)
-					time.Sleep(t) // TODO: why don't we allow canceling early here?
-				} else {
-					// Things are too fast we can't depend CV being slow to manage our download speed
-					// We sleep for 3 seconds so we don't overload CV
-					time.Sleep(3 * time.Second)
-				}
+func (c *CVDownloader) processDownloadQueue(list *CVResult, added *int) {
+	log.Printf("Checking downloads at offset %v\r", list.Offset)
+	for _, issue := range list.Results {
+		imageURLs := []Image{{issue.Image.IconURL, "icon"}, {issue.Image.MediumURL, "medium"}, {issue.Image.ScreenURL, "screen"}, {issue.Image.ScreenLargeURL, "screenlarge"}, {issue.Image.SmallURL, "small"}, {issue.Image.SuperURL, "super"}, {issue.Image.ThumbURL, "thumb"}, {issue.Image.TinyURL, "tiny"}, {issue.Image.OriginalURL, "original"}}
+		for _, image := range imageURLs {
+			c.downloadImage(list, issue, image, added)
+		}
+		if *added > 200 {
+			// On a clean single image type run each page would have 100 downloads of a single cover type but stuff happens so we only wait once we have sent 200 to the queue
+			log.Println("waiting for", *added, "downloads at offset", list.Offset)
+			beforeWait := time.Now()
+			c.imageWG.Wait()
+			waited := time.Since(beforeWait)
+			*added = 0
+			// If we had to wait for the arbitrarily picked time of 7.4 seconds it means we had a backed up queue (slow hashing can also cause it to wait longer), lets wait to give the CV servers a break
+			if waited > time.Duration(7.4*float64(time.Second)) {
+				t := 10 * time.Second
+				log.Println("Waiting for", t, "at offset", list.Offset, "had to wait for", waited)
+				time.Sleep(t) // TODO: why don't we allow canceling early here?
+			} else {
+				// Things are too fast we can't depend CV being slow to manage our download speed
+				// We sleep for 3 seconds so we don't overload CV
+				time.Sleep(3 * time.Second)
 			}
 		}
+	}
+}
+
+type Image struct {
+	url  string
+	name string
+}
+
+func (c *CVDownloader) downloadImage(list *CVResult, issue Issue, image Image, added *int) {
+	if _, imageAllowed := c.ImageTypes[image.name]; !imageAllowed {
+		return
+	}
+	if c.chdb.CheckURL(image.url) {
+		log.Printf("Skipping known bad url %s", image.url)
+		return
+	}
+	if strings.HasSuffix(image.url, "6373148-blank.png") {
+		c.notFound <- download{
+			url:      image.url,
+			offset:   list.Offset,
+			volumeID: issue.Volume.ID,
+			issueID:  issue.ID,
+		}
+		return
+	}
+
+	uri, err := url.ParseRequestURI(image.url)
+	if err != nil {
+		c.notFound <- download{
+			url:      image.url,
+			offset:   list.Offset,
+			volumeID: issue.Volume.ID,
+			issueID:  issue.ID,
+			finished: true,
+		}
+		return
+	}
+	ext := strings.TrimSuffix(strings.ToLower(path.Ext(uri.Path)), "~original")
+	if ext == "" || (len(ext) > 4 && !slices.Contains([]string{".avif", ".webp", ".tiff", ".heif"}, ext)) {
+		ext = ".jpg"
+	}
+	// Construct the relative path for the file
+	// This is relative to to comic-hasher path. eg filepath.Join(c.basePath, "../")
+	imagePath := filepath.Join(WorkDirectory, imageDirectory, strconv.Itoa(issue.Volume.ID), strconv.Itoa(issue.ID), image.name+ext)
+
+	ids := c.getID(ch.ID{
+		Domain: ch.NewSource(ch.ComicVine),
+		ID:     strconv.Itoa(issue.ID),
+	})
+	if c.chdb.PathDownloaded(imagePath) || c.onlyHashNewIDs && len(ids) > 0 {
+		if _, err = os.Stat(filepath.Join(c.basePath, imagePath)); c.SendExistingImages && err == nil {
+			// We don't add to the count of added as these should be processed immediately
+			log.Printf("Sending Existing image %v/%v %v", issue.Volume.ID, issue.ID, imagePath)
+			c.imageWG.Add(1)
+			c.imageDownloads <- download{
+				url:      image.url,
+				dest:     imagePath,
+				offset:   list.Offset,
+				volumeID: issue.Volume.ID,
+				issueID:  issue.ID,
+				finished: true,
+			}
+		}
+		return // If it exists assume it is fine, adding some basic verification might be a good idea later
+	}
+	*added++
+
+	c.imageWG.Add(1)
+	c.imageDownloads <- download{
+		url:      image.url,
+		dest:     imagePath,
+		offset:   list.Offset,
+		volumeID: issue.Volume.ID,
+		issueID:  issue.ID,
 	}
 }
 
@@ -656,11 +668,11 @@ func DownloadCovers(c *CVDownloader) {
 	c.downloadQueue = make(chan *CVResult)    // This is just json it shouldn't take up much more than 122 MB
 	c.imageDownloads = make(chan download, 1) // These are just URLs should only take a few MB
 	c.notFound = make(chan download, 1)       // Same here
-	JSONPath := filepath.Join(c.basePath, workDirectory, jsonDirectory)
-	ImagePath := filepath.Join(c.basePath, workDirectory, imageDirectory)
+	JSONPath := filepath.Join(c.basePath, jsonDirectory)
+	ImagePath := filepath.Join(c.basePath, imageDirectory)
 	_ = os.MkdirAll(JSONPath, 0o777)
 	f, _ := os.Create(filepath.Join(ImagePath, ".keep"))
-	f.Close()
+	_ = f.Close()
 	if !c.KeepDownloadedImages {
 		log.Println("Cleaning directories")
 		c.cleanDirs()
