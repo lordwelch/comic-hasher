@@ -62,7 +62,7 @@ func main() {
 		}
 	}
 	opts := Opts{
-		format: ch.Msgpack, storageType: BasicMap, version: version,
+		format: ch.Msgpack, storageType: Map, version: version,
 		cv: CVOpts{
 			images: cv.Images{"thumb": {}},
 		},
