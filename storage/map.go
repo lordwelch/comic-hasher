@@ -44,6 +44,8 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 		for i, partialHash := range ch.SplitHash(searchHash.Hash) {
 			potentialMatches = append(potentialMatches, currentPartialHashes[i][partialHash]...)
 		}
+		slices.Sort(potentialMatches)
+		potentialMatches = slices.Compact(potentialMatches)
 
 		totalPartialHashes += len(potentialMatches)
 		mappedIds := map[int]bool{}

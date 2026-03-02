@@ -202,7 +202,8 @@ func (b *basicMapStorage) getCurrentHashes(kind goimagehash.Kind) *[]ch.SavedHas
 	panic("Unknown hash type: " + kind.String())
 }
 
-// findHash must have a read lock before using
+// findHash looks for exact matches
+// must have a read lock before using
 // return value is index, count
 // if count < 1 then no results were found
 func (b *basicMapStorage) findHash(hash ch.Hash) (int, int) {
@@ -213,7 +214,7 @@ func (b *basicMapStorage) findHash(hash ch.Hash) (int, int) {
 	if !found {
 		return index, 0
 	}
-	count := 0
+	count := 1 // Skip the index we already found because we know it's equal
 	for i := index + 1; i < len(currentHashes) && currentHashes[i].Hash.Hash == hash.Hash; i++ {
 		count++
 	}
