@@ -1,3 +1,5 @@
+//go:build !gokrazy
+
 package ch
 
 import (
