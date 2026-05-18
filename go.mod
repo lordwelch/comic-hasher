@@ -26,8 +26,16 @@ require (
 require golang.org/x/text v0.34.0
 
 require (
+	github.com/OneOfOne/xxhash v1.2.8
+	github.com/twmb/murmur3 v1.1.8
+	github.com/zeebo/xxh3 v1.1.0
+	golang.org/x/crypto v0.47.0
+)
+
+require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect

@@ -234,7 +234,7 @@ func saveHashes(opts Opts, hashes *ch.SavedHashes) error {
 	return nil
 }
 
-func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, server Server) {
+func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, server *Server) {
 	defer func() {
 		log.Println("Download Processor completed")
 		close(server.hashingQueue)
@@ -374,7 +374,7 @@ func startServer(opts Opts) {
 	dcwg := sync.WaitGroup{}
 	finishedDownloadQueue := make(chan cv.Download, 1)
 	dcwg.Go(func() {
-		downloadProcessor(chdb, opts, finishedDownloadQueue, server)
+		downloadProcessor(chdb, opts, finishedDownloadQueue, &server)
 	})
 
 	if opts.cv.enabled {
@@ -385,6 +385,24 @@ func startServer(opts Opts) {
 				select {
 				case <-time.After(2 * time.Hour):
 					cv.DownloadCovers(cvdownloader)
+				case <-server.Context.Done():
+					return
+				}
+			}
+		})
+	}
+	hashEncoders := sync.WaitGroup{}
+	log.Println("Init hash encoder")
+	server.hashServer = NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format)
+	if opts.hashSaveInterval > 0 {
+		hashEncoders.Go(func() {
+			for {
+				select {
+				case <-time.After(opts.hashSaveInterval):
+					err := server.hashServer.writeHashes(server.hashes)
+					if err != nil {
+						log.Printf("Failed to save the current hashes: %v", err)
+					}
 				case <-server.Context.Done():
 					return
 				}
@@ -448,6 +466,8 @@ func startServer(opts Opts) {
 	for dw := range server.mappingQueue {
 		log.Println("Skipping mapping", dw.ID)
 	}
+	log.Println("waiting on hash encoder")
+	hashEncoders.Wait()
 	log.Println("If you press Ctrl+C after this point the saved hashes will be corrupted")
 	signal.Stop(server.signalQueue)
 	close(server.signalQueue)

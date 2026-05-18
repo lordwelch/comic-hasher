@@ -29,6 +29,10 @@ type sqliteStorage struct {
 	idExists   *sql.Stmt
 }
 
+// Not sure if sqlite needs locking...
+func (s *sqliteStorage) RLock()   {}
+func (s *sqliteStorage) RUnlock() {}
+
 func (s *sqliteStorage) findExactHashes(statement *sql.Stmt, hash ch.Hash) (map[ch.ID][]ch.ID, error) {
 	if statement == nil {
 		statement = s.hashExactMatchStatement
@@ -237,6 +241,7 @@ func (s *sqliteStorage) mapHashes(tx *sql.Tx, hash ch.ImageHash) {
 		}
 	}
 }
+
 func (s *sqliteStorage) MapHashes(hash ch.ImageHash) {
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {

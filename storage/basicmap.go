@@ -107,6 +107,14 @@ func (m *IDMap) AssociateIDs(newids []ch.NewIDs) error {
 
 var ErrIDNotFound = errors.New("ID not found on this server")
 
+func (b *basicMapStorage) RLock() {
+	b.hashMutex.RLock()
+}
+
+func (b *basicMapStorage) RUnlock() {
+	b.hashMutex.RUnlock()
+}
+
 // atleast must have a read lock before using
 func (b *basicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, searchHash uint64) []ch.Result {
 	matchingHashes := make([]ch.Result, 0, 20) // hope that we don't need more

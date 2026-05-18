@@ -22,6 +22,11 @@ type VPTree struct {
 	dHashes []vptree.Comparable // temporary, only used for vptree creation
 	pHashes []vptree.Comparable // temporary, only used for vptree creation
 }
+
+// VPTree is not editable
+func (s *VPTree) RLock()   {}
+func (s *VPTree) RUnlock() {}
+
 type VPHash struct {
 	ch.SavedHash
 }
@@ -145,6 +150,7 @@ func (v *VPTree) DecodeHashes(hashes *ch.SavedHashes) error {
 	}
 	return nil
 }
+
 func (v *VPTree) EncodeHashes() (*ch.SavedHashes, error) {
 	return &ch.SavedHashes{}, errors.New("Not Implemented")
 }

@@ -254,6 +254,8 @@ type HashStorage interface {
 	EncodeHashes() (*SavedHashes, error)
 	AssociateIDs(newIDs []NewIDs) error
 	GetIDs(id ID) IDList
+	RLock()
+	RUnlock()
 }
 
 func Atleast(maxDistance int, searchHash uint64, hashes []uint64) []Match {

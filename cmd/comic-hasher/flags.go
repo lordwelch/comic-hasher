@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
 	"gitea.narnian.us/lordwelch/comic-hasher/cv"
@@ -72,6 +73,7 @@ type Opts struct {
 	saveEmbeddedHashes bool
 	format             ch.Format
 	storageType        Storage
+	hashSaveInterval   time.Duration
 	onlyHashNewIDs     bool
 	deleteHashedImages bool
 	keepDownloaded     bool
@@ -197,6 +199,7 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 	fs.Var(&opts.format, "save-format", "Specify the `format` to save hashes in (json, msgpack)")
 
 	fs.Var(&opts.storageType, "storage-type", "Specify the `storage type` used internally to search hashes\n(Sqlite,Sqlite3,Map,BasicMap,VPTree)")
+	fs.DurationVar(&opts.hashSaveInterval, "hash-save-interval", time.Hour, "Specify the interval that hashes will automaticall be saved to disk. 0 means never")
 
 	fs.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers\n\nIf multiple image types (-cv-images) are selected more than 1 may get through")
 	fs.BoolVar(&opts.keepDownloaded, "keep-downloaded", false, "Keep newly downloaded images.\nWhen set to false does not ever write images to the filesystem\nA crash or exiting during downloading can mean some images need to be re-downloaded")
@@ -223,6 +226,7 @@ var (
 		"save-format":          "file",
 		"storage-type":         "hash",
 		"only-hash-new-ids":    "hash",
+		"hash-save-interval":   "hash",
 		"keep-downloaded":      "download",
 		"hash-downloaded":      "download",
 		"cv":                   "comic vine",

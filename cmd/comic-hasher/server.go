@@ -4,9 +4,17 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"crypto"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"hash"
+	"hash/adler32"
+	"hash/crc32"
+	"hash/fnv"
 	"image"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -16,10 +24,24 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/OneOfOne/xxhash"
+	"github.com/twmb/murmur3"
+	"github.com/zeebo/xxh3"
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
 	"gitea.narnian.us/lordwelch/goimagehash"
+
+	_ "crypto/md5"
+	_ "crypto/sha1"
+	_ "crypto/sha256"
+	_ "crypto/sha3"
+	_ "crypto/sha512"
+
+	_ "golang.org/x/crypto/blake2b"
+	_ "golang.org/x/crypto/blake2s"
 )
 
 type Server struct {
@@ -27,6 +49,7 @@ type Server struct {
 	mux            *CHMux
 	BaseURL        *url.URL
 	hashes         ch.HashStorage
+	hashServer     HashServer
 	Context        context.Context
 	cancel         func()
 	signalQueue    chan os.Signal
@@ -35,6 +58,15 @@ type Server struct {
 	mappingQueue   chan ch.ImageHash
 	onlyHashNewIDs bool
 	version        string
+}
+
+type HashServer struct {
+	hashes            string
+	mut               sync.RWMutex
+	digests           map[string][]byte
+	digestHeaderCache string
+	format            ch.Format
+	digesters         map[string]hash.Hash
 }
 
 type CHMux struct {
@@ -55,6 +87,167 @@ func (s *Server) setupAppHandlers() {
 	s.mux.HandleFunc("/add_cover", s.addCover)
 	s.mux.HandleFunc("/match_cover_hash", s.matchCoverHash)
 	s.mux.HandleFunc("/associate_ids", s.associateIDs)
+	s.mux.HandleFunc("/hashes", s.hashServer.downloadHashes)
+}
+
+func (h *HashServer) downloadHashes(w http.ResponseWriter, r *http.Request) {
+	h.mut.RLock()
+	defer h.mut.RUnlock()
+	if r.Header.Get("Want-Digest") != "" {
+		w.Header().Set("Digest", h.digestHeader())
+	}
+	w.Header().Set("Repr-Digest", h.reprDigestHeader())
+	w.Header().Set("Content-Type", "application/x-image-hash-db+"+h.format.String())
+	w.Header().Set("Content-Disposition", `"attachment; filename="hashes.gz"`)
+	http.ServeFile(w, r, h.hashes)
+}
+
+func (h *HashServer) reprDigestHeader() string {
+	if h.digestHeaderCache != "" {
+		return h.digestHeaderCache
+	}
+	s := &strings.Builder{}
+	if len(h.digests) == 0 {
+		return ""
+	}
+	for digestName, digest := range h.digests {
+		s.WriteString(digestName)
+		s.WriteString("=:")
+		enc := base64.NewEncoder(base64.StdEncoding, s)
+		_, _ = enc.Write(digest)
+		_ = enc.Close()
+		s.WriteString(":,")
+	}
+	str := s.String()
+	return str[:len(str)-1]
+}
+
+func (h *HashServer) digestHeader() string {
+	s := &strings.Builder{}
+	if len(h.digests) == 0 {
+		return ""
+	}
+	for digestName, digest := range h.digests {
+		s.WriteString(digestName)
+		s.WriteString("=")
+		enc := base64.NewEncoder(base64.StdEncoding, s)
+		_, _ = enc.Write(digest)
+		_ = enc.Close()
+		s.WriteString(",")
+	}
+	str := s.String()
+	return str[:len(str)-1]
+}
+
+func (h *HashServer) writeHashes(hashes ch.HashStorage) error {
+	// Encoding hashes requires a lock as it assumes pointers are in use to reduce unnecessary memory usage
+	hashes.RLock()
+	defer hashes.RUnlock()
+	encodedHashes, err := hashes.EncodeHashes()
+	if err != nil {
+		return err
+	}
+	content, err := ch.EncodeHashes(encodedHashes, h.format)
+	if err != nil {
+		return err
+	}
+	f, err := os.Create(h.hashes + ".tmp")
+	if err != nil {
+		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashes+".tmp", err)
+	}
+	defer f.Close() //nolint:errcheck
+	writer := h.initDigests(f)
+	_, err = writer.Write(content)
+	if err != nil {
+		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashes+".tmp", err)
+	}
+	h.mut.Lock()
+	defer h.mut.Unlock()
+	h.digestHeaderCache = ""
+	// Explicit close. Windows has issues with operating on open files
+	_ = f.Close()
+	for name, digest := range h.digesters {
+		h.digests[name] = digest.Sum(nil)
+		digest.Reset() // may possibly keep some memory free...
+	}
+	err = os.Rename(h.hashes+".tmp", h.hashes)
+	if err != nil {
+		return fmt.Errorf("failed to update existing file%w", err)
+	}
+	return nil
+}
+
+func NewHashServer(hashes string, format ch.Format) HashServer {
+	h := HashServer{
+		hashes:  hashes,
+		format:  format,
+		digests: map[string][]byte{},
+	}
+	f, err := os.Open(hashes)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return h //nolint:govet
+		}
+		panic(fmt.Errorf("unable to open the hashes file %q: %w", hashes, err))
+	}
+	defer f.Close() //nolint:errcheck
+	writer := h.initDigests(io.Discard)
+	_, err = io.Copy(writer, f)
+	if err != nil {
+		panic(fmt.Errorf("checksum hashes file %q, %w", h.hashes, err))
+	}
+	for name, digest := range h.digesters {
+		h.digests[name] = digest.Sum(nil)
+		digest.Reset() // may possibly keep some memory free...
+	}
+
+	return h //nolint:govet
+}
+
+func (h *HashServer) initDigests(writer io.Writer) io.Writer {
+	if h.digesters == nil {
+		h.digesters = map[string]hash.Hash{
+			"sha":                       crypto.SHA1.New(),
+			"adler":                     adler32.New(),
+			"crc32c":                    crc32.NewIEEE(),
+			"fnv1-32":                   fnv.New32(),
+			"fnv1a-32":                  fnv.New32a(),
+			"fnv1-64":                   fnv.New64(),
+			"fnv1a-64":                  fnv.New64a(),
+			"fnv1-128":                  fnv.New128(),
+			"fnv1a-128":                 fnv.New128a(),
+			crypto.MD5.String():         crypto.MD5.New(),
+			crypto.SHA1.String():        crypto.SHA1.New(),
+			crypto.SHA224.String():      crypto.SHA224.New(),
+			crypto.SHA256.String():      crypto.SHA256.New(),
+			crypto.SHA384.String():      crypto.SHA384.New(),
+			crypto.SHA512.String():      crypto.SHA512.New(),
+			crypto.SHA3_224.String():    crypto.SHA3_224.New(),
+			crypto.SHA3_256.String():    crypto.SHA3_256.New(),
+			crypto.SHA3_384.String():    crypto.SHA3_384.New(),
+			crypto.SHA3_512.String():    crypto.SHA3_512.New(),
+			crypto.SHA512_224.String():  crypto.SHA512_224.New(),
+			crypto.SHA512_256.String():  crypto.SHA512_256.New(),
+			crypto.BLAKE2s_256.String(): crypto.BLAKE2s_256.New(),
+			crypto.BLAKE2b_256.String(): crypto.BLAKE2b_256.New(),
+			crypto.BLAKE2b_384.String(): crypto.BLAKE2b_384.New(),
+			crypto.BLAKE2b_512.String(): crypto.BLAKE2b_512.New(),
+			"XXH64":                     xxhash.New64(),
+			"XXH32":                     xxhash.New32(),
+			"XXH3":                      xxh3.New(),
+			"XXH128":                    xxh3.New128(),
+			"murmur3-32":                murmur3.New32(),
+			"murmur3-64":                murmur3.New64(),
+			"murmur3-128":               murmur3.New128(),
+		}
+	}
+	writers := make([]io.Writer, 0, len(h.digesters)+1)
+	writers = append(writers, writer)
+	for _, digest := range h.digesters {
+		digest.Reset()
+		writers = append(writers, digest)
+	}
+	return io.MultiWriter(writers...)
 }
 
 func (s *Server) associateIDs(w http.ResponseWriter, r *http.Request) {
