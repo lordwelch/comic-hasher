@@ -191,7 +191,6 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 	if err != nil {
 		log.Panicf("Failed to decode hashes: %s", err)
 	}
-	log.Printf("Loaded %s hashes\n", format)
 	return loadedHashes
 }
 
@@ -358,9 +357,12 @@ func startServer(opts Opts) {
 
 	// DecodeHashes would normally need a write lock
 	// nothing else has been started yet so we don't need one
-	if err := server.hashes.DecodeHashes(loadHashes(opts)); err != nil {
+	loadedHashes := loadHashes(opts)
+	if err := server.hashes.DecodeHashes(loadedHashes); err != nil {
 		panic(err)
 	}
+	log.Println("Loaded hashes")
+	loadedHashes = nil //nolint:ineffassign
 
 	server.HashLocalImages(opts.coverPath)
 	_ = os.MkdirAll(opts.path, 0o755)
@@ -430,11 +432,12 @@ func startServer(opts Opts) {
 		}
 
 	}
+
+	log.Println("Listening on ", server.httpServer.Addr)
 	err = server.httpServer.ListenAndServe()
 	if err != nil {
 		log.Println(err)
 	}
-	log.Println("Listening on ", server.httpServer.Addr)
 
 	close(server.readerQueue)
 	log.Println("waiting on readers")
