@@ -1,6 +1,6 @@
 module gitea.narnian.us/lordwelch/comic-hasher
 
-go 1.26
+go 1.26.0
 
 // Main comic-hasher
 require (
@@ -54,6 +54,7 @@ require (
 	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/time v0.16.0
 	google.golang.org/protobuf v1.36.11 // indirect
 	modernc.org/libc v1.69.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

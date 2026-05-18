@@ -37,6 +37,7 @@ import (
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
 	"gitea.narnian.us/lordwelch/comic-hasher/cv"
+	"gitea.narnian.us/lordwelch/comic-hasher/download"
 	"gitea.narnian.us/lordwelch/comic-hasher/storage"
 )
 
@@ -237,7 +238,7 @@ func saveHashes(opts Opts, hashes *ch.SavedHashes) error {
 	return nil
 }
 
-func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, server *Server) {
+func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths <-chan download.Download, server *Server) {
 	defer func() {
 		log.Println("Download Processor completed")
 		close(server.hashingQueue)
@@ -384,14 +385,34 @@ func startServer(opts Opts) {
 	log.Println("Init downloaders")
 	dwg := sync.WaitGroup{}
 	dcwg := sync.WaitGroup{}
-	finishedDownloadQueue := make(chan cv.Download, 1)
+	finishedDownloadQueue := make(chan download.Download, 1)
+	startDownloadQueue := make(chan download.Download, 1)
 	dcwg.Go(func() {
 		downloadProcessor(chdb, opts, finishedDownloadQueue, &server)
 	})
+	for i := range 5 {
+		dcwg.Go(func() {
+			// todo: add the context here so that we can cancel in-progress downloads
+			download.Worker(chdb, opts.path, opts.keepDownloaded, startDownloadQueue, finishedDownloadQueue, i)
+		})
+	}
 
 	if opts.cv.enabled {
 		dwg.Go(func() {
-			cvdownloader := cv.NewCVDownloader(server.Context, bufPool, opts.onlyHashNewIDs, server.hashes.GetIDs, chdb, filepath.Join(opts.path, cv.WorkDirectory), opts.cv.APIKey, opts.cv.images, opts.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
+			cvdownloader := cv.NewCVDownloader(
+				server.Context,
+				bufPool,
+				opts.onlyHashNewIDs,
+				server.hashes.GetIDs,
+				chdb,
+				filepath.Join(opts.path, cv.WorkDirectory),
+				opts.cv.APIKey,
+				opts.cv.images,
+				opts.keepDownloaded,
+				opts.cv.hashDownloaded,
+				startDownloadQueue,
+				finishedDownloadQueue,
+			)
 			cv.DownloadCovers(cvdownloader)
 			for {
 				select {
@@ -456,9 +477,10 @@ func startServer(opts Opts) {
 	}
 
 	log.Println("waiting on downloaders")
-	dwg.Wait() // Downloaders send to finishedDownloadQueue which sends to server.hashingQueue
+	dwg.Wait() // Downloaders send to startDownloadQueue -> finishedDownloadQueue -> server.hashingQueue
 
-	log.Println("waiting on downloader")
+	log.Println("waiting on download workers")
+	close(startDownloadQueue)
 	close(finishedDownloadQueue)
 	dcwg.Wait() // Wait for the download processor to finish
 	for dw := range finishedDownloadQueue {
