@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"cmp"
+	"compress/gzip"
 	"context"
 	"crypto"
 	"encoding/base64"
@@ -198,16 +199,24 @@ func (h *HashServer) writeHashes(hashes ch.HashStorage) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.Create(h.hashes + ".tmp")
+	f, err := os.Create(h.hashes + ".tmp.gz")
 	if err != nil {
 		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashes+".tmp", err)
 	}
+	gzw := gzip.NewWriter(f)
+
 	defer f.Close() //nolint:errcheck
-	writer := h.initDigests(f)
+	writer := h.initDigests(gzw)
 	_, err = writer.Write(content)
 	if err != nil {
 		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashes+".tmp", err)
 	}
+
+	// Close gzip so we have a proper stream
+	if err = gzw.Close(); err != nil {
+		return fmt.Errorf("failed to write hashes: %w", err)
+	}
+
 	h.mut.Lock()
 	defer h.mut.Unlock()
 	h.digestHeaderCache = ""

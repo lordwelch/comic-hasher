@@ -332,7 +332,7 @@ func startServer(opts Opts) {
 		onlyHashNewIDs: opts.onlyHashNewIDs,
 		version:        opts.version,
 		reg:            prometheus.NewRegistry(),
-		hashServer: NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format),
+		hashServer:     NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format),
 	}
 	Notify(server.signalQueue)
 	var err error
