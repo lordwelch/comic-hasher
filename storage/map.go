@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"fmt"
 	"slices"
 	"sync"
 
@@ -37,20 +36,26 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 
 	totalPartialHashes := 0
 
-	for _, searchHash := range hashes {
+	var searchHash ch.Hash
+	for _, searchHash = range hashes {
 		currentHashes, currentPartialHashes := m.getCurrentHashes(searchHash.Kind)
-		potentialMatches := []uint64{}
+		filteredMatches := []ch.Match{}
 
 		for i, partialHash := range ch.SplitHash(searchHash.Hash) {
-			potentialMatches = append(potentialMatches, currentPartialHashes[i][partialHash]...)
+			filteredMatches = append(filteredMatches, ch.Atleast(max, searchHash.Hash, currentPartialHashes[i][partialHash])...)
 		}
-		slices.Sort(potentialMatches)
-		potentialMatches = slices.Compact(potentialMatches)
 
-		totalPartialHashes += len(potentialMatches)
-		mappedIds := map[int]bool{}
+		totalPartialHashes += len(filteredMatches)
 
-		for _, match := range ch.Atleast(max, searchHash.Hash, potentialMatches) {
+		var match ch.Match
+		type t struct {
+			match        ch.Match
+			index, count int
+		}
+		resultSize := 0
+
+		realMatches := make([]t, 0, len(filteredMatches))
+		for _, match = range filteredMatches {
 			matchedHash := ch.Hash{
 				Hash: match.Hash,
 				Kind: searchHash.Kind,
@@ -59,24 +64,28 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 			if count < 1 {
 				continue
 			}
-			for _, storedHash := range currentHashes[index : index+count] {
-				idIndex, _ := m.ids.FindID(&storedHash.ID)
-				if mappedIds[idIndex] {
-					continue
-				}
-				mappedIds[idIndex] = true
-
+			realMatches = append(realMatches, t{
+				match,
+				index,
+				count,
+			})
+			resultSize += count
+		}
+		foundMatches = make([]ch.Result, 0, resultSize)
+		var tmatch t
+		var storedHash ch.SavedHash
+		for _, tmatch = range realMatches {
+			for _, storedHash = range currentHashes[tmatch.index : tmatch.index+tmatch.count] {
 				foundMatches = append(foundMatches, ch.Result{
 					Hash:          storedHash.Hash,
 					ID:            storedHash.ID,
-					Distance:      match.Distance,
+					Distance:      tmatch.match.Distance,
 					EquivalentIDs: m.ids.GetIDs(&storedHash.ID),
 				})
-
 			}
 		}
 	}
-	fmt.Println("Total partial hashes tested:", totalPartialHashes)
+
 	return foundMatches, nil
 }
 

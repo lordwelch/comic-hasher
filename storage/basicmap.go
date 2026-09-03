@@ -100,25 +100,26 @@ func (b *basicMapStorage) RUnlock() {
 
 // atleast must have a read lock before using
 func (b *basicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, searchHash uint64) []ch.Result {
-	matchingHashes := make([]ch.Result, 0, 20) // hope that we don't need more
+	otherHashes := make([]ch.Result, 0, 2) // hope that we don't need more
 
-	mappedIds := map[int]bool{}
+	// mappedIds := map[ch.ID]bool{}
 	storedHash := ch.SavedHash{} // reduces allocations and ensures queries are <1s
 	for _, storedHash = range *b.getCurrentHashes(kind) {
 		distance := bits.OnesCount64(searchHash ^ storedHash.Hash.Hash)
 		if distance <= maxDistance {
-			index, _ := b.ids.FindID(&storedHash.ID)
-			if mappedIds[index] {
-				continue
-			}
-			mappedIds[index] = true
-			matchingHashes = append(matchingHashes, ch.Result{
-				Hash:          storedHash.Hash,
-				ID:            storedHash.ID,
-				Distance:      distance,
-				EquivalentIDs: b.ids.GetIDs(&storedHash.ID),
-			})
+			otherHashes = append(otherHashes, ch.Result{storedHash.Hash, storedHash.ID, distance, nil})
 		}
+	}
+
+	matchingHashes := make([]ch.Result, 0, len(otherHashes)) // For some reason copying to this slice is faster than not........
+	for i := range otherHashes {
+		otherHashes[i].EquivalentIDs = b.ids.GetIDs(&otherHashes[i].ID)
+		matchingHashes = append(matchingHashes, ch.Result{
+			Hash:          otherHashes[i].Hash,
+			ID:            otherHashes[i].ID,
+			Distance:      otherHashes[i].Distance,
+			EquivalentIDs: otherHashes[i].EquivalentIDs,
+		})
 	}
 	return matchingHashes
 }
@@ -129,21 +130,25 @@ func (b *basicMapStorage) exactMatches(hashes []ch.Hash) []ch.Result {
 		mappedIds := map[int]bool{}
 
 		index, count := b.findHash(hash)
-		if count > 0 {
-			for _, storedHash := range (*b.getCurrentHashes(hash.Kind))[index : index+count] {
-				index, _ := b.ids.FindID(&storedHash.ID)
-				if mappedIds[index] {
-					continue
-				}
-				mappedIds[index] = true
-
-				foundMatches = append(foundMatches, ch.Result{
-					Hash:          storedHash.Hash,
-					ID:            storedHash.ID,
-					Distance:      0,
-					EquivalentIDs: b.ids.GetIDs(&storedHash.ID),
-				})
+		if count < 1 {
+			continue
+		}
+		var storedHash ch.SavedHash
+		for _, storedHash = range (*b.getCurrentHashes(hash.Kind))[index : index+count] {
+			index, _ := b.ids.FindID(&storedHash.ID)
+			if mappedIds[index] {
+				continue
 			}
+			mappedIds[index] = true
+
+			foundMatches = append(foundMatches, ch.Result{
+				Hash:     storedHash.Hash,
+				ID:       storedHash.ID,
+				Distance: 0,
+			})
+		}
+		for i := range foundMatches {
+			foundMatches[i].EquivalentIDs = b.ids.GetIDs(&storedHash.ID)
 		}
 
 	}
@@ -216,8 +221,9 @@ func (b *basicMapStorage) findHash(hash ch.Hash) (int, int) {
 // insertHash must already have a lock
 func (b *basicMapStorage) insertHash(hash ch.Hash, id ch.ID) {
 	currentHashes := b.getCurrentHashes(hash.Kind)
-	index, count := b.findHash(hash)
-	max := index + count
+	start, count := b.findHash(hash)
+	max := start + count
+	index := start
 	for ; index < max; index++ {
 		if (*currentHashes)[index].ID == id {
 			return
@@ -230,6 +236,7 @@ func (b *basicMapStorage) insertHash(hash ch.Hash, id ch.ID) {
 	}
 	*currentHashes = slices.Insert(*currentHashes, index, sh)
 	b.ids.InsertID(sh.ID)
+	slices.SortFunc((*currentHashes)[start:max+1], hashCmp)
 }
 
 func (b *basicMapStorage) MapHashes(hash ch.ImageHash) {
@@ -333,6 +340,13 @@ func (b *basicMapStorage) DecodeHashes(hashes *ch.SavedHashes) error {
 	fmt.Println("IDs loaded:", len(b.ids.ids))
 
 	return nil
+}
+func hashCmp(existing, target ch.SavedHash) int {
+	return cmp.Or(
+		cmp.Compare(existing.Hash.Hash, target.Hash.Hash),
+		cmp.Compare(*existing.ID.Domain, *target.ID.Domain),
+		cmp.Compare(existing.ID.ID, target.ID.ID),
+	)
 }
 
 // EncodeHashes should already have a lock
