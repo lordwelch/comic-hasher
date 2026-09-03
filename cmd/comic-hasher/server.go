@@ -554,7 +554,7 @@ func (s *Server) hasher(workerID int) {
 		}
 
 		elapsed := time.Since(start)
-		log.Printf("Hashing took %v: worker: %v. %s: %064b id: %v\n", elapsed, workerID, hash.Hashes[0].Kind, hash.Hashes[0].Hash, hash.ID)
+		log.Printf("Hashing took %v: id: %v\n", elapsed, hash.ID)
 	}
 }
 

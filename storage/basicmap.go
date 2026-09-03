@@ -107,7 +107,7 @@ func (b *basicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, search
 	for _, storedHash = range *b.getCurrentHashes(kind) {
 		distance := bits.OnesCount64(searchHash ^ storedHash.Hash.Hash)
 		if distance <= maxDistance {
-			otherHashes = append(otherHashes, ch.Result{storedHash.Hash, storedHash.ID, distance, nil})
+			otherHashes = append(otherHashes, ch.Result{Hash: storedHash.Hash, ID: storedHash.ID, Distance: distance, EquivalentIDs: nil})
 		}
 	}
 
@@ -223,7 +223,7 @@ func (b *basicMapStorage) insertHash(hash ch.Hash, id ch.ID) bool {
 	max := start + count
 	index := start
 	for ; index < max; index++ {
-		if (*currentHashes)[index].ID == id {
+		if (*currentHashes)[index].ID.Compare(id) == 0 {
 			return true
 		}
 	}

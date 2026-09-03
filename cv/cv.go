@@ -479,7 +479,6 @@ func (c *CVDownloader) downloadImages() {
 }
 
 func (c *CVDownloader) processDownloadQueue(list *CVResult, added *int) {
-	log.Printf("Checking downloads at offset %v\r", list.Offset)
 	for _, issue := range list.Results {
 		imageURLs := []Image{{issue.Image.IconURL, "icon"}, {issue.Image.MediumURL, "medium"}, {issue.Image.ScreenURL, "screen"}, {issue.Image.ScreenLargeURL, "screenlarge"}, {issue.Image.SmallURL, "small"}, {issue.Image.SuperURL, "super"}, {issue.Image.ThumbURL, "thumb"}, {issue.Image.TinyURL, "tiny"}, {issue.Image.OriginalURL, "original"}}
 		for _, image := range imageURLs {
