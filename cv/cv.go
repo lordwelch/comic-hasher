@@ -273,7 +273,7 @@ func (c *CVDownloader) updateIssues() (int, error) {
 			return offset - 100, ErrQuit
 		}
 		// Only update 9 existing pages at a time, assume that covers/issue ids are still accurate
-		issue, err := c.getDownloadedIssues(offset, updated < 9)
+		issue, err := c.getDownloadedIssues(offset, updated < 60)
 		if err == nil && issue != nil {
 
 			prev = -1
