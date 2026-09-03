@@ -332,6 +332,7 @@ func startServer(opts Opts) {
 		onlyHashNewIDs: opts.onlyHashNewIDs,
 		version:        opts.version,
 		reg:            prometheus.NewRegistry(),
+		hashServer: NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format),
 	}
 	Notify(server.signalQueue)
 	var err error
@@ -404,7 +405,6 @@ func startServer(opts Opts) {
 	}
 	hashEncoders := sync.WaitGroup{}
 	log.Println("Init hash encoder")
-	server.hashServer = NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format)
 	if opts.hashSaveInterval > 0 {
 		hashEncoders.Go(func() {
 			for {
