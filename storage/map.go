@@ -69,7 +69,7 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 				foundMatches = append(foundMatches, ch.Result{
 					Hash:          storedHash.Hash,
 					ID:            storedHash.ID,
-					Distance:      0,
+					Distance:      match.Distance,
 					EquivalentIDs: m.ids.GetIDs(&storedHash.ID),
 				})
 
