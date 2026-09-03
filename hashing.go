@@ -93,6 +93,14 @@ func (id *ID) Compare(target ID) int {
 	)
 }
 
+func (id ID) String() string {
+	return fmt.Sprintf("%s: %v", *id.Domain, id.ID)
+}
+
+func (id ID) GoString() string {
+	return fmt.Sprintf("%s: %v", *id.Domain, id.ID)
+}
+
 func newSourceMap() *sync.Map {
 	m := &sync.Map{}
 	for _, s := range []Source{ComicVine} {

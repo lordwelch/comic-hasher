@@ -552,19 +552,27 @@ func (c *CVDownloader) downloadImage(list *CVResult, issue Issue, image Image, a
 		Domain: ch.NewSource(ch.ComicVine),
 		ID:     strconv.Itoa(issue.ID),
 	})
-	if c.chdb.PathDownloaded(imagePath) || c.onlyHashNewIDs && len(ids) > 0 {
-		if _, err = os.Stat(filepath.Join(c.basePath, imagePath)); c.SendExistingImages && err == nil {
-			// We don't add to the count of added as these should be processed immediately
-			log.Printf("Sending Existing image %v/%v %v", issue.Volume.ID, issue.ID, imagePath)
-			c.imageWG.Add(1)
-			c.imageDownloads <- download{
-				url:      image.url,
-				dest:     imagePath,
-				offset:   list.Offset,
-				volumeID: issue.Volume.ID,
-				issueID:  issue.ID,
-				finished: true,
-			}
+	if c.onlyHashNewIDs && len(ids) > 0 {
+		return
+	}
+	if c.chdb.PathDownloaded(imagePath) {
+		if !c.SendExistingImages {
+			return
+		}
+		_, err = os.Stat(filepath.Join(c.basePath, imagePath))
+		if err != nil {
+			return // assume it's already been hashed and deleted
+		}
+		// We don't add to the count of added as these should be processed immediately
+		log.Printf("Sending Existing image %v/%v %v\n", issue.Volume.ID, issue.ID, imagePath)
+		c.imageWG.Add(1)
+		c.imageDownloads <- download{
+			url:      image.url,
+			dest:     imagePath,
+			offset:   list.Offset,
+			volumeID: issue.Volume.ID,
+			issueID:  issue.ID,
+			finished: true,
 		}
 		return // If it exists assume it is fine, adding some basic verification might be a good idea later
 	}

@@ -29,25 +29,19 @@ type IDMap struct {
 	ids []IDs
 }
 
-func (m *IDMap) InsertID(id *ch.ID) *ch.ID {
-	// return m.insertID(id, &[]*ch.ID{id})
-	index, found := slices.BinarySearchFunc(m.ids, id, func(id IDs, target *ch.ID) int {
-		return id.id.Compare(*target)
-	})
+func (m *IDMap) InsertID(id ch.ID) *ch.ID {
+	index, found := m.FindID(&id)
 	if !found {
 		m.ids = slices.Insert(m.ids, index, IDs{
-			id,
-			&[]*ch.ID{id},
+			&id,
+			&[]*ch.ID{&id},
 		})
 	}
 	return m.ids[index].id
 }
 
-//go:noinline pragma
 func (m *IDMap) insertID(id *ch.ID, idList *[]*ch.ID) *ch.ID {
-	index, found := slices.BinarySearchFunc(m.ids, id, func(id IDs, target *ch.ID) int {
-		return id.id.Compare(*target)
-	})
+	index, found := m.FindID(id)
 	if !found {
 		m.ids = slices.Insert(m.ids, index, IDs{
 			id,
@@ -93,17 +87,6 @@ func (m *IDMap) AssociateIDs(newids []ch.NewIDs) error {
 	}
 	return nil
 }
-
-// func (m *IDMap) NewID(domain Source, id string) *ch.ID {
-// 	newID := ch.ID{domain, id}
-// 	index, found := slices.BinarySearchFunc(m.idList, newID, func(id *ch.ID, target ch.ID) int {
-// 		return id.Compare(*target)
-// 	})
-// 	if !found {
-// 		m.idList = slices.Insert(m.idList, index, &newID)
-// 	}
-// 	return m.idList[index]
-// }
 
 var ErrIDNotFound = errors.New("ID not found on this server")
 
@@ -245,7 +228,7 @@ func (b *basicMapStorage) insertHash(hash ch.Hash, id ch.ID) {
 		ID:   id,
 	}
 	*currentHashes = slices.Insert(*currentHashes, index, sh)
-	b.ids.InsertID(&sh.ID)
+	b.ids.InsertID(sh.ID)
 }
 
 func (b *basicMapStorage) MapHashes(hash ch.ImageHash) {
@@ -302,7 +285,6 @@ func (b *basicMapStorage) DecodeHashes(hashes *ch.SavedHashes) error {
 		}
 	}
 
-	// Assume they are probably fairly equally split between hash types
 	b.aHashes = make([]ch.SavedHash, 0, aHashCount)
 	b.dHashes = make([]ch.SavedHash, 0, dHashCount)
 	b.pHashes = make([]ch.SavedHash, 0, pHashCount)
@@ -323,7 +305,7 @@ func (b *basicMapStorage) DecodeHashes(hashes *ch.SavedHashes) error {
 		}
 		// TODO: Make loading this more efficient
 		// All known equal IDs are already mapped we can add any missing ones from hashes
-		b.ids.InsertID(&hash.ID)
+		b.ids.InsertID(hash.ID)
 	}
 
 	hashCmp := func(existing, target ch.SavedHash) int {
@@ -333,9 +315,21 @@ func (b *basicMapStorage) DecodeHashes(hashes *ch.SavedHashes) error {
 			cmp.Compare(existing.ID.ID, target.ID.ID),
 		)
 	}
+	hashCompact := func(existing ch.SavedHash, target ch.SavedHash) bool {
+		return hashCmp(existing, target) == 0
+	}
+	// sort for lookup
 	slices.SortFunc(b.aHashes, hashCmp)
 	slices.SortFunc(b.dHashes, hashCmp)
 	slices.SortFunc(b.pHashes, hashCmp)
+	// remove duplicates
+	b.aHashes = slices.CompactFunc(b.aHashes, hashCompact)
+	b.dHashes = slices.CompactFunc(b.dHashes, hashCompact)
+	b.pHashes = slices.CompactFunc(b.pHashes, hashCompact)
+	b.ids.sort()
+
+	fmt.Println("hashes loaded:", len(b.aHashes)+len(b.dHashes)+len(b.pHashes))
+	fmt.Println("IDs loaded:", len(b.ids.ids))
 
 	return nil
 }
