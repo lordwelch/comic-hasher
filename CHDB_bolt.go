@@ -1,6 +1,7 @@
 package ch
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"log"
@@ -17,11 +18,17 @@ type CHDBBolt struct {
 	deleteExisting bool
 }
 
+const CHDBVERSION = "1.0.0"
+
 func OpenCHDBBolt(path string, deleteExisting bool) (CHDBBolt, error) {
 	path, _ = filepath.Abs(path)
 	db, err := bolt.Open(filepath.Join(path, "chdb.bolt"), 0o644, nil)
 	if err != nil {
 		return CHDBBolt{path, db, deleteExisting}, fmt.Errorf("failed to open database: %w", err)
+	}
+	db, err = truncate(db)
+	if err != nil {
+		return CHDBBolt{}, fmt.Errorf("failed to truncate database")
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
 		_, err = tx.CreateBucketIfNotExists([]byte("paths"))
@@ -32,6 +39,15 @@ func OpenCHDBBolt(path string, deleteExisting bool) (CHDBBolt, error) {
 		if err != nil {
 			return fmt.Errorf("failed to create bucket %v: %w", "paths", err)
 		}
+		var versionBucket *bolt.Bucket
+		versionBucket, err = tx.CreateBucketIfNotExists([]byte("version"))
+		if err != nil {
+			return fmt.Errorf("failed to create bucket %v: %w", "paths", err)
+		}
+		err = versionBucket.Put([]byte("version"), []byte(CHDBVERSION))
+		if err != nil {
+			return fmt.Errorf("failed to set CHDB version: %w", err)
+		}
 		return nil
 	})
 	if err != nil {
@@ -40,6 +56,35 @@ func OpenCHDBBolt(path string, deleteExisting bool) (CHDBBolt, error) {
 	}
 
 	return CHDBBolt{path, db, deleteExisting}, nil
+}
+
+func truncate(db *bolt.DB) (*bolt.DB, error) {
+	doTruncate := false
+	err := db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte("version"))
+		if bucket == nil {
+			doTruncate = true
+			return nil
+		}
+		if !bytes.Equal(bucket.Get([]byte("version")), []byte(CHDBVERSION)) {
+			doTruncate = true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !doTruncate {
+		return db, nil
+	}
+
+	path := db.Path()
+	db.Close()
+	err = os.Truncate(path, 0)
+	if err != nil {
+		return nil, err
+	}
+	return bolt.Open(path, 0o644, nil)
 }
 
 func (c CHDBBolt) Import(paths []string, badURLs []string) {
