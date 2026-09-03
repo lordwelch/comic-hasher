@@ -216,12 +216,12 @@ func (c *CVDownloader) getDownloadedIssues(offset int, update bool) (*CVResult, 
 		return nil, err
 	}
 
-	if c.totalResults == issue.Offset+issue.NumberOfPageResults {
+	if c.totalResults-offset <= 100 {
 		if index != len(c.fileList)-1 {
 			err = fmt.Errorf("wrong index: expected %d got %d", len(c.fileList), index)
 			return nil, err
 		}
-		log.Println("Deleting the last page to detect new comics")
+		log.Println("Deleting the last page to detect new comics on next run")
 		_ = os.Remove(filepath.Join(JSONPath, c.fileList[index]))
 		c.fileList = slices.Delete(c.fileList, index, index+1)
 	}
