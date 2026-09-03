@@ -48,6 +48,15 @@ type (
 		Hashes [3]map[uint64]int
 	}
 )
+type Metric struct {
+	Source *Source
+	Kind   goimagehash.Kind
+}
+
+type Metrics struct {
+	Hashes map[Metric]int
+	// IDs map[*Source]int
+}
 
 // SavedHashes The IDs and Hashes fields have no direct correlation
 // It is perfectly valid to have an empty IDs or an empty Hashes field

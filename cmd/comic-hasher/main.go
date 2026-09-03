@@ -28,6 +28,8 @@ import (
 	"github.com/disintegration/imaging"
 	"github.com/kr/pretty"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/vp8"
 	_ "golang.org/x/image/vp8l"
@@ -47,22 +49,24 @@ var bufPool = &sync.Pool{
 	},
 }
 
+var Version string
+
 func main() {
-	version := "devel"
+	Version = "devel"
 	buildInfo, buildInfoFound := debug.ReadBuildInfo()
 	versionInfo := strings.SplitN(buildInfo.Main.Version, "-", 3)
 	if buildInfoFound {
 		switch len(versionInfo) {
 		default:
-			version = buildInfo.Main.Version
+			Version = buildInfo.Main.Version
 		case 2:
-			version = versionInfo[1]
+			Version = versionInfo[1]
 		case 3:
-			version = versionInfo[0] + "-" + versionInfo[2]
+			Version = versionInfo[0] + "-" + versionInfo[2]
 		}
 	}
 	opts := Opts{
-		format: ch.Msgpack, storageType: Map, version: version,
+		format: ch.Msgpack, storageType: Map, version: Version,
 		cv: CVOpts{
 			images: cv.Images{"thumb": {}},
 		},
@@ -327,6 +331,7 @@ func startServer(opts Opts) {
 		},
 		onlyHashNewIDs: opts.onlyHashNewIDs,
 		version:        opts.version,
+		reg:            prometheus.NewRegistry(),
 	}
 	Notify(server.signalQueue)
 	var err error
@@ -358,8 +363,12 @@ func startServer(opts Opts) {
 	// DecodeHashes would normally need a write lock
 	// nothing else has been started yet so we don't need one
 	loadedHashes := loadHashes(opts)
-	if err := server.hashes.DecodeHashes(loadedHashes); err != nil {
+	metrics, err := server.hashes.DecodeHashes(loadedHashes)
+	if err != nil {
 		panic(err)
+	}
+	for m, count := range metrics.Hashes {
+		server.hash_count.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
 	}
 	log.Println("Loaded hashes")
 	loadedHashes = nil //nolint:ineffassign

@@ -103,22 +103,24 @@ func (m *MapStorage) getCurrentHashes(kind goimagehash.Kind) ([]ch.SavedHash, [8
 	panic("Unknown hash type: " + kind.String())
 }
 
-func (m *MapStorage) MapHashes(hash ch.ImageHash) {
-	m.basicMapStorage.MapHashes(hash)
+func (m *MapStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
+	metrics := m.basicMapStorage.MapHashes(hash)
 	for _, hash := range hash.Hashes {
 		_, partialHashes := m.getCurrentHashes(hash.Kind)
 		for i, partialHash := range ch.SplitHash(hash.Hash) {
 			partialHashes[i][partialHash] = ch.Insert(partialHashes[i][partialHash], hash.Hash)
 		}
 	}
+	return metrics
 }
 
-func (m *MapStorage) DecodeHashes(hashes *ch.SavedHashes) error {
+func (m *MapStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error) {
 	if hashes == nil {
-		return nil
+		return ch.Metrics{}, nil
 	}
-	if err := m.basicMapStorage.DecodeHashes(hashes); err != nil {
-		return err
+	metrics, err := m.basicMapStorage.DecodeHashes(hashes)
+	if err != nil {
+		return ch.Metrics{}, err
 	}
 
 	mapPartialHashes(m.aHashes, m.partialAHash)
@@ -129,7 +131,7 @@ func (m *MapStorage) DecodeHashes(hashes *ch.SavedHashes) error {
 	compactPartialHashes(m.partialDHash)
 	compactPartialHashes(m.partialPHash)
 
-	return nil
+	return metrics, nil
 }
 
 func NewMapStorage() (ch.HashStorage, error) {

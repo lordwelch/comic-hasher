@@ -33,6 +33,9 @@ import (
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
 	"gitea.narnian.us/lordwelch/goimagehash"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	_ "crypto/md5"
 	_ "crypto/sha1"
@@ -58,6 +61,12 @@ type Server struct {
 	mappingQueue   chan ch.ImageHash
 	onlyHashNewIDs bool
 	version        string
+
+	reg                   *prometheus.Registry
+	match_cover_total     prometheus.Counter
+	match_cover_duration  *prometheus.HistogramVec
+	hash_count            *prometheus.CounterVec
+	last_request_duration prometheus.Gauge
 }
 
 type HashServer struct {
@@ -67,6 +76,7 @@ type HashServer struct {
 	digestHeaderCache string
 	format            ch.Format
 	digesters         map[string]hash.Hash
+	hashes_downloaded prometheus.Counter
 }
 
 type CHMux struct {
@@ -88,11 +98,48 @@ func (s *Server) setupAppHandlers() {
 	s.mux.HandleFunc("/match_cover_hash", s.matchCoverHash)
 	s.mux.HandleFunc("/associate_ids", s.associateIDs)
 	s.mux.HandleFunc("/hashes", s.hashServer.downloadHashes)
+	s.mux.Handle("/metrics", promhttp.HandlerFor(s.reg, promhttp.HandlerOpts{}))
+	promauto.With(s.reg)
+	s.match_cover_total = promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
+		Name: "comic_hasher_match_cover_hash",
+		Help: "The total number of processed /match_cover_hash requests",
+	})
+
+	s.hashServer.hashes_downloaded = promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
+		Name: "comic_hasher_hashes_download",
+		Help: "The total number of times the hash database has been downloaded: /hashes",
+	})
+
+	s.hash_count = promauto.With(s.reg).NewCounterVec(prometheus.CounterOpts{
+		Name: "comic_hasher_hashes",
+		Help: "The total number of hashes",
+	}, []string{"kind", "source"})
+	s.match_cover_duration = promauto.With(s.reg).NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "comic_hasher_match_cover_hash_request_seconds",
+			Help: "Summary for the request duration of the /match_cover_hash",
+		},
+		[]string{"hashes"},
+	)
+	s.last_request_duration = promauto.With(s.reg).NewGauge(
+		prometheus.GaugeOpts{
+			Name: "comic_hasher_match_cover_hash_last_request_seconds",
+			Help: "The request duration of the last /match_cover_hash request",
+		},
+	)
+	promauto.With(s.reg).NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "app_info",
+			Help: "Current application version.",
+		},
+		[]string{"version"},
+	).WithLabelValues(Version).Set(1)
 }
 
 func (h *HashServer) downloadHashes(w http.ResponseWriter, r *http.Request) {
 	h.mut.RLock()
 	defer h.mut.RUnlock()
+	h.hashes_downloaded.Inc()
 	if r.Header.Get("Want-Digest") != "" {
 		w.Header().Set("Digest", h.digestHeader())
 	}
@@ -352,6 +399,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		max       int
 		err       error
 		hashes    []ch.Hash
+		hash_str  string
 	)
 
 	if simple {
@@ -366,6 +414,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 	if ahash > 0 {
 		hashes = append(hashes, ch.Hash{Hash: ahash, Kind: goimagehash.AHash})
+		hash_str += "ahash_"
 	}
 	if dhash, err = strconv.ParseUint(dhashStr, 16, 64); err != nil && dhashStr != "" {
 		log.Printf("could not parse dhash: %s", dhashStr)
@@ -374,6 +423,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 	if dhash > 0 {
 		hashes = append(hashes, ch.Hash{Hash: dhash, Kind: goimagehash.DHash})
+		hash_str += "dhash_"
 	}
 	if phash, err = strconv.ParseUint(phashStr, 16, 64); err != nil && phashStr != "" {
 		log.Printf("could not parse phash: %s", phashStr)
@@ -382,6 +432,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 	if phash > 0 {
 		hashes = append(hashes, ch.Hash{Hash: phash, Kind: goimagehash.PHash})
+		hash_str += "phash_"
 	}
 	if tmpMax, err := strconv.Atoi(maxStr); err != nil && maxStr != "" {
 		log.Printf("Invalid Max: %s", maxStr)
@@ -391,23 +442,36 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		max = tmpMax
 	}
 
+	hash_str = strings.TrimRight(hash_str, "_")
+
 	if max > 8 {
 		log.Printf("Max must be less than 9: %d", max)
 		writeJSON(w, http.StatusBadRequest, result{Msg: fmt.Sprintf("Max must be less than 9: %d", max)})
 		return
 	}
+	timer := prometheus.NewTimer(prometheus.ObserverFunc(func(v float64) {
+		s.match_cover_duration.WithLabelValues(hash_str).Observe(v)
+		s.last_request_duration.Set(v)
+	}))
+	defer timer.ObserveDuration()
+
+	s.match_cover_total.Inc()
 	matches, err := s.hashes.GetMatches(hashes, max, exactOnly)
 	slices.SortFunc(matches, func(a ch.Result, b ch.Result) int {
 		return cmp.Compare(a.Distance, b.Distance)
 	})
-	log.Println(err)
 	if len(matches) > 0 {
-		var msg string
+		var (
+			msg    string
+			status = http.StatusOK
+		)
 		if err != nil {
+			log.Println("Internal error:", err)
+			status = http.StatusInternalServerError
 			msg = err.Error()
 		}
 
-		writeJSON(w, http.StatusOK, result{
+		writeJSON(w, status, result{
 			Results: matches,
 			Msg:     msg,
 		})
@@ -464,7 +528,9 @@ func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 func (s *Server) mapper(workerID int) {
 	defer log.Println("Mapper", workerID, "completed")
 	for hash := range s.mappingQueue {
-		s.hashes.MapHashes(hash)
+		for m, count := range s.hashes.MapHashes(hash).Hashes {
+			s.hash_count.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
+		}
 	}
 }
 

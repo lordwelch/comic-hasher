@@ -174,14 +174,12 @@ func (b *basicMapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) 
 		}
 	}
 
-	foundHashes := make(map[uint64]struct{})
 	totalPartialHashes := 0
 
 	for _, hash := range hashes {
 		totalPartialHashes += len(*b.getCurrentHashes(hash.Kind))
 		foundMatches = append(foundMatches, b.atleast(hash.Kind, max, hash.Hash)...)
 	}
-	fmt.Println("Total partial hashes tested:", totalPartialHashes, len(foundHashes))
 	return foundMatches, nil
 }
 
@@ -219,14 +217,14 @@ func (b *basicMapStorage) findHash(hash ch.Hash) (int, int) {
 }
 
 // insertHash must already have a lock
-func (b *basicMapStorage) insertHash(hash ch.Hash, id ch.ID) {
+func (b *basicMapStorage) insertHash(hash ch.Hash, id ch.ID) bool {
 	currentHashes := b.getCurrentHashes(hash.Kind)
 	start, count := b.findHash(hash)
 	max := start + count
 	index := start
 	for ; index < max; index++ {
 		if (*currentHashes)[index].ID == id {
-			return
+			return true
 		}
 	}
 
@@ -237,20 +235,28 @@ func (b *basicMapStorage) insertHash(hash ch.Hash, id ch.ID) {
 	*currentHashes = slices.Insert(*currentHashes, index, sh)
 	b.ids.InsertID(sh.ID)
 	slices.SortFunc((*currentHashes)[start:max+1], hashCmp)
+	return false
 }
 
-func (b *basicMapStorage) MapHashes(hash ch.ImageHash) {
+func (b *basicMapStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 	b.hashMutex.Lock()
 	defer b.hashMutex.Unlock()
-	for _, ih := range hash.Hashes {
-		b.insertHash(ih, hash.ID)
+
+	var count = ch.Metrics{
+		Hashes: make(map[ch.Metric]int, 3),
 	}
+	for _, ih := range hash.Hashes {
+		if b.insertHash(ih, hash.ID) {
+			count.Hashes[ch.Metric{Source: hash.ID.Domain, Kind: ih.Kind}] += 1
+		}
+	}
+	return count
 }
 
 // DecodeHashes must already have a lock
-func (b *basicMapStorage) DecodeHashes(hashes *ch.SavedHashes) error {
+func (b *basicMapStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error) {
 	if hashes == nil {
-		return nil
+		return ch.Metrics{}, nil
 	}
 	b.ids.ids = make([]IDs, 0, len(hashes.Hashes))
 
@@ -336,11 +342,18 @@ func (b *basicMapStorage) DecodeHashes(hashes *ch.SavedHashes) error {
 	b.pHashes = slices.CompactFunc(b.pHashes, hashCompact)
 	b.ids.sort()
 
-	fmt.Println("hashes loaded:", len(b.aHashes)+len(b.dHashes)+len(b.pHashes))
-	fmt.Println("IDs loaded:", len(b.ids.ids))
+	var count = ch.Metrics{
+		Hashes: make(map[ch.Metric]int, 6),
+	}
+	for _, hashes := range [][]ch.SavedHash{b.aHashes, b.dHashes, b.pHashes} {
+		for _, hash = range hashes {
+			count.Hashes[ch.Metric{Source: hash.ID.Domain, Kind: hash.Hash.Kind}] += 1
+		}
+	}
 
-	return nil
+	return count, nil
 }
+
 func hashCmp(existing, target ch.SavedHash) int {
 	return cmp.Or(
 		cmp.Compare(existing.Hash.Hash, target.Hash.Hash),

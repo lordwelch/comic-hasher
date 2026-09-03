@@ -192,7 +192,7 @@ func (s *sqliteStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([
 	return foundMatches, nil
 }
 
-func (s *sqliteStorage) mapHashes(tx *sql.Tx, hash ch.ImageHash) {
+func (s *sqliteStorage) mapHashes(tx *sql.Tx, hash ch.ImageHash) ch.Metrics {
 	var err error
 	insertHash := tx.Stmt(s.insertHash)
 	insertID := tx.Stmt(s.insertID)
@@ -214,12 +214,19 @@ func (s *sqliteStorage) mapHashes(tx *sql.Tx, hash ch.ImageHash) {
 		panic(err)
 	}
 	rows.Close()
+	m := ch.Metrics{
+		Hashes: make(map[ch.Metric]int),
+	}
 
-	for _, hash := range hash.Hashes {
-		_, err := insertHash.Exec(hash.Kind, int64(hash.Hash), id_id)
+	for _, h := range hash.Hashes {
+		_, err := insertHash.Exec(h.Kind, int64(h.Hash), id_id)
 		if err != nil {
 			panic(err)
 		}
+		m.Hashes[ch.Metric{
+			Source: hash.ID.Domain,
+			Kind:   h.Kind,
+		}] += 1
 	}
 	rows.Close()
 	row := idExists.QueryRow(id_id)
@@ -240,25 +247,27 @@ func (s *sqliteStorage) mapHashes(tx *sql.Tx, hash ch.ImageHash) {
 			panic(fmt.Errorf("failed to associate equivalent IDs: %w", err))
 		}
 	}
+	return m
 }
 
-func (s *sqliteStorage) MapHashes(hash ch.ImageHash) {
+func (s *sqliteStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		panic(err)
 	}
-	s.mapHashes(tx, hash)
+	metrics := s.mapHashes(tx, hash)
 	err = tx.Commit()
 	if err != nil {
 		panic(err)
 	}
+	return metrics
 }
 
-func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashes) error {
-	return nil
+func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error) {
+	return ch.Metrics{}, nil
 	err := s.dropIndexes()
 	if err != nil {
-		return err
+		return ch.Metrics{}, err
 	}
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
@@ -275,21 +284,24 @@ func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashes) error {
 			row := insertID.QueryRow(id.Domain, id.ID)
 			err = row.Scan(&id_id)
 			if err != nil {
-				return fmt.Errorf("failed to insert id: %w", err)
+				return ch.Metrics{}, fmt.Errorf("failed to insert id: %w", err)
 			}
 			id_ids = append(id_ids, id_id)
 		}
 		row := insertEID.QueryRow()
 		err = row.Scan(&eid)
 		if err != nil {
-			return fmt.Errorf("failed to insert equivalent id: %w", err)
+			return ch.Metrics{}, fmt.Errorf("failed to insert equivalent id: %w", err)
 		}
 		for _, id_id := range id_ids {
 			_, err = insertIEID.Exec(id_id, eid)
 			if err != nil {
-				return err
+				return ch.Metrics{}, err
 			}
 		}
+	}
+	m := ch.Metrics{
+		Hashes: make(map[ch.Metric]int),
 	}
 
 	for _, savedHash := range hashes.Hashes {
@@ -297,6 +309,11 @@ func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashes) error {
 			Hashes: []ch.Hash{savedHash.Hash},
 			ID:     savedHash.ID,
 		})
+		m.Hashes[ch.Metric{
+			Source: savedHash.ID.Domain,
+			Kind:   savedHash.Hash.Kind,
+		}] += 1
+
 	}
 
 	err = tx.Commit()
@@ -305,9 +322,9 @@ func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashes) error {
 	}
 	err = s.createIndexes()
 	if err != nil {
-		return err
+		return m, err
 	}
-	return nil
+	return m, nil
 }
 
 func (s *sqliteStorage) EncodeHashes() (*ch.SavedHashes, error) {

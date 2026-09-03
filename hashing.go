@@ -257,8 +257,8 @@ type NewIDs struct {
 
 type HashStorage interface {
 	GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error)
-	MapHashes(ImageHash)
-	DecodeHashes(hashes *SavedHashes) error
+	MapHashes(ImageHash) Metrics
+	DecodeHashes(hashes *SavedHashes) (Metrics, error)
 	EncodeHashes() (*SavedHashes, error)
 	AssociateIDs(newIDs []NewIDs) error
 	GetIDs(id ID) IDList
@@ -268,7 +268,8 @@ type HashStorage interface {
 
 func Atleast(maxDistance int, searchHash uint64, hashes []uint64) []Match {
 	matchingHashes := make([]Match, 0, 20) // hope that we don't need all of them
-	for _, storedHash := range hashes {
+	var storedHash uint64
+	for _, storedHash = range hashes {
 		distance := bits.OnesCount64(searchHash ^ storedHash)
 		if distance <= maxDistance {
 			matchingHashes = append(matchingHashes, Match{distance, storedHash})

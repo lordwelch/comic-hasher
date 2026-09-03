@@ -99,13 +99,13 @@ func (v *VPTree) getCurrentTree(kind goimagehash.Kind) *vptree.Tree {
 	panic("Unknown hash type: " + kind.String())
 }
 
-func (v *VPTree) MapHashes(ch.ImageHash) {
+func (v *VPTree) MapHashes(ch.ImageHash) ch.Metrics {
 	panic("Not Implemented")
 }
 
-func (v *VPTree) DecodeHashes(hashes *ch.SavedHashes) error {
+func (v *VPTree) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error) {
 	if hashes == nil {
-		return nil
+		return ch.Metrics{}, nil
 	}
 
 	// Initialize all the known equal IDs
@@ -115,7 +115,14 @@ func (v *VPTree) DecodeHashes(hashes *ch.SavedHashes) error {
 		}
 	}
 	var err error
+	m := ch.Metrics{
+		Hashes: make(map[ch.Metric]int),
+	}
 	for _, savedHash := range hashes.Hashes {
+		m.Hashes[ch.Metric{
+			Source: savedHash.ID.Domain,
+			Kind:   savedHash.Hash.Kind,
+		}] += 1
 		if savedHash.Hash.Kind == goimagehash.AHash {
 			v.aHashes = append(v.aHashes, &VPHash{savedHash})
 		}
@@ -138,17 +145,17 @@ func (v *VPTree) DecodeHashes(hashes *ch.SavedHashes) error {
 
 	v.aTree, err = vptree.New(v.aHashes, 3, nil)
 	if err != nil {
-		return err
+		return ch.Metrics{}, err
 	}
 	v.dTree, err = vptree.New(v.dHashes, 3, nil)
 	if err != nil {
-		return err
+		return ch.Metrics{}, err
 	}
 	v.pTree, err = vptree.New(v.pHashes, 3, nil)
 	if err != nil {
-		return err
+		return ch.Metrics{}, err
 	}
-	return nil
+	return m, nil
 }
 
 func (v *VPTree) EncodeHashes() (*ch.SavedHashes, error) {
