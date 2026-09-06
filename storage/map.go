@@ -73,14 +73,14 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 		}
 		foundMatches = make([]ch.Result, 0, resultSize)
 		var tmatch t
-		var storedHash ch.SavedHash
+		var storedHash RuntimeHash
 		for _, tmatch = range realMatches {
 			for _, storedHash = range currentHashes[tmatch.index : tmatch.index+tmatch.count] {
 				foundMatches = append(foundMatches, ch.Result{
-					Hash:          storedHash.Hash,
-					ID:            storedHash.ID,
+					Hash:          ch.Hash{Hash:storedHash.Hash, Kind:searchHash.Kind},
+					ID:            *storedHash.ID,
 					Distance:      tmatch.match.Distance,
-					EquivalentIDs: m.ids.GetIDs(&storedHash.ID),
+					EquivalentIDs: m.ids.GetIDs(storedHash.ID),
 				})
 			}
 		}
@@ -90,7 +90,7 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 }
 
 // getCurrentHashes must have a read lock before using
-func (m *MapStorage) getCurrentHashes(kind goimagehash.Kind) ([]ch.SavedHash, [8]map[uint8][]uint64) {
+func (m *MapStorage) getCurrentHashes(kind goimagehash.Kind) ([]RuntimeHash, [8]map[uint8][]uint64) {
 	if kind == goimagehash.AHash {
 		return m.aHashes, m.partialAHash
 	}
@@ -141,9 +141,9 @@ func NewMapStorage() (ch.HashStorage, error) {
 			ids: IDMap{
 				ids: []IDs{},
 			},
-			aHashes: []ch.SavedHash{},
-			dHashes: []ch.SavedHash{},
-			pHashes: []ch.SavedHash{},
+			aHashes: []RuntimeHash{},
+			dHashes: []RuntimeHash{},
+			pHashes: []RuntimeHash{},
 		},
 		partialAHash: newPartialHash(),
 		partialDHash: newPartialHash(),
@@ -165,10 +165,10 @@ func newPartialHash() [8]map[uint8][]uint64 {
 	}
 }
 
-func mapPartialHashes(hashes []ch.SavedHash, partialHashMap [8]map[uint8][]uint64) {
+func mapPartialHashes(hashes []RuntimeHash, partialHashMap [8]map[uint8][]uint64) {
 	for _, savedHash := range hashes {
-		for i, partialHash := range ch.SplitHash(savedHash.Hash.Hash) {
-			partialHashMap[i][partialHash] = append(partialHashMap[i][partialHash], savedHash.Hash.Hash)
+		for i, partialHash := range ch.SplitHash(savedHash.Hash) {
+			partialHashMap[i][partialHash] = append(partialHashMap[i][partialHash], savedHash.Hash)
 		}
 	}
 }
