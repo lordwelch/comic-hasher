@@ -203,10 +203,10 @@ func (h *HashServer) writeHashes(hashes ch.HashStorage) error {
 	if err != nil {
 		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashes+".tmp", err)
 	}
-	gzw := gzip.NewWriter(f)
 
 	defer f.Close() //nolint:errcheck
-	writer := h.initDigests(gzw)
+	writer := h.initDigests(f)
+	gzw := gzip.NewWriter(writer)
 	_, err = writer.Write(content)
 	if err != nil {
 		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashes+".tmp", err)
