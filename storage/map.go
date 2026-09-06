@@ -71,7 +71,6 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 			})
 			resultSize += count
 		}
-		foundMatches = make([]ch.Result, 0, resultSize)
 		var tmatch t
 		var storedHash RuntimeHash
 		for _, tmatch = range realMatches {
