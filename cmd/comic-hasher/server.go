@@ -466,9 +466,16 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 
 	s.match_cover_total.Inc()
 	matches, err := s.hashes.GetMatches(hashes, max, exactOnly)
-	slices.SortFunc(matches, func(a ch.Result, b ch.Result) int {
-		return cmp.Compare(a.Distance, b.Distance)
-	})
+	cmpFunc := func(a ch.Result, b ch.Result) int {
+		return cmp.Or(
+			cmp.Compare(a.Hash.Kind, b.Hash.Kind),
+			cmp.Compare(a.Hash.Hash, b.Hash.Hash),
+			a.ID.Compare(b.ID),
+			cmp.Compare(a.Distance, b.Distance),
+		)
+	}
+	slices.SortFunc(matches, cmpFunc)
+	matches = slices.CompactFunc(matches, func(a ch.Result, b ch.Result) bool {return cmpFunc(a,b) == 0})
 	if len(matches) > 0 {
 		var (
 			msg    string
