@@ -74,6 +74,7 @@ func (m *IDMap) GetIDs(id *ch.ID) []ch.ID {
 		return nil
 	}
 	ids := make([]ch.ID, 0, len(*m.ids[index].idList))
+	ids = append(ids, m.ids[index].id)
 	for _, id := range *m.ids[index].idList {
 		ids = append(ids, *id)
 	}
@@ -371,8 +372,7 @@ func (b *basicMapStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, erro
 func hashCmp(existing, target RuntimeHash) int {
 	return cmp.Or(
 		cmp.Compare(existing.Hash, target.Hash),
-		cmp.Compare(*existing.ID.Domain, *target.ID.Domain),
-		cmp.Compare(existing.ID.ID, target.ID.ID),
+		existing.ID.Compare(*target.ID),
 	)
 }
 func appendHashes(kind goimagehash.Kind,rhashes []RuntimeHash, savedHashes *ch.SavedHashes) {

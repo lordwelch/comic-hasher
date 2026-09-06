@@ -80,6 +80,7 @@ func truncate(db *bolt.DB) (*bolt.DB, error) {
 
 	path := db.Path()
 	db.Close()
+	log.Println("Creating new CHDB")
 	err = os.Truncate(path, 0)
 	if err != nil {
 		return nil, err
