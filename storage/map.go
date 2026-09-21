@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"cmp"
 	"slices"
 	"sync"
 
@@ -20,6 +21,8 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 		foundMatches []ch.Result
 		tl           ch.TimeLog
 	)
+	tl.ResetTime()
+	defer tl.LogTime("Search Complete")
 	m.hashMutex.RLock()
 	defer m.hashMutex.RUnlock()
 
@@ -31,8 +34,6 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 			return foundMatches, nil
 		}
 	}
-	tl.ResetTime()
-	defer tl.LogTime("Search Complete")
 
 	totalPartialHashes := 0
 
@@ -44,6 +45,12 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 		for i, partialHash := range ch.SplitHash(searchHash.Hash) {
 			filteredMatches = append(filteredMatches, ch.Atleast(max, searchHash.Hash, currentPartialHashes[i][partialHash])...)
 		}
+		slices.SortFunc(filteredMatches, func(x, y ch.Match) int {
+			return cmp.Compare(x.Hash, y.Hash)
+		})
+		filteredMatches = slices.CompactFunc(filteredMatches, func(x, y ch.Match) bool {
+			return x.Hash == y.Hash
+		})
 
 		totalPartialHashes += len(filteredMatches)
 
