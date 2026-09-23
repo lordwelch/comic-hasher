@@ -84,6 +84,7 @@ func main() {
 		fmt.Println("comic-hasher version:", opts.version)
 		os.Exit(0)
 	}
+	download.Client = &http.Client{Transport: download.RT("Comic-Hasher/" + opts.version)}
 
 	if opts.debugPort != "" {
 		go func() {
@@ -238,47 +239,47 @@ func saveHashes(opts Opts, hashes *ch.SavedHashes) error {
 	return nil
 }
 
-func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths <-chan download.Download, server *Server) {
+func downloadProcessor(chdb ch.CHDB, opts Opts, finishedDownloads <-chan download.Download, server *Server) {
 	defer func() {
 		log.Println("Download Processor completed")
 		close(server.hashingQueue)
 	}()
-	for path := range imagePaths {
-		id := ch.ID{Domain: ch.NewSource(ch.ComicVine), ID: path.IssueID}
+	for dl := range finishedDownloads {
+		id := ch.ID{Domain: ch.NewSource(ch.ComicVine), ID: dl.IssueID}
 		if opts.onlyHashNewIDs && len(server.hashes.GetIDs(id)) > 0 {
 			continue
 		}
 
-		if chdb.PathHashed(path.Dest) {
+		if chdb.PathHashed(dl.Dest) {
 			continue
 		}
 		var (
 			file io.ReadCloser
 			err  error
 		)
-		if path.Image == nil {
-			file, err = os.OpenFile(filepath.Join(opts.path, path.Dest), os.O_RDWR, 0o666)
+		if dl.Image == nil {
+			file, err = os.OpenFile(filepath.Join(opts.path, dl.Dest), os.O_RDWR, 0o666)
 			if err != nil {
 				panic(err)
 			}
 		} else {
-			file = io.NopCloser(path.Image)
+			file = io.NopCloser(dl.Image)
 		}
 		i, format, err := image.Decode(bufio.NewReader(file))
 		file.Close()
-		if path.Image != nil && path.Image.Cap() < 10*1024*1024 {
-			bufPool.Put(path.Image)
+		if dl.Image != nil && dl.Image.Cap() < 10*1024*1024 {
+			bufPool.Put(dl.Image)
 		}
 		if err != nil {
-			if len(path.URL) > 0 {
-				log.Println("Reading image failed, adding to known bad urls:", path.URL, err)
-				chdb.AddURL(path.URL)
+			if len(dl.Request.URL.String()) > 0 {
+				log.Println("Reading image failed, adding to known bad urls:", dl.Request.URL, err)
+				chdb.AddURL(dl.Request.URL.String())
 			} else {
-				log.Println("Reading image failed", path.Dest, err)
+				log.Println("Reading image failed", dl.Dest, err)
 			}
 			continue // skip this image
 		}
-		chdb.AddPath(path.Dest) // Add to db and remove file if opts.deleteHashedImages is true
+		chdb.AddPath(dl.Dest) // Add to db and remove file if opts.deleteHashedImages is true
 
 		im := ch.Im{
 			Im:      i,
@@ -401,6 +402,7 @@ func startServer(opts Opts) {
 		dwg.Go(func() {
 			cvdownloader := cv.NewCVDownloader(
 				server.Context,
+				opts.version,
 				bufPool,
 				opts.onlyHashNewIDs,
 				server.hashes.GetIDs,
@@ -411,7 +413,6 @@ func startServer(opts Opts) {
 				opts.keepDownloaded,
 				opts.cv.hashDownloaded,
 				startDownloadQueue,
-				finishedDownloadQueue,
 			)
 			cv.DownloadCovers(cvdownloader)
 			for {

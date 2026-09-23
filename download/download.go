@@ -1,3 +1,4 @@
+// Package download
 package download
 
 import (
@@ -11,34 +12,37 @@ import (
 	"time"
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
-	"golang.org/x/time/rate"
 )
 
-type Auth interface {
-	Apply(*http.Request)
-}
-
 type Download struct {
-	URL     string
-	Auth    Auth
-	Dest    string // Relative path to image file
+	// Request should already have any authentication added
+	Request *http.Request
 	IssueID string
-	Image   *bytes.Buffer
-	Done    func()
-	Limiter *rate.Limiter
+	// Any rate limit should reserve the limit before sending this struct to the downloader
+	// And any dynamic rate limit should happen in this function
+	// If there are strict rate limits only send one download at a time
+	Done func(*http.Response)
+
+	Dest  string // Relative path to image file
+	Image *bytes.Buffer
+}
+type RT string
+
+func (rt RT) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Header.Get("User-Agent") == "" {
+		r.Header.Set("User-Agent", string(rt))
+	}
+	return http.DefaultTransport.RoundTrip(r)
 }
 
-func Get(url string, auth Auth, client *http.Client) (*http.Response, func(), error) {
-	if client == nil {
-		client = &http.Client{}
-	}
+var Client = &http.Client{
+	Transport: RT("Comic-Hasher"),
+}
+
+func Get(req *http.Request) (*http.Response, func(), error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*20)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, cancel, err
-	}
-	auth.Apply(req)
-	resp, err := client.Do(req)
+	req = req.WithContext(ctx)
+	resp, err := Client.Do(req)
 	return resp, cancel, err
 }
 
@@ -46,48 +50,32 @@ const StatusTwitterTooManyRequests = 420
 
 func Worker(chdb ch.CHDB, baseDir string, keepImages bool, downloads chan Download, finished chan<- Download, id int) {
 	log.Println("starting downloader", id)
-	for dl := range downloads {
+	runDownload := func(dl Download) {
 		dest := filepath.Join(baseDir, dl.Dest)
-		if dl.Limiter != nil && !dl.Limiter.Allow() {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			err := dl.Limiter.Wait(ctx)
-			cancel() // ctx is only used for the Limiter. We still need to cancel even if err is not nil
-			if err != nil {
-				go func() { // because this sends to itself. This can end up in a loop
-					downloads <- dl
-				}()
-				continue
-			}
-		}
+		var resp http.Response
+		defer dl.Done(&resp) // dl.Done always needs to be called so that the downloader can continue
 		if dl.Image == nil || dl.Image.Len() > 0 {
 			finished <- dl
-			dl.Done()
-			continue
+			return
 		}
 		dir := filepath.Dir(dest)
-		resp, cancelDownload, err := Get(dl.URL, dl.Auth, nil)
+		res, cancelDownload, err := Get(dl.Request)
+		resp = *res // needed for the defer above. May not be totally correct use of a http.Response struct
+		defer cancelDownload()
 		if err != nil {
-			cancelDownload()
-			log.Println("Failed to download", dl.IssueID, dl.URL, err)
-			dl.Done()
-			continue
+			log.Println("Failed to download", dl.IssueID, dl.Request.URL, err)
+			return
 		}
-		cleanup := func() {
-			_ = resp.Body.Close()
-			cancelDownload()
-			dl.Done()
-		}
+		defer func() { _ = resp.Body.Close() }()
 		// TODO: StatusTooManyRequests
 		// TODO: StatusTwitterTooManyRequests
 		if resp.StatusCode == http.StatusNotFound {
-			chdb.AddURL(dl.URL)
-			cleanup()
-			continue
+			chdb.AddURL(dl.Request.URL.String())
+			return
 		}
 		if resp.StatusCode != http.StatusOK {
-			log.Println("Failed to download", dl.URL, resp.StatusCode)
-			cleanup()
-			continue
+			log.Println("Failed to download", dl.Request.URL, resp.StatusCode)
+			return
 		}
 
 		if keepImages {
@@ -96,20 +84,18 @@ func Worker(chdb ch.CHDB, baseDir string, keepImages bool, downloads chan Downlo
 			if err != nil {
 				log.Println("Unable to create image file", dl.Dest, err)
 				_ = os.Remove(dest)
-				_ = image.Close()
-				cleanup()
-				continue
+				return
 			}
+			defer func() { _ = image.Close() }() // ensure it's always closed
 			log.Println("downloading", dl.Dest)
 			dl.Image.Reset()
 			writer := io.MultiWriter(dl.Image, image)
 			_, err = io.Copy(writer, resp.Body)
-			_ = image.Close()
+			_ = image.Close() // close immediately after use
 			if err != nil {
 				log.Println("Failed when downloading image", err)
 				_ = os.Remove(dest)
-				cleanup()
-				continue
+				return
 			}
 			finished <- dl
 		} else {
@@ -117,16 +103,17 @@ func Worker(chdb ch.CHDB, baseDir string, keepImages bool, downloads chan Downlo
 			_, err = io.Copy(dl.Image, resp.Body)
 			if err != nil {
 				log.Println("Failed when downloading image", err)
-				cleanup()
 				_ = os.Remove(dest)
 				// Something failed let this buffer GC instead of saving it
 				// bufPool doesn't seem to like putting it back in directly after getting it out
-				continue
+				return
 			}
 
 			finished <- dl
 		}
-		cleanup()
+	}
+	for dl := range downloads {
+		runDownload(dl)
 	}
 }
 

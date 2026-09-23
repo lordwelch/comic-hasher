@@ -65,6 +65,12 @@ type CVOpts struct {
 	images         cv.Images
 	hashDownloaded bool
 }
+type MetronOpts struct {
+	enabled        bool
+	username       string
+	password       string
+	hashDownloaded bool
+}
 type Opts struct {
 	cpuprofile         string
 	memprofile         string
@@ -82,7 +88,8 @@ type Opts struct {
 	addr               string
 	debugPort          string
 
-	cv CVOpts
+	cv     CVOpts
+	metron MetronOpts
 }
 
 func isZeroValue(currentFlag *flag.Flag, value string) (ok bool, err error) {

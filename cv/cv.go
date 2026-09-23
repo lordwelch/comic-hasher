@@ -1,3 +1,4 @@
+// Package cv
 package cv
 
 import (
@@ -116,14 +117,14 @@ const (
 )
 
 type CVDownloader struct {
-	basePath              string
-	APIKey                *CVAuth
-	ImageTypes            Images
-	SendExistingImages    bool
-	KeepDownloadedImages  bool
-	Context               context.Context
-	FinishedDownloadQueue <-chan dl.Download
-	StartDownloadQueue    chan<- dl.Download
+	basePath             string
+	version              string
+	APIKey               *CVAuth
+	ImageTypes           Images
+	SendExistingImages   bool
+	KeepDownloadedImages bool
+	Context              context.Context
+	StartDownloadQueue   chan<- dl.Download
 
 	fileList       []string
 	totalResults   int
@@ -293,8 +294,9 @@ func (c *CVDownloader) updateIssues() (int, error) {
 			return offset - 100, ErrQuit
 		case <-time.After(10 * time.Second): // Enforces a minimum 10s wait between API hits
 		}
-
-		resp, cancelDownloadCTX, err := dl.Get(URI.String(), c.APIKey, nil)
+		req, _ := http.NewRequest("GET", URI.String(), nil)
+		c.APIKey.Apply(req)
+		resp, cancelDownloadCTX, err := dl.Get(req)
 		if err != nil {
 			cancelDownloadCTX()
 			if retry(URI.String(), err) {
@@ -448,6 +450,7 @@ func (c *CVDownloader) downloadImage(list *CVResult, issue Issue, image Image, a
 	})
 	buf := c.bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
+	req, _ := http.NewRequest("GET", image.url, nil)
 	if c.chdb.PathDownloaded(imagePath) || c.onlyHashNewIDs && len(ids) > 0 {
 		if !c.SendExistingImages {
 			return
@@ -455,35 +458,32 @@ func (c *CVDownloader) downloadImage(list *CVResult, issue Issue, image Image, a
 		if _, err = os.Stat(filepath.Join(c.basePath, imagePath)); err != nil {
 			return // assume it's already been hashed and deleted
 		}
-		// We don't add to the count of added as these should be processed immediately
+		// We don't increment added as these should be processed immediately
 		log.Printf("Sending Existing image %v/%v %v", issue.Volume.ID, issue.ID, imagePath)
-		c.imageWG.Add(1)
 		err = dl.ReadAll(imagePath, buf)
 		if err != nil {
 			log.Printf("Failed to read existing image %q: %v", imagePath, err)
-			c.imageWG.Done()
 			return // TODO: Handle the error?
 		}
+		c.imageWG.Add(1)
+
 		c.StartDownloadQueue <- dl.Download{
-			URL:     image.url,
-			Auth:    c.APIKey,
+			Request: req,
 			Dest:    imagePath,
 			IssueID: strconv.Itoa(issue.ID),
 			Image:   buf,
-			Done:    c.imageWG.Done,
+			Done:    func(*http.Response) { c.imageWG.Done() },
 		}
-		return
 	}
 	*added++
 
 	c.imageWG.Add(1)
 	c.StartDownloadQueue <- dl.Download{
-		URL:     image.url,
-		Auth:    c.APIKey,
+		Request: req,
 		Dest:    imagePath,
 		IssueID: strconv.Itoa(issue.ID),
 		Image:   buf,
-		Done:    c.imageWG.Done,
+		Done:    func(*http.Response) { c.imageWG.Done() },
 	}
 }
 
@@ -554,20 +554,31 @@ func (c *CVDownloader) insertIssuePage(offset int) {
 	c.fileList = slices.Insert(c.fileList, index, fmt.Sprintf("cv-%v.json", offset))
 }
 
-func NewCVDownloader(ctx context.Context, bufPool *sync.Pool, onlyHashNewIDs bool, getID func(id ch.ID) ch.IDList, chdb ch.CHDB, workPath, APIKey string, imageTypes Images, keepDownloadedImages, sendExistingImages bool, startDownloadQueue chan<- dl.Download, finishedDownloadQueue <-chan dl.Download) *CVDownloader {
+func NewCVDownloader(
+	ctx context.Context,
+	version string,
+	bufPool *sync.Pool,
+	onlyHashNewIDs bool,
+	getID func(id ch.ID) ch.IDList,
+	chdb ch.CHDB,
+	basePath, APIKey string,
+	imageTypes Images,
+	keepDownloadedImages, sendExistingImages bool,
+	startDownloadQueue chan<- dl.Download,
+) *CVDownloader {
 	return &CVDownloader{
-		basePath:              workPath,
-		Context:               ctx,
-		APIKey:                new(CVAuth(APIKey)),
-		bufPool:               bufPool, // The buffers get sent back via finishedDownloadQueue
-		FinishedDownloadQueue: finishedDownloadQueue,
-		StartDownloadQueue:    startDownloadQueue,
-		SendExistingImages:    sendExistingImages,
-		KeepDownloadedImages:  keepDownloadedImages,
-		ImageTypes:            imageTypes,
-		chdb:                  chdb,
-		getID:                 getID,
-		onlyHashNewIDs:        onlyHashNewIDs,
+		basePath:             basePath,
+		Context:              ctx,
+		version:              version,
+		APIKey:               new(CVAuth(APIKey)),
+		bufPool:              bufPool, // The buffers get sent back via finishedDownloadQueue
+		StartDownloadQueue:   startDownloadQueue,
+		SendExistingImages:   sendExistingImages,
+		KeepDownloadedImages: keepDownloadedImages,
+		ImageTypes:           imageTypes,
+		chdb:                 chdb,
+		getID:                getID,
+		onlyHashNewIDs:       onlyHashNewIDs,
 	}
 }
 
