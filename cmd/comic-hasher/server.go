@@ -199,7 +199,8 @@ func (h *HashServer) writeHashes(hashes ch.HashStorage) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.Create(h.hashes + ".tmp.gz")
+	tmp_file_path := h.hashes + ".tmp.gz"
+	f, err := os.Create(tmp_file_path)
 	if err != nil {
 		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashes+".tmp", err)
 	}
@@ -207,7 +208,7 @@ func (h *HashServer) writeHashes(hashes ch.HashStorage) error {
 	defer f.Close() //nolint:errcheck
 	writer := h.initDigests(f)
 	gzw := gzip.NewWriter(writer)
-	_, err = writer.Write(content)
+	_, err = gzw.Write(content)
 	if err != nil {
 		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashes+".tmp", err)
 	}
@@ -226,7 +227,7 @@ func (h *HashServer) writeHashes(hashes ch.HashStorage) error {
 		h.digests[name] = digest.Sum(nil)
 		digest.Reset() // may possibly keep some memory free...
 	}
-	err = os.Rename(h.hashes+".tmp", h.hashes)
+	err = os.Rename(tmp_file_path, h.hashes)
 	if err != nil {
 		return fmt.Errorf("failed to update existing file%w", err)
 	}
@@ -234,6 +235,9 @@ func (h *HashServer) writeHashes(hashes ch.HashStorage) error {
 }
 
 func NewHashServer(hashes string, format ch.Format) HashServer {
+	if !filepath.IsAbs(hashes) {
+		panic("NewHashServer needs an absolute path for hashes")
+	}
 	h := HashServer{
 		hashes:  hashes,
 		format:  format,
@@ -475,7 +479,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	slices.SortFunc(matches, cmpFunc)
-	matches = slices.CompactFunc(matches, func(a ch.Result, b ch.Result) bool {return cmpFunc(a,b) == 0})
+	matches = slices.CompactFunc(matches, func(a ch.Result, b ch.Result) bool { return cmpFunc(a, b) == 0 })
 	if len(matches) > 0 {
 		var (
 			msg    string
