@@ -12,35 +12,88 @@ import (
 	"gitea.narnian.us/lordwelch/goimagehash"
 )
 
+type RuntimeID uint64
+
+type IndexedID struct {
+	Index uint8  // Pads to uint64
+	ID    string // uses size(int64) ptr(int64)
+}
+
+// String size is 16 (uint64*2)
+// Source size is effectively minimum 8 (uint64)
+// Using []ch.ID is ((24(uint64*3)+16(uint64*3)+(~6)) * n) + 24(uint64*3)
+// Using IDList is 8(uint64) + 24(uint64*3)
+type IDList struct {
+	// Source uint8
+	Source uint64
+	IDs    []string
+}
+
 type RuntimeHash struct {
 	Hash uint64
 	ID   *ch.ID
 }
+type RuntimeHash2 struct {
+	Hash uint64
+	ID   RuntimeID
+}
 type BasicMapStorage struct {
 	hashMutex *sync.RWMutex
-
-	ids     IDMap
-	AHashes []RuntimeHash
-	DHashes []RuntimeHash
-	PHashes []RuntimeHash
+	AllIDs    []IDList
+	ids       IDMap
+	AHashes   []RuntimeHash
+	DHashes   []RuntimeHash
+	PHashes   []RuntimeHash
 }
 type IDs struct {
-	id     *ch.ID
-	idList *[]*ch.ID
+	RuntimeID     RuntimeID // size 8
+	Source        ch.Source
+	id            string // size (16 + (8))
+	EquivalentIDs int    // index into IDMap.EquivalentIDs
 }
 type IDMap struct {
-	ids []IDs
+	ids           []IDs
+	IDIndex       []RuntimeID
+	EquivalentIDs [][]RuntimeID
 }
 
-func (m *IDMap) InsertID(id ch.ID) *ch.ID {
-	index, found := m.FindID(&id)
+func (m *IDMap) Sort() {
+	slices.SortFunc(m.ids, func(a IDs, b IDs) int {
+		return cmp.Compare(a.RuntimeID, b.RuntimeID)
+	})
+}
+
+func (m *IDMap) GetItem(rid RuntimeID) IDs {
+	return m.ids[rid]
+}
+
+func (m *IDMap) SortIndex() {
+	slices.SortFunc(m.IDIndex, func(a RuntimeID, b RuntimeID) int {
+		return cmp.Compare(m.ids[a].id, m.ids[b].id)
+	})
+}
+
+func (m *IDMap) FindID(id *ch.ID) (RuntimeID, bool) {
+	index, found := slices.BinarySearchFunc(m.IDIndex, id.ID, func(rid RuntimeID, target string) int {
+		return cmp.Compare(m.ids[rid].id, target)
+	})
 	if !found {
-		m.ids = slices.Insert(m.ids, index, IDs{
-			&id,
-			&[]*ch.ID{},
-		})
+		return 0, false
 	}
-	return m.ids[index].id
+	return m.IDIndex[index], true
+}
+
+func (m *IDMap) InsertID(id ch.ID) RuntimeID {
+	rid := RuntimeID(len(m.ids))
+	m.ids = append(m.ids, IDs{
+		id:            id.ID,
+		RuntimeID:     rid,
+		Source:        *id.Domain,
+		EquivalentIDs: -1,
+	})
+	m.IDIndex = append(m.IDIndex, rid)
+	m.SortIndex()
+	return rid
 }
 
 func (m *IDMap) insertID(id ch.ID, idList *[]*ch.ID) *ch.ID {
@@ -82,12 +135,63 @@ func (m *IDMap) GetIDs(id *ch.ID) []ch.ID {
 
 func (m *IDMap) AssociateIDs(newids []ch.NewIDs) error {
 	for _, newid := range newids {
-		index, found := m.FindID(&newid.OldID)
+		orid, found := m.FindID(&newid.OldID)
 		if !found {
 			return ErrIDNotFound
 		}
-		*m.ids[index].idList = ch.InsertIDp(*m.ids[index].idList, &newid.NewID)
-		m.insertID(newid.NewID, m.ids[index].idList)
+		nrid, found := m.FindID(&newid.NewID)
+		if !found {
+			return ErrIDNotFound
+		}
+		oeid := m.ids[orid].EquivalentIDs
+		neid := m.ids[nrid].EquivalentIDs
+		if oeid == neid {
+			return nil
+		}
+		if oeid == -1 && neid != -1 {
+			m.EquivalentIDs[neid] = append(m.EquivalentIDs[neid], orid)
+			m.ids[orid].EquivalentIDs = neid
+			return nil
+		}
+		if neid == -1 && oeid != -1 {
+			m.EquivalentIDs[oeid] = append(m.EquivalentIDs[oeid], nrid)
+			m.ids[nrid].EquivalentIDs = oeid
+			return nil
+		}
+		if neid == -1 && oeid == -1 {
+			eid := len(m.EquivalentIDs)
+			m.EquivalentIDs = append(m.EquivalentIDs, []RuntimeID{orid, nrid})
+			m.ids[nrid].EquivalentIDs = eid
+			m.ids[orid].EquivalentIDs = eid
+			return nil
+		}
+		// neid and oeid both have an exist list
+		// NewID.Domain == metron
+		// OldID.Domain == GCD
+		// NewID(metron) already equivalent to CV:123
+		// OldID(GCD)    already equivalent to CV:321
+		for _, rid := range m.EquivalentIDs[neid] {
+			if m.ids[rid].Source == *newid.OldID.Domain {
+				return fmt.Errorf("ID %v is already matched to %v:%v. Cannot associate two ID's in the same source", newid.NewID, m.ids[rid].Source, m.ids[rid].id)
+			}
+		}
+		for _, rid := range m.EquivalentIDs[oeid] {
+			if m.ids[rid].Source == *newid.NewID.Domain {
+				return fmt.Errorf("ID %v is already matched to %v:%v. Cannot associate two ID's in the same source", newid.OldID, m.ids[rid].Source, m.ids[rid].id)
+			}
+		}
+		for _, nnrid := range m.EquivalentIDs[neid] {
+			nnSource := m.ids[nnrid].Source
+			nnID := m.ids[nnrid].Source
+			for _, oorid := range m.EquivalentIDs[oeid] {
+				ooSource := m.ids[oorid].Source
+				ooID := m.ids[oorid].Source
+				if nnSource == ooSource {
+					// return fmt.Errorf("ID metron:1 == CV:123 and ID GCD:45 == CV:321. Cannot associate metron:1 to GCD:45", newid.OldID, nnSource, nnID)
+					return fmt.Errorf("ID %v == %v:%v and ID %v == %v:%v. Cannot associate metron:1 to GCD:45", newid.NewID, nnSource, nnID, newid.OldID, ooSource, ooID, newid.NewID, newid.OldID)
+				}
+			}
+		}
 	}
 	return nil
 }

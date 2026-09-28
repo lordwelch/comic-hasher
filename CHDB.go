@@ -11,6 +11,9 @@ type CHDB interface {
 	CheckURL(url string) bool
 	AddURL(url string)
 	Close() error
+
+	GetSource(string) byte
+	GetSourceName(sourceID byte) string
 }
 
 var CHDBLogger = log.NewLogger("chdb")

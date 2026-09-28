@@ -40,7 +40,7 @@ const CHDBVERSION = "1.0.0"
 func OpenCHDBBolt(path string, deleteExisting bool) (CHDBBolt, error) {
 	path, _ = filepath.Abs(path)
 	chDBPath := filepath.Join(path, "chdb.bolt")
-	bolt, err := OpenBolt(chDBPath, CHDBVERSION, []string{"paths", "bad_urls"})
+	bolt, err := OpenBolt(chDBPath, CHDBVERSION, []string{"paths", "bad_urls", "source"})
 	if err != nil {
 		return CHDBBolt{Bolt: bolt, BasePath: path, deleteExisting: deleteExisting, validPaths: make(map[string]bool)}, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -275,4 +275,33 @@ func (c CHDBBolt) AddURL(url string) {
 
 func (c CHDBBolt) Close() error {
 	return c.DB.Close()
+}
+
+func (c CHDBBolt) GetSourceID(name string) byte {
+	var sourceID byte
+	c.DB.View(func(tx *bolt.Tx) error {
+		tx.Bucket([]byte("source")).ForEach(func(k, v []byte) error {
+			if len(k) != 1 || k[0] == 0 {
+				return nil
+			}
+			if bytes.EqualFold(v, []byte(name)) {
+				sourceID = k[0]
+			}
+			return nil
+		})
+		return nil
+	})
+	return sourceID
+}
+
+func (c CHDBBolt) GetSourceName(sourceID byte) string {
+	var sourceName string
+	c.DB.View(func(tx *bolt.Tx) error {
+		name := tx.Bucket([]byte("source")).Get([]byte{sourceID})
+		if len(name) > 0 {
+			sourceName = string(bytes.Clone(name))
+		}
+		return nil
+	})
+	return sourceName
 }
