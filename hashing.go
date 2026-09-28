@@ -5,13 +5,15 @@ import (
 	_ "embed"
 	"fmt"
 	"image"
-	"log"
 	"math/bits"
+	"os"
 	"slices"
 	"strings"
 	"sync"
 	"unicode"
 	"unsafe"
+
+	"gitea.narnian.us/lordwelch/comic-hasher/log"
 
 	"gitea.narnian.us/lordwelch/goimagehash"
 	json "github.com/json-iterator/go"
@@ -43,7 +45,10 @@ const (
 	Shift7
 )
 
-var ComicVine Source = "comicvine.gamespot.com"
+const (
+	ComicVine Source = "comicvine.gamespot.com"
+	Metron    Source = "metron.cloud"
+)
 
 const (
 	SavedHashVersion int = 2
@@ -108,11 +113,13 @@ func newSourceMap() *sync.Map {
 	}
 	_, ok := m.Load(ComicVine)
 	if !ok {
-		log.Panicf("sync.Map really doesn't work, %#v", ComicVine)
+		log.Log(log.Fatal, "sync.Map really doesn't work, %#v", ComicVine)
+		os.Exit(1)
 	}
 	_, ok = m.Load(Source(strings.ToLower(string(ComicVine))))
 	if !ok {
-		log.Panic("sync.Map doesn't work")
+		log.Println(log.Fatal, "sync.Map doesn't work")
+		os.Exit(1)
 	}
 	return m
 }
@@ -160,7 +167,6 @@ func (id *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
 	}
 	err = dec.Decode(&b)
 	if err != nil {
-		log.Panic(err)
 		return err
 	}
 	if string(b) != "Domain" {
@@ -168,7 +174,6 @@ func (id *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
 	}
 	err = dec.Decode(&b)
 	if err != nil {
-		log.Panic(err)
 		return err
 	}
 	// NewSource will make a copy if it is needed
@@ -176,7 +181,6 @@ func (id *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
 
 	err = dec.Decode(&b)
 	if err != nil {
-		log.Panic(err)
 		return err
 	}
 	if string(b) != "ID" {
@@ -184,7 +188,6 @@ func (id *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
 	}
 	err = dec.Decode(&b)
 	if err != nil {
-		log.Panic(err)
 		return err
 	}
 
@@ -300,20 +303,17 @@ func HashImage(i Im) ImageHash {
 
 	ahash, err := goimagehash.AverageHash(i.Im)
 	if err != nil {
-		msg := fmt.Sprintf("Failed to ahash Image: %s", err)
-		log.Println(msg)
+		log.Log(log.Fatal, "Failed to ahash Image: %s", err)
 		return ImageHash{}
 	}
 	dhash, err := goimagehash.DifferenceHash(i.Im)
 	if err != nil {
-		msg := fmt.Sprintf("Failed to dhash Image: %s", err)
-		log.Println(msg)
+		log.Log(log.Fatal, "Failed to dhash Image: %s", err)
 		return ImageHash{}
 	}
 	phash, err := goimagehash.PerceptionHash(i.Im)
 	if err != nil {
-		msg := fmt.Sprintf("Failed to phash Image: %s", err)
-		log.Println(msg)
+		log.Log(log.Fatal, "Failed to phash Image: %s", err)
 		return ImageHash{}
 	}
 	return ImageHash{

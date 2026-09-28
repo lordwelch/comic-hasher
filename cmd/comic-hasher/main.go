@@ -12,7 +12,6 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
-	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -38,7 +37,10 @@ import (
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
 	"gitea.narnian.us/lordwelch/comic-hasher/cv"
 	"gitea.narnian.us/lordwelch/comic-hasher/download"
+	"gitea.narnian.us/lordwelch/comic-hasher/log"
+	"gitea.narnian.us/lordwelch/comic-hasher/metron"
 	"gitea.narnian.us/lordwelch/comic-hasher/storage"
+	"gitea.narnian.us/lordwelch/goimagehash"
 )
 
 var bufPool = &sync.Pool{
@@ -71,10 +73,12 @@ func main() {
 		cv: CVOpts{
 			images: cv.Images{"thumb": {}},
 		},
+		// logLevels: LogLevels{},
 	}
 	showVersion, fs := registerOptions(&opts)
 	err := fs.Parse(os.Args[1:])
 	opts.cv.images.Get()
+	opts.logLevels.Get()
 	if err != nil {
 		Usage(fs)
 		os.Exit(1)
@@ -88,7 +92,7 @@ func main() {
 
 	if opts.debugPort != "" {
 		go func() {
-			log.Println(http.ListenAndServe("127.0.0.1:"+opts.debugPort, nil))
+			log.Println(log.Standard, http.ListenAndServe("127.0.0.1:"+opts.debugPort, nil))
 		}()
 	}
 	if opts.coverPath != "" {
@@ -99,12 +103,13 @@ func main() {
 	}
 	if opts.cv.enabled {
 		if opts.cv.APIKey == "" {
-			log.Fatal("No ComicVine API Key provided")
+			log.Println(log.Fatal, "No ComicVine API Key provided")
+			os.Exit(1)
 		}
 	}
 
 	opts.path, _ = filepath.Abs(opts.path)
-	pretty.Log(opts)
+	log.Println(log.Standard, pretty.Sprint(opts))
 
 	startServer(opts)
 }
@@ -112,13 +117,13 @@ func main() {
 func signalHandler(s *Server) {
 	select {
 	case sig := <-s.signalQueue:
-		log.Printf("Signal: %v\n", sig)
+		log.Log(log.Verbose, "Signal: %v\n", sig)
 		s.cancel()
 	case <-s.Context.Done():
-		log.Println("Recieved quit: Attempting to shutdown gracefully")
+		log.Log(log.Standard, "Recieved quit: Attempting to shutdown gracefully")
 	}
 	err := s.httpServer.Shutdown(context.TODO())
-	log.Println("Err:", err)
+	log.Println(log.Fatal, "Err:", err)
 }
 
 func initializeStorage(opts Opts) (ch.HashStorage, error) {
@@ -143,37 +148,40 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 	hashesPath := filepath.Join(opts.path, hashesFilename)
 	var hashes []byte
 
-	log.Println("Looking for saved hashes at", hashesPath)
+	log.Println(log.Verbose, "Looking for saved hashes at", hashesPath)
 	f, err := os.Open(hashesPath)
 	if err == nil {
 		var r io.ReadCloser = f
 		if gr, err := gzip.NewReader(f); err == nil {
 			r = gr
+			defer gr.Close()
 		} else {
 			_, _ = f.Seek(0, io.SeekStart)
 		}
+		log.Println(log.Standard, "Loading saved hashes from", hashesPath)
 		hashes, err = io.ReadAll(r)
 		_ = r.Close()
 		_ = f.Close()
 		if err != nil {
-			panic(fmt.Sprintf("Failed to load hashes from disk: %s", err))
+			log.Println(log.Fatal, "Failed to load hashes from disk:", err)
+			os.Exit(1)
 		}
 	} else {
 		if !errors.Is(err, os.ErrNotExist) {
-			log.Println("Unable to load saved hashes", err)
+			log.Println(log.Standard, "Unable to load saved hashes", err)
 		}
 	}
 	if errors.Is(err, os.ErrNotExist) || len(hashes) < 18 {
-		log.Println("No saved hashes to load")
+		log.Println(log.Standard, "No saved hashes to load")
 	}
 
 	if opts.loadEmbeddedHashes && len(ch.Hashes) != 0 && len(hashes) < 18 {
-		log.Println("Loading embedded hashes")
+		log.Println(log.Standard, "Loading embedded hashes")
 		hashes = ch.Hashes
 		if gr, err := gzip.NewReader(bytes.NewReader(ch.Hashes)); err == nil {
 			hashes, err = io.ReadAll(gr)
 			if err != nil {
-				panic(fmt.Sprintf("Failed to read embedded hashes: %s", err))
+				log.Println(log.Fatal, "Failed to read embedded hashes:", err)
 			}
 			gr.Close()
 		}
@@ -191,11 +199,12 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 		break
 	}
 	if errors.Is(err, ch.ErrNoHashes) || errors.Is(err, ch.ErrDecodeFail) {
-		log.Println("No saved hashes to load")
+		log.Println(log.Verbose, "No saved hashes to load")
 		return loadedHashes
 	}
 	if err != nil {
-		log.Panicf("Failed to decode hashes: %s", err)
+		log.Println(log.Fatal, "Failed to decode hashes:", err)
+		os.Exit(1)
 	}
 	return loadedHashes
 }
@@ -205,7 +214,7 @@ func saveHashes(opts Opts, hashes *ch.SavedHashes) error {
 		return errors.New("refusing to save embedded hashes")
 	}
 	if len(hashes.Hashes) < 1 {
-		log.Println("Refusing to write empty hashes")
+		log.Println(log.Standard, "Refusing to write empty hashes")
 		return nil
 	}
 
@@ -233,24 +242,25 @@ func saveHashes(opts Opts, hashes *ch.SavedHashes) error {
 	if err = f.Close(); err != nil {
 		return fmt.Errorf("failed to write hashes: %w", err)
 	}
-	log.Println("Hashes saved", len(hashes.Hashes))
-	log.Println("ID lists saved", len(hashes.IDs))
-	log.Println("Successfully Saved V2 hashes")
+	log.Println(log.Verbose, "Hashes saved", len(hashes.Hashes))
+	log.Println(log.Verbose, "ID lists saved", len(hashes.IDs))
+	log.Println(log.Verbose, "Successfully Saved V2 hashes")
 	return nil
 }
 
 func downloadProcessor(chdb ch.CHDB, opts Opts, finishedDownloads <-chan download.Download, server *Server) {
 	defer func() {
-		log.Println("Download Processor completed")
+		log.Println(log.Verbose, "Download Processor completed")
 		close(server.hashingQueue)
 	}()
 	for dl := range finishedDownloads {
-		id := ch.ID{Domain: ch.NewSource(ch.ComicVine), ID: dl.IssueID}
-		if opts.onlyHashNewIDs && len(server.hashes.GetIDs(id)) > 0 {
+		if opts.onlyHashNewIDs && len(server.storage.GetIDs(dl.IssueID)) > 0 {
+			log.Println(log.Standard, "Skipping already hashed ID", dl.IssueID)
 			continue
 		}
 
 		if chdb.PathHashed(dl.Dest) {
+			log.Println(log.Standard, "Skipping already hashed ID", dl.IssueID)
 			continue
 		}
 		var (
@@ -272,10 +282,10 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, finishedDownloads <-chan downloa
 		}
 		if err != nil {
 			if len(dl.Request.URL.String()) > 0 {
-				log.Println("Reading image failed, adding to known bad urls:", dl.Request.URL, err)
+				log.Println(log.Standard, "Reading image failed, adding to known bad urls:", dl.Request.URL, err)
 				chdb.AddURL(dl.Request.URL.String())
 			} else {
-				log.Println("Reading image failed", dl.Dest, err)
+				log.Println(log.Standard, "Reading image failed", dl.Dest, err)
 			}
 			continue // skip this image
 		}
@@ -284,7 +294,7 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, finishedDownloads <-chan downloa
 		im := ch.Im{
 			Im:      i,
 			Format:  format,
-			ID:      id,
+			ID:      dl.IssueID,
 			NewOnly: opts.onlyHashNewIDs,
 		}
 		server.hashingQueue <- im
@@ -307,7 +317,8 @@ func startServer(opts Opts) {
 	if opts.cpuprofile != "" {
 		f, err := os.Create(opts.cpuprofile)
 		if err != nil {
-			log.Fatal(err)
+			log.Println(log.Fatal, err)
+			os.Exit(1)
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
@@ -334,48 +345,50 @@ func startServer(opts Opts) {
 		onlyHashNewIDs: opts.onlyHashNewIDs,
 		version:        opts.version,
 		reg:            prometheus.NewRegistry(),
-		hashServer:     NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format),
 	}
 	Notify(server.signalQueue)
 	var err error
-	log.Println("Init hashes")
-	server.hashes, err = initializeStorage(opts)
+	log.Println(log.Verbose, "Init storage")
+	server.storage, err = initializeStorage(opts)
 	if err != nil {
 		panic(err)
 	}
 
-	log.Println("Init handlers")
+	log.Println(log.Verbose, "Init handlers")
 	server.setupAppHandlers()
 
-	log.Println("Init 10 readers")
+	log.Println(log.Verbose, "Init 10 readers")
 	rwg := sync.WaitGroup{}
 	for i := range 10 {
 		rwg.Go(func() { server.reader(i) })
 	}
 
-	log.Println("Init 10 hashers")
+	log.Println(log.Verbose, "Init 10 hashers")
 	hwg := sync.WaitGroup{}
 	for i := range 10 {
 		hwg.Go(func() { server.hasher(i) })
 	}
 
-	log.Println("Init 1 mapper")
+	log.Println(log.Verbose, "Init 1 mapper")
 	mwg := sync.WaitGroup{}
 	mwg.Go(func() { server.mapper(1) })
 
 	// DecodeHashes would normally need a write lock
 	// nothing else has been started yet so we don't need one
 	loadedHashes := loadHashes(opts)
-	metrics, err := server.hashes.DecodeHashes(loadedHashes)
+	metrics, err := server.storage.DecodeHashes(loadedHashes)
 	if err != nil {
 		panic(err)
 	}
+	// This is loaded here so that the log doesn't hang for a few seconds before the first line
+	server.hashServer = NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format)
 	for m, count := range metrics.Hashes {
 		server.hash_count.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
 	}
-	log.Println("Loaded hashes")
+	log.Println(log.Standard, "Loaded hashes")
 	loadedHashes = nil //nolint:ineffassign
 
+	// TODO: this may cause issues if listen below fails and there are images being hashed
 	server.HashLocalImages(opts.coverPath)
 	_ = os.MkdirAll(opts.path, 0o755)
 	chdb, err := ch.OpenCHDBBolt(opts.path, opts.deleteHashedImages)
@@ -383,42 +396,86 @@ func startServer(opts Opts) {
 		panic(err)
 	}
 
-	log.Println("Init downloaders")
+	log.Println(log.Verbose, "Init downloaders")
 	dwg := sync.WaitGroup{}
 	dcwg := sync.WaitGroup{}
 	finishedDownloadQueue := make(chan download.Download, 1)
-	startDownloadQueue := make(chan download.Download, 1)
+	// startDownloadQueue := make(chan download.Download, 1)
 	dcwg.Go(func() {
 		downloadProcessor(chdb, opts, finishedDownloadQueue, &server)
 	})
-	for i := range 5 {
-		dcwg.Go(func() {
-			// todo: add the context here so that we can cancel in-progress downloads
-			download.Worker(chdb, opts.path, opts.keepDownloaded, startDownloadQueue, finishedDownloadQueue, i)
-		})
-	}
 
 	if opts.cv.enabled {
 		dwg.Go(func() {
 			cvdownloader := cv.NewCVDownloader(
-				server.Context,
 				opts.version,
 				bufPool,
 				opts.onlyHashNewIDs,
-				server.hashes.GetIDs,
+				server.storage.GetIDs,
 				chdb,
 				filepath.Join(opts.path, cv.WorkDirectory),
 				opts.cv.APIKey,
 				opts.cv.images,
 				opts.keepDownloaded,
-				opts.cv.hashDownloaded,
-				startDownloadQueue,
+				opts.hashDownloaded,
+				finishedDownloadQueue,
 			)
-			cv.DownloadCovers(cvdownloader)
+			// TODO:? allow a way to cancel this context. I'm not sure why
+			cv.DownloadCovers(server.Context, cvdownloader)
 			for {
 				select {
 				case <-time.After(2 * time.Hour):
-					cv.DownloadCovers(cvdownloader)
+					cv.DownloadCovers(server.Context, cvdownloader)
+				case <-server.Context.Done():
+					return
+				}
+			}
+		})
+	}
+
+	if opts.metron.enabled {
+		// TODO:? allow a way to cancel this context. I'm not sure why
+		dwg.Go(func() {
+			metronDownloader := metron.NewDownloader(
+				opts.version,
+				bufPool,
+				opts.onlyHashNewIDs,
+				server.storage.GetIDs,
+				chdb,
+				filepath.Join(opts.path, metron.WorkDirectory),
+				opts.metron.APIKey,
+				opts.keepDownloaded,
+				opts.hashDownloaded,
+				finishedDownloadQueue,
+			)
+			metron.DownloadCovers(server.Context, metronDownloader)
+			time.Sleep(time.Second * 3)
+			fmt.Println()
+			fmt.Println()
+			fmt.Println()
+			fmt.Println()
+			fmt.Println()
+			fmt.Println()
+			fmt.Println()
+			fmt.Println()
+			fmt.Println("FUCK POINTERS")
+			for _, existingHash := range server.storage.(*storage.BasicMapStorage).PHashes {
+				if *existingHash.ID.Domain == ch.ComicVine {
+					continue
+				}
+				fmt.Printf("%#v\n", ch.SavedHash{
+					Hash: ch.Hash{
+						Hash: existingHash.Hash,
+						Kind: goimagehash.PHash,
+					},
+					ID: *existingHash.ID,
+				})
+
+			}
+			for {
+				select {
+				case <-time.After(1 * time.Hour):
+					metron.DownloadCovers(server.Context, metronDownloader)
 				case <-server.Context.Done():
 					return
 				}
@@ -426,15 +483,15 @@ func startServer(opts Opts) {
 		})
 	}
 	hashEncoders := sync.WaitGroup{}
-	log.Println("Init hash encoder")
+	log.Println(log.Verbose, "Init hash encoder")
 	if opts.hashSaveInterval > 0 {
 		hashEncoders.Go(func() {
 			for {
 				select {
 				case <-time.After(opts.hashSaveInterval):
-					err := server.hashServer.writeHashes(server.hashes)
+					err := server.hashServer.writeHashes(server.storage)
 					if err != nil {
-						log.Printf("Failed to save the current hashes: %v", err)
+						log.Log(log.Fatal, "Failed to save the current hashes: %v", err)
 					}
 				case <-server.Context.Done():
 					return
@@ -447,7 +504,8 @@ func startServer(opts Opts) {
 	if opts.memprofile != "" {
 		f, err := os.Create(opts.memprofile)
 		if err != nil {
-			log.Fatal("could not create memory profile: ", err)
+			log.Println(log.Fatal, "could not create memory profile:", err)
+			os.Exit(1)
 		}
 		defer f.Close() // error handling omitted for example
 		runtime.GC()    // get up-to-date statistics
@@ -459,66 +517,69 @@ func startServer(opts Opts) {
 		runtime.ReadMemStats(&m)
 		printMemStats(m)
 		if err := pprof.Lookup("heap").WriteTo(f, 0); err != nil {
-			log.Fatal("could not write memory profile: ", err)
+			log.Println(log.Fatal, "could not write memory profile:", err)
 		}
 
 	}
 
-	log.Println("Listening on ", server.httpServer.Addr)
+	log.Println(log.Required, "Listening on ", server.httpServer.Addr)
 	err = server.httpServer.ListenAndServe()
 	if err != nil {
-		log.Println(err)
+		log.Println(log.Fatal, err)
+		server.cancel()
 	}
-
+	log.Println(log.Required, "Shutting down comic-hasher")
 	close(server.readerQueue)
-	log.Println("waiting on readers")
+	log.Println(log.Standard, "waiting on readers")
 	rwg.Wait()
 	for dw := range server.readerQueue {
-		log.Println("Skipping read", dw)
+		log.Println(log.Verbose, "Skipping read", dw)
 	}
 
-	log.Println("waiting on downloaders")
+	log.Println(log.Verbose, "waiting on downloaders")
 	dwg.Wait() // Downloaders send to startDownloadQueue -> finishedDownloadQueue -> server.hashingQueue
 
-	log.Println("waiting on download workers")
-	close(startDownloadQueue)
+	log.Println(log.Standard, "waiting on download workers")
+	// close(startDownloadQueue)
 	close(finishedDownloadQueue)
 	dcwg.Wait() // Wait for the download processor to finish
 	for dw := range finishedDownloadQueue {
-		log.Println("Skipping download", dw.IssueID)
+		log.Println(log.Verbose, "Skipping download", dw.IssueID)
 	}
 
 	// close(server.hashingQueue) // Closed by downloadProcessor
-	log.Println("waiting on hashers")
+	log.Println(log.Standard, "waiting on hashers")
 	hwg.Wait()
 	for dw := range server.hashingQueue {
-		log.Println("Skipping hashing", dw.ID)
+		log.Println(log.Verbose, "Skipping hashing", dw.ID)
 	}
 
 	close(server.mappingQueue)
-	log.Println("waiting on mapper")
+	log.Println(log.Standard, "waiting on mapper")
 	mwg.Wait()
 	for dw := range server.mappingQueue {
-		log.Println("Skipping mapping", dw.ID)
+		log.Println(log.Verbose, "Skipping mapping", dw.ID)
 	}
-	log.Println("waiting on hash encoder")
+	log.Println(log.Standard, "waiting on hash encoder")
 	hashEncoders.Wait()
-	log.Println("If you press Ctrl+C after this point the saved hashes will be corrupted")
+	log.Println(log.Required, "If you press Ctrl+C after this point the saved hashes will be corrupted")
 	signal.Stop(server.signalQueue)
 	close(server.signalQueue)
 	for dw := range server.signalQueue {
-		log.Println("Skipping", dw)
+		log.Println(log.Verbose, "Skipping", dw)
 	}
 
 	_ = chdb.Close()
 
 	// server.EncodeHashes would normally need a read lock
 	// the server has been stopped so it's not needed here
-	hashes, err := server.hashes.EncodeHashes()
+	hashes, err := server.storage.EncodeHashes()
 	if err != nil {
-		log.Panicf("Failed to save hashes: %v", err)
+		log.Println(log.Fatal, "Failed to save hashes:", err)
+		os.Exit(1)
 	}
 	if err = saveHashes(opts, hashes); err != nil {
-		log.Panic(err)
+		log.Println(log.Fatal, err)
+		os.Exit(1)
 	}
 }

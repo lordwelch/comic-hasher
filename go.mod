@@ -1,6 +1,6 @@
 module gitea.narnian.us/lordwelch/comic-hasher
 
-go 1.26.0
+go 1.27.1
 
 // Main comic-hasher
 require (
@@ -10,7 +10,7 @@ require (
 	github.com/kr/pretty v0.3.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	go.etcd.io/bbolt v1.4.3
-	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
+	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa
 	golang.org/x/image v0.36.0
 )
 
@@ -34,9 +34,11 @@ require (
 )
 
 require (
+	code.cloudfoundry.org/go-diodes v0.0.0-20260921100641-e75e32521ad8
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/kr/text v0.2.0 // indirect

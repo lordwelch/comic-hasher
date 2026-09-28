@@ -17,7 +17,6 @@ import (
 	"image"
 	"io"
 	"io/fs"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -33,6 +32,7 @@ import (
 	"github.com/zeebo/xxh3"
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"gitea.narnian.us/lordwelch/goimagehash"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -48,11 +48,13 @@ import (
 	_ "golang.org/x/crypto/blake2s"
 )
 
+var logger = log.NewLogger("server")
+
 type Server struct {
 	httpServer     *http.Server
 	mux            *CHMux
 	BaseURL        *url.URL
-	hashes         ch.HashStorage
+	storage        ch.HashStorage
 	hashServer     HashServer
 	Context        context.Context
 	cancel         func()
@@ -325,36 +327,36 @@ func (s *Server) associateIDs(w http.ResponseWriter, r *http.Request) {
 	)
 	if ID == "" {
 		msg := "No ID Provided"
-		log.Println(msg)
+		logger.Println(log.Verbose2, msg)
 		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
 		return
 	}
 	if domain == "" {
 		msg := "No domain Provided"
-		log.Println(msg)
+		logger.Println(log.Verbose2, msg)
 		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
 		return
 	}
 	if newID == "" {
 		msg := "No newID Provided"
-		log.Println(msg)
+		logger.Println(log.Verbose2, msg)
 		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
 		return
 	}
 	if newDomain == "" {
 		msg := "No newDomain Provided"
-		log.Println(msg)
+		logger.Println(log.Verbose2, msg)
 		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
 		return
 	}
 	if newDomain == domain {
 		msg := "newDomain cannot be the same as the existing domain"
-		log.Println(msg)
+		logger.Println(log.Verbose2, msg)
 		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
 		return
 	}
-	log.Printf("Attempting to associate %s:%s to %s:%s", domain, ID, newDomain, newID)
-	err := s.hashes.AssociateIDs([]ch.NewIDs{{
+	logger.Log(log.Standard, "Attempting to associate %s:%s to %s:%s", domain, ID, newDomain, newID)
+	err := s.storage.AssociateIDs([]ch.NewIDs{{
 		OldID: ch.ID{
 			Domain: &domain,
 			ID:     ID,
@@ -421,7 +423,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if ahash, err = strconv.ParseUint(ahashStr, 16, 64); err != nil && ahashStr != "" {
-		log.Printf("could not parse ahash: %s", ahashStr)
+		logger.Log(log.Verbose, "could not parse ahash: %s", ahashStr)
 		writeJSON(w, http.StatusBadRequest, result{Msg: "hash parse failed"})
 		return
 	}
@@ -430,7 +432,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		hash_str += "ahash_"
 	}
 	if dhash, err = strconv.ParseUint(dhashStr, 16, 64); err != nil && dhashStr != "" {
-		log.Printf("could not parse dhash: %s", dhashStr)
+		logger.Log(log.Verbose, "could not parse dhash: %s", dhashStr)
 		writeJSON(w, http.StatusBadRequest, result{Msg: "hash parse failed"})
 		return
 	}
@@ -439,7 +441,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		hash_str += "dhash_"
 	}
 	if phash, err = strconv.ParseUint(phashStr, 16, 64); err != nil && phashStr != "" {
-		log.Printf("could not parse phash: %s", phashStr)
+		logger.Log(log.Verbose, "could not parse phash: %s", phashStr)
 		writeJSON(w, http.StatusBadRequest, result{Msg: "hash parse failed"})
 		return
 	}
@@ -448,7 +450,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		hash_str += "phash_"
 	}
 	if tmpMax, err := strconv.Atoi(maxStr); err != nil && maxStr != "" {
-		log.Printf("Invalid Max: %s", maxStr)
+		logger.Log(log.Verbose, "Invalid Max: %s", maxStr)
 		writeJSON(w, http.StatusBadRequest, result{Msg: fmt.Sprintf("Invalid Max: %s", maxStr)})
 		return
 	} else {
@@ -458,7 +460,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	hash_str = strings.TrimRight(hash_str, "_")
 
 	if max > 8 {
-		log.Printf("Max must be less than 9: %d", max)
+		logger.Log(log.Verbose, "Max must be less than 9: %d", max)
 		writeJSON(w, http.StatusBadRequest, result{Msg: fmt.Sprintf("Max must be less than 9: %d", max)})
 		return
 	}
@@ -469,7 +471,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	defer timer.ObserveDuration()
 
 	s.match_cover_total.Inc()
-	matches, err := s.hashes.GetMatches(hashes, max, exactOnly)
+	matches, err := s.storage.GetMatches(hashes, max, exactOnly)
 	cmpFunc := func(a ch.Result, b ch.Result) int {
 		return cmp.Or(
 			cmp.Compare(a.Hash.Kind, b.Hash.Kind),
@@ -485,8 +487,9 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 			msg    string
 			status = http.StatusOK
 		)
+		// TODO: Output this even if we don't have matches
 		if err != nil {
-			log.Println("Internal error:", err)
+			logger.Println(log.Required, "Internal error:", err)
 			status = http.StatusInternalServerError
 			msg = err.Error()
 		}
@@ -518,26 +521,26 @@ func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if ID == "" {
-		log.Println("No ID Provided")
+		logger.Println(log.Verbose, "No ID Provided")
 		writeJSON(w, http.StatusBadRequest, result{Msg: "No ID Provided"})
 		return
 	}
 	if domain == "" {
-		log.Println("No domain Provided")
+		logger.Println(log.Verbose, "No domain Provided")
 		writeJSON(w, http.StatusBadRequest, result{Msg: "No Domain Provided"})
 		return
 	}
 	i, format, err := image.Decode(r.Body)
 	if err != nil {
 		msg := fmt.Sprintf("Failed to decode Image: %s", err)
-		log.Println(msg)
+		logger.Println(log.Verbose, msg)
 		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
 		return
 	}
-	log.Printf("Decoded %s image from %s", format, user)
+	logger.Log(log.Standard, "Decoded %s image from %s", format, user)
 	select {
 	case <-s.Context.Done():
-		log.Println("Recieved quit")
+		logger.Println(log.Verbose, "Recieved quit")
 		return
 	default:
 	}
@@ -546,20 +549,20 @@ func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mapper(workerID int) {
-	defer log.Println("Mapper", workerID, "completed")
+	defer logger.Println(log.Verbose2, "Mapper", workerID, "completed")
 	for hash := range s.mappingQueue {
-		for m, count := range s.hashes.MapHashes(hash).Hashes {
+		for m, count := range s.storage.MapHashes(hash).Hashes {
 			s.hash_count.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
 		}
 	}
 }
 
 func (s *Server) hasher(workerID int) {
-	defer log.Println("Hasher", workerID, "completed")
+	defer logger.Println(log.Verbose2, "Hasher", workerID, "completed")
 	for image := range s.hashingQueue {
 		start := time.Now()
-		if image.NewOnly && len(s.hashes.GetIDs(image.ID)) > 0 {
-			log.Printf("Skipping existing hash with ID: %s found", image.ID)
+		if image.NewOnly && len(s.storage.GetIDs(image.ID)) > 0 {
+			logger.Log(log.Verbose, "Skipping existing hash with ID: %s found", image.ID)
 			continue
 		}
 		hash := ch.HashImage(image)
@@ -574,24 +577,29 @@ func (s *Server) hasher(workerID int) {
 		}
 
 		elapsed := time.Since(start)
-		log.Printf("Hashing took %v: id: %v\n", elapsed, hash.ID)
+		logger.Log(log.Verbose, "Hashing took %v: id: %v", elapsed, hash.ID)
+		if hash.ID.ID == "136787" {
+			for _, h := range hash.Hashes {
+				logger.Log(log.Standard, "Mapped Hash: %#v", h)
+			}
+		}
 	}
 }
 
 func (s *Server) reader(workerID int) {
-	defer log.Println("Reader", workerID, "completed")
+	defer logger.Println(log.Verbose2, "Reader", workerID, "completed")
 	for path := range s.readerQueue {
 
 		id := ch.ID{
 			Domain: ch.NewSource(filepath.Base(filepath.Dir(filepath.Dir(path)))),
 			ID:     filepath.Base(filepath.Dir(path)),
 		}
-		if s.onlyHashNewIDs && len(s.hashes.GetIDs(id)) > 0 {
+		if s.onlyHashNewIDs && len(s.storage.GetIDs(id)) > 0 {
 			continue
 		}
 		file, err := os.Open(path)
 		if err != nil {
-			log.Printf("Failed to open image %q: %v", path, err)
+			logger.Log(log.Standard, "Failed to open image %q: %v", path, err)
 			continue
 		}
 		i, format, err := image.Decode(bufio.NewReader(file))
@@ -618,7 +626,7 @@ func (s *Server) HashLocalImages(coverPath string) {
 		return
 	}
 	go func() {
-		log.Println("Hashing covers at ", coverPath)
+		logger.Println(log.Standard, "Hashing covers at ", coverPath)
 		start := time.Now()
 		err := filepath.WalkDir(coverPath, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -626,7 +634,7 @@ func (s *Server) HashLocalImages(coverPath string) {
 			}
 			select {
 			case <-s.Context.Done():
-				log.Println("Recieved quit")
+				logger.Println(log.Verbose, "Recieved quit")
 				err = s.httpServer.Shutdown(context.TODO())
 				return fmt.Errorf("recieved quit: %w", err)
 			default:
@@ -639,6 +647,6 @@ func (s *Server) HashLocalImages(coverPath string) {
 			return nil
 		})
 		elapsed := time.Since(start)
-		log.Println("Err:", err, "local hashing took", elapsed)
+		logger.Println(log.Standard, "Err:", err, "local hashing took", elapsed)
 	}()
 }

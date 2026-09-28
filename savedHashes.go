@@ -4,9 +4,10 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
-	"log"
 	"slices"
 	"strings"
+
+	"gitea.narnian.us/lordwelch/comic-hasher/log"
 
 	// json "github.com/goccy/go-json"
 	json "github.com/json-iterator/go"
@@ -15,6 +16,9 @@ import (
 	"gitea.narnian.us/lordwelch/goimagehash"
 	"github.com/vmihailenco/msgpack/v5"
 )
+
+// Logger for decoding and encoding saved hashes
+var DELogger = log.NewLogger("Decode/Encode")
 
 type Format int
 
@@ -48,6 +52,7 @@ type (
 		Hashes [3]map[uint64]int
 	}
 )
+
 type Metric struct {
 	Source *Source
 	Kind   goimagehash.Kind
@@ -68,8 +73,8 @@ type SavedHashes struct {
 }
 
 type SavedHash struct {
-	Hash Hash
 	ID   ID
+	Hash Hash
 }
 
 type (
@@ -146,8 +151,8 @@ func ConvertHashesV0(oldHashes OldSavedHashes) *SavedHashes {
 			}
 		}
 	}
-	log.Println("Length of hashes", len(t.Hashes))
-	log.Println("Length of ID lists", len(t.IDs))
+	DELogger.Println(log.Verbose, "Length of hashes", len(t.Hashes))
+	DELogger.Println(log.Verbose, "Length of ID lists", len(t.IDs))
 	return &t
 }
 
@@ -172,13 +177,13 @@ func ConvertHashesV1(oldHashes SavedHashesv1) *SavedHashes {
 			}
 		}
 	}
-	log.Println("Length of hashes", len(t.Hashes))
-	log.Println("Length of ID lists", len(t.IDs))
+	DELogger.Println(log.Verbose, "Length of hashes", len(t.Hashes))
+	DELogger.Println(log.Verbose, "Length of ID lists", len(t.IDs))
 	return &t
 }
 
 func DecodeHashesV0(decode Decoder, hashes []byte) (*SavedHashes, error) {
-	log.Println("Attempting to decode v0 hashes")
+	DELogger.Println(log.Debug, "Attempting to decode v0 hashes")
 	loadedHashes := OldSavedHashes{}
 	err := decode(hashes, &loadedHashes)
 	if err != nil {
@@ -187,12 +192,12 @@ func DecodeHashesV0(decode Decoder, hashes []byte) (*SavedHashes, error) {
 	if len(loadedHashes) == 0 {
 		return nil, ErrNoHashes
 	}
-	log.Println("Loading V0 hashes")
+	DELogger.Println(log.Standard, "Loading V0 hashes")
 	return ConvertHashesV0(loadedHashes), nil
 }
 
 func DecodeHashesV1(decode Decoder, hashes []byte) (*SavedHashes, error) {
-	log.Println("Attempting to decode v1 hashes")
+	DELogger.Println(log.Debug, "Attempting to decode v1 hashes")
 	loadedHashes := SavedHashesv1{}
 	err := decode(hashes, &loadedHashes)
 	if err != nil {
@@ -205,12 +210,12 @@ func DecodeHashesV1(decode Decoder, hashes []byte) (*SavedHashes, error) {
 	if hashesCount < 1 {
 		return nil, ErrNoHashes
 	}
-	log.Println("Loading V1 hashes")
+	DELogger.Println(log.Standard, "Loading V1 hashes")
 	return ConvertHashesV1(loadedHashes), nil
 }
 
 func DecodeHashesV2(decode Decoder, hashes []byte) (*SavedHashes, error) {
-	log.Println("Attempting to decode v2 hashes")
+	DELogger.Println(log.Debug, "Attempting to decode v2 hashes")
 	loadedHashes := SavedHashes{}
 	err := decode(hashes, &loadedHashes)
 	if err != nil {
@@ -220,9 +225,9 @@ func DecodeHashesV2(decode Decoder, hashes []byte) (*SavedHashes, error) {
 		return nil, ErrNoHashes
 	}
 
-	log.Println("Loading V2 hashes")
-	log.Println("Length of hashes", len(loadedHashes.Hashes))
-	log.Println("Length of ID lists", len(loadedHashes.IDs))
+	DELogger.Println(log.Verbose, "Loading V2 hashes")
+	DELogger.Println(log.Verbose, "Length of hashes", len(loadedHashes.Hashes))
+	DELogger.Println(log.Verbose, "Length of ID lists", len(loadedHashes.IDs))
 	return &loadedHashes, nil
 }
 
@@ -230,15 +235,15 @@ func getSavedHashesVersion(decode Decoder, hashes []byte) (int, error) {
 	type version struct {
 		Version int
 	}
-	log.Println("Attempting to decode saved hashes version")
+	DELogger.Println(log.Debug, "Attempting to decode saved hashes version")
 	var savedVersion version
 	err := decode(hashes, &savedVersion)
 	if err != nil {
-		log.Printf("Failed to decode saved hashes version: %v", err)
+		DELogger.Log(log.Verbose2, "Failed to decode saved hashes version: %v", err)
 		return -1, fmt.Errorf("%w: %w", ErrDecodeFail, err)
 	}
 	if savedVersion.Version > 1 {
-		log.Printf("Decoded saved hashes version: %v", savedVersion.Version)
+		DELogger.Log(log.Verbose2, "Decoded saved hashes version: %v", savedVersion.Version)
 		return savedVersion.Version, nil
 	}
 	return -1, nil
@@ -252,10 +257,10 @@ func DecodeHashes(format Format, hashes []byte) (*SavedHashes, error) {
 	switch format {
 	case Msgpack:
 		decode = msgpack.Unmarshal
-		log.Println("Decode Msgpack")
+		DELogger.Println(log.Verbose, "Decode Msgpack")
 	case JSON:
 		decode = json.Unmarshal
-		log.Println("Decode JSON")
+		DELogger.Println(log.Verbose, "Decode JSON")
 		if len(hashes) < 1 || hashes[0] != '{' {
 			return nil, ErrDecodeFail
 		}

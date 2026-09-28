@@ -1,3 +1,5 @@
+code.cloudfoundry.org/go-diodes v0.0.0-20260921100641-e75e32521ad8 h1:93bXp9ldsLL+uVgqLiq3T/6B+PPaSDZTWQgD/xi+B+Q=
+code.cloudfoundry.org/go-diodes v0.0.0-20260921100641-e75e32521ad8/go.mod h1:uBbwWHqqp9BOMRA0RxUc6PJXzfe512a3gVP4LVc3vRU=
 gitea.narnian.us/lordwelch/goimagehash v0.0.0-20250130004139-e91c39c79e0d h1:mFnVC/tEHk6woq6FBulwzGcuNdYn+zNhXNBILuetQJs=
 gitea.narnian.us/lordwelch/goimagehash v0.0.0-20250130004139-e91c39c79e0d/go.mod h1:UDwa7njhbB5nzxIjHbT9Mjlve9GYn3wzxAcQax1XRvE=
 github.com/OneOfOne/xxhash v1.2.8 h1:31czK/TI9sNkxIKfaUfGlU47BAxQ0ztGgd9vPyqimf8=
@@ -14,6 +16,8 @@ github.com/disintegration/imaging v1.6.3-0.20201218193011-d40f48ce0f09 h1:MJFqtd
 github.com/disintegration/imaging v1.6.3-0.20201218193011-d40f48ce0f09/go.mod h1:44/5580QXChDfwIclfc/PCwrr44amcmDAg8hxG0Ewe4=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
+github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3 h1:UADEEmDKgfXbtnGJZ97beY5XLo9ZechG1nlU4KnRrkE=
+github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3/go.mod h1:tphK2c80bpPhMOI4v6bIc2xWywPfbqi1Z06+RcrMkDg=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
 github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
 github.com/google/gofuzz v1.0.0/go.mod h1:dBl0BpW6vV/+mYPU4Po3pmUjxk6FQPldtuIdl/M65Eg=

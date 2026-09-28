@@ -134,8 +134,7 @@ func (v *VPTree) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error) {
 		}
 
 		if savedHash.ID == (ch.ID{}) {
-			fmt.Println("Empty ID detected")
-			panic(savedHash)
+			return ch.Metrics{}, fmt.Errorf("Empty ID detected")
 		}
 		// All known equal IDs are already mapped we can add any missing ones from hashes
 		if _, ok := v.ids[savedHash.ID]; !ok {

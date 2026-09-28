@@ -7,12 +7,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 	"math/bits"
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	_ "modernc.org/sqlite"
 )
+
+var logger = log.NewLogger("sqlite")
 
 type sqliteStorage struct {
 	db *sql.DB
@@ -184,7 +186,7 @@ func (s *sqliteStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([
 				foundHashes[hash.Hash.Hash] = struct{}{}
 				foundMatches = append(foundMatches, hash)
 			} else {
-				log.Println("Hash already found", hash)
+				logger.Println(log.Verbose2, "Hash already found", hash)
 			}
 		}
 	}
@@ -221,7 +223,8 @@ func (s *sqliteStorage) mapHashes(tx *sql.Tx, hash ch.ImageHash) ch.Metrics {
 	for _, h := range hash.Hashes {
 		_, err := insertHash.Exec(h.Kind, int64(h.Hash), id_id)
 		if err != nil {
-			panic(err)
+			logger.Log(log.Fatal, "Failed to insert hash into database %v: %v", h, err)
+			return ch.Metrics{}
 		}
 		m.Hashes[ch.Metric{
 			Source: hash.ID.Domain,
@@ -233,18 +236,21 @@ func (s *sqliteStorage) mapHashes(tx *sql.Tx, hash ch.ImageHash) ch.Metrics {
 	var count int64
 	err = row.Scan(&count)
 	if err != nil {
-		panic(fmt.Errorf("failed to query id: %w", err))
+		logger.Log(log.Fatal, "failed to query id: %v", err)
+		return ch.Metrics{}
 	}
 	if count < 1 {
 		row := insertEID.QueryRow()
 		var eid int64
 		err = row.Scan(&eid)
 		if err != nil {
-			panic(fmt.Errorf("failed to insert equivalent id: %w", err))
+			logger.Log(log.Fatal, "failed to insert equivalent id: %v", err)
+			return ch.Metrics{}
 		}
 		_, err := insertIEID.Exec(id_id, eid)
 		if err != nil {
-			panic(fmt.Errorf("failed to associate equivalent IDs: %w", err))
+			logger.Log(log.Fatal, "failed to associate equivalent IDs: %v", err)
+			return ch.Metrics{}
 		}
 	}
 	return m

@@ -2,63 +2,89 @@ package ch
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
+
+	"gitea.narnian.us/lordwelch/comic-hasher/log"
 
 	bolt "go.etcd.io/bbolt"
+	"golang.org/x/exp/constraints"
 )
 
+type Version string
+
+type Bolt struct {
+	Path string
+	DB   *bolt.DB
+}
+
+func (b Bolt) Close() error {
+	return b.DB.Close()
+}
+
 type CHDBBolt struct {
-	path           string
-	db             *bolt.DB
+	Bolt
+	BasePath       string
 	deleteExisting bool
+	validPaths     map[string]bool
 }
 
 const CHDBVERSION = "1.0.0"
 
 func OpenCHDBBolt(path string, deleteExisting bool) (CHDBBolt, error) {
 	path, _ = filepath.Abs(path)
-	db, err := bolt.Open(filepath.Join(path, "chdb.bolt"), 0o644, nil)
+	chDBPath := filepath.Join(path, "chdb.bolt")
+	bolt, err := OpenBolt(chDBPath, CHDBVERSION, []string{"paths", "bad_urls"})
 	if err != nil {
-		return CHDBBolt{path, db, deleteExisting}, fmt.Errorf("failed to open database: %w", err)
+		return CHDBBolt{Bolt: bolt, BasePath: path, deleteExisting: deleteExisting, validPaths: make(map[string]bool)}, fmt.Errorf("failed to open database: %w", err)
 	}
-	db, err = truncate(db)
+	return CHDBBolt{Bolt: bolt, BasePath: path, deleteExisting: deleteExisting, validPaths: make(map[string]bool)}, nil
+}
+
+func OpenBolt(path string, version Version, buckets []string) (Bolt, error) {
+	path, _ = filepath.Abs(path)
+	db, err := bolt.Open(path, 0o644, &bolt.Options{FreelistType: bolt.FreelistArrayType, Timeout: time.Millisecond * 100})
 	if err != nil {
-		return CHDBBolt{}, fmt.Errorf("failed to truncate database")
+		return Bolt{path, db}, fmt.Errorf("failed to open database: %w", err)
+	}
+	db, err = BoltTruncate(db, version)
+	if err != nil {
+		return Bolt{}, fmt.Errorf("failed to truncate database")
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		_, err = tx.CreateBucketIfNotExists([]byte("paths"))
-		if err != nil {
-			return fmt.Errorf("failed to create bucket %v: %w", "paths", err)
+		for _, bucket := range buckets {
+			_, err = tx.CreateBucketIfNotExists([]byte(bucket))
+			if err != nil {
+				return fmt.Errorf("failed to create bucket %v: %w", bucket, err)
+			}
 		}
-		_, err = tx.CreateBucketIfNotExists([]byte("bad_urls"))
-		if err != nil {
-			return fmt.Errorf("failed to create bucket %v: %w", "paths", err)
-		}
+
 		var versionBucket *bolt.Bucket
 		versionBucket, err = tx.CreateBucketIfNotExists([]byte("version"))
 		if err != nil {
 			return fmt.Errorf("failed to create bucket %v: %w", "paths", err)
 		}
-		err = versionBucket.Put([]byte("version"), []byte(CHDBVERSION))
+		err = versionBucket.Put([]byte("version"), []byte(version))
 		if err != nil {
-			return fmt.Errorf("failed to set CHDB version: %w", err)
+			return fmt.Errorf("failed to set Metron Bolt version: %w", err)
 		}
 		return nil
 	})
 	if err != nil {
 		db.Close()
-		return CHDBBolt{path, db, deleteExisting}, fmt.Errorf("failed to init database: %w", err)
+		return Bolt{path, db}, fmt.Errorf("failed to init database: %w", err)
 	}
 
-	return CHDBBolt{path, db, deleteExisting}, nil
+	return Bolt{path, db}, nil
 }
 
-func truncate(db *bolt.DB) (*bolt.DB, error) {
+func BoltTruncate(db *bolt.DB, version Version) (*bolt.DB, error) {
 	doTruncate := false
 	err := db.Update(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte("version"))
@@ -66,7 +92,7 @@ func truncate(db *bolt.DB) (*bolt.DB, error) {
 			doTruncate = true
 			return nil
 		}
-		if !bytes.Equal(bucket.Get([]byte("version")), []byte(CHDBVERSION)) {
+		if !bytes.Equal(bucket.Get([]byte("version")), []byte(version)) {
 			doTruncate = true
 		}
 		return nil
@@ -80,7 +106,7 @@ func truncate(db *bolt.DB) (*bolt.DB, error) {
 
 	path := db.Path()
 	db.Close()
-	log.Println("Creating new CHDB")
+	CHDBLogger.Println(log.Verbose, "Creating new Bolt database")
 	err = os.Truncate(path, 0)
 	if err != nil {
 		return nil, err
@@ -91,7 +117,7 @@ func truncate(db *bolt.DB) (*bolt.DB, error) {
 func (c CHDBBolt) Import(paths []string, badURLs []string) {
 	slices.Sort(paths)
 	slices.Sort(badURLs)
-	c.db.Update(func(tx *bolt.Tx) error {
+	c.DB.Update(func(tx *bolt.Tx) error {
 		p := tx.Bucket([]byte("paths"))
 		b := tx.Bucket([]byte("bad_urls"))
 
@@ -105,8 +131,18 @@ func (c CHDBBolt) Import(paths []string, badURLs []string) {
 	})
 }
 
+func (c CHDBBolt) ValidatePath(path string) bool {
+	firstDir, _ := log.Partition(path, "/")
+	if c.validPaths[firstDir] {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(c.BasePath, firstDir))
+	c.validPaths[firstDir] = err == nil
+	return c.validPaths[firstDir]
+}
+
 func (c CHDBBolt) Dump() (paths []string, badURLs []string) {
-	c.db.View(func(tx *bolt.Tx) error {
+	c.DB.View(func(tx *bolt.Tx) error {
 		p := tx.Bucket([]byte("paths"))
 		b := tx.Bucket([]byte("bad_urls"))
 		paths = make([]string, 0, p.Inspect().KeyN)
@@ -126,10 +162,13 @@ func (c CHDBBolt) Dump() (paths []string, badURLs []string) {
 
 func (c CHDBBolt) PathHashed(path string) bool {
 	if filepath.IsAbs(path) {
-		log.Panic("Absolute path given to chdb:", path)
+		panic(fmt.Sprintln("Absolute path given to chdb:", path))
+	}
+	if !c.ValidatePath(path) {
+		panic(fmt.Sprintln("Invalid path", path))
 	}
 
-	tx, err := c.db.Begin(false)
+	tx, err := c.DB.Begin(false)
 	if err != nil {
 		return false
 	}
@@ -138,9 +177,9 @@ func (c CHDBBolt) PathHashed(path string) bool {
 	dbRes := b.Get([]byte(path))
 	if dbRes != nil {
 		if c.deleteExisting {
-			err = os.Remove(filepath.Join(c.path, path))
+			err = os.Remove(filepath.Join(c.BasePath, path))
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				log.Println("Failed to delete hashed image:", err)
+				CHDBLogger.Println(log.Required, "Failed to delete hashed image:", err)
 			}
 		}
 		return true
@@ -149,12 +188,21 @@ func (c CHDBBolt) PathHashed(path string) bool {
 	return false
 }
 
+func IntToBolt[T constraints.Integer](v T) []byte {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, uint64(v))
+	return b
+}
+
 func (c CHDBBolt) PathDownloaded(path string) bool {
 	if filepath.IsAbs(path) {
-		log.Panic("Absolute path given to chdb:", path)
+		panic(fmt.Sprintln("Absolute path given to chdb:", path))
+	}
+	if !c.ValidatePath(path) {
+		panic(fmt.Sprintln("Invalid path", path))
 	}
 
-	tx, err := c.db.Begin(false)
+	tx, err := c.DB.Begin(false)
 	if err != nil {
 		return false
 	}
@@ -162,44 +210,46 @@ func (c CHDBBolt) PathDownloaded(path string) bool {
 	b := tx.Bucket([]byte("paths"))
 	dbRes := b.Get([]byte(path))
 	if dbRes == nil {
-
-		f, err := os.Open(path)
-		if err == nil {
-			defer f.Close()
-		}
-		return !os.IsNotExist(err)
+		_, err := os.Stat(filepath.Join(c.BasePath, path))
+		// We only care if the error is not ErrNotExist
+		// If it's something else we should get an error on the next operation
+		// If it is nil then it still is not ErrNotExist which means we return true
+		return !errors.Is(err, fs.ErrNotExist)
 	}
 	return true
 }
 
 func (c CHDBBolt) AddPath(path string) {
 	if filepath.IsAbs(path) {
-		log.Panic("Absolute path given to chdb:", path)
+		panic(fmt.Sprintln("Absolute path given to chdb:", path))
+	}
+	if !c.ValidatePath(path) {
+		panic(fmt.Sprintln("Invalid path", path))
 	}
 
-	tx, err := c.db.Begin(true)
+	tx, err := c.DB.Begin(true)
 	if err != nil {
-		c.db.Logger().Errorf("failed to open transaction: %v", err)
+		CHDBLogger.Log(log.Fatal, "failed to open transaction: %v", err)
 	}
 	defer tx.Rollback()
 	b := tx.Bucket([]byte("paths"))
 
 	err = b.Put([]byte(path), []byte{})
 	if err != nil {
-		log.Println(fmt.Errorf("failed to insert %v (%v) into paths: %w", path, path, err))
+		CHDBLogger.Log(log.Fatal, "failed to insert %v (%v) into paths: %v", path, path, err)
 	}
 	tx.Commit()
 	if c.deleteExisting {
-		err = os.Remove(filepath.Join(c.path, path))
+		err = os.Remove(filepath.Join(c.BasePath, path))
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			log.Println("Failed to delete hashed image:", err)
+			CHDBLogger.Println(log.Required, "Failed to delete hashed image:", err)
 		}
 		_ = RmdirP(filepath.Dir(path))
 	}
 }
 
 func (c CHDBBolt) CheckURL(url string) bool {
-	tx, err := c.db.Begin(true)
+	tx, err := c.DB.Begin(true)
 	if err != nil {
 		return false
 	}
@@ -209,20 +259,20 @@ func (c CHDBBolt) CheckURL(url string) bool {
 }
 
 func (c CHDBBolt) AddURL(url string) {
-	tx, err := c.db.Begin(true)
+	tx, err := c.DB.Begin(true)
 	if err != nil {
-		c.db.Logger().Errorf("Failed to open transaction: %v", err)
+		CHDBLogger.Log(log.Fatal, "Failed to open transaction: %v", err)
 	}
 	defer tx.Rollback()
 	b := tx.Bucket([]byte("bad_urls"))
 
 	err = b.Put([]byte(url), []byte{})
 	if err != nil {
-		log.Println(fmt.Errorf("failed to insert %v into bad_urls: %w", url, err))
+		CHDBLogger.Log(log.Fatal, "failed to insert %v into bad_urls: %v", url, err) // TODO: this should probably be fatal
 	}
 	tx.Commit()
 }
 
 func (c CHDBBolt) Close() error {
-	return c.db.Close()
+	return c.DB.Close()
 }

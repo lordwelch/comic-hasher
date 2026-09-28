@@ -13,6 +13,7 @@ import (
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
 	"gitea.narnian.us/lordwelch/comic-hasher/cv"
+	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -60,18 +61,16 @@ func (f *Storage) Set(s string) error {
 }
 
 type CVOpts struct {
-	enabled        bool
-	APIKey         string
-	images         cv.Images
-	hashDownloaded bool
+	enabled bool
+	APIKey  string
+	images  cv.Images
 }
 type MetronOpts struct {
-	enabled        bool
-	username       string
-	password       string
-	hashDownloaded bool
+	enabled bool
+	APIKey  string
 }
 type Opts struct {
+	hashDownloaded     bool
 	cpuprofile         string
 	memprofile         string
 	coverPath          string
@@ -87,6 +86,8 @@ type Opts struct {
 	version            string
 	addr               string
 	debugPort          string
+
+	logLevels log.Flag
 
 	cv     CVOpts
 	metron MetronOpts
@@ -129,7 +130,8 @@ func Usage(f *flag.FlagSet) {
 			b.WriteString(" ")
 			b.WriteString(name)
 		}
-		if _, err := strconv.ParseBool(fmt.Sprintf("%v", currentFlag.Value)); err == nil && !slices.ContainsFunc([]string{"v", "version", "help", "h"},
+		if _, err := strconv.ParseBool(fmt.Sprintf("%v", currentFlag.Value)); err == nil && !slices.ContainsFunc(
+			[]string{"v", "version", "help", "h"},
 			func(v string) bool {
 				return string(ch.Lower(currentFlag.Name)) == v
 			},
@@ -210,23 +212,27 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 
 	fs.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers\n\nIf multiple image types (-cv-images) are selected more than 1 may get through")
 	fs.BoolVar(&opts.keepDownloaded, "keep-downloaded", false, "Keep newly downloaded images.\nWhen set to false does not ever write images to the filesystem\nA crash or exiting during downloading can mean some images need to be re-downloaded")
-	fs.BoolVar(&opts.cv.hashDownloaded, "hash-downloaded", true, "Hash already downloaded images")
+	fs.BoolVar(&opts.hashDownloaded, "hash-downloaded", true, "Hash already downloaded images")
 
 	fs.BoolVar(&opts.cv.enabled, "cv", false, "Enabled automatically downloading covers from ComicVine to add to the database\n(averages 1 api call per hour once cought up)")
 	fs.StringVar(&opts.cv.APIKey, "cv-api-key", "", "API `Key` to use to access the ComicVine API")
 	fs.Var(&opts.cv.images, "cv-images", "Download the selected `image types` from comicvine\n(Original,Thumb,Icon,Medium,Screen,ScreenLarge,Small,Super,Tiny)")
+
+	fs.BoolVar(&opts.metron.enabled, "metron", false, "Enabled automatically downloading covers from metron.cloud to add to the database\n(averages 1 api call per hour once cought up)")
+	fs.StringVar(&opts.metron.APIKey, "metron-api-key", "", "API `Key` to use to access the metron.cloud API")
 
 	fs.StringVar(&opts.cpuprofile, "cpuprofile", "", "Write cpu profile to `file`")
 	fs.StringVar(&opts.memprofile, "memprofile", "", "Write mem profile to `file` after loading hashes")
 	fs.StringVar(&opts.debugPort, "debug-port", "", "`Port` to listen to for debug info")
 	showVersion := fs.Bool("version", false, "Show version and quit")
 	fs.BoolVar(showVersion, "V", false, "")
+	fs.Var(&opts.logLevels, "log-level", "Change logging level\nAvailable loggers: "+strings.Join([]string(log.AvailableLoggers()), ", "))
 
 	return showVersion, fs
 }
 
 var (
-	groupOrder = []string{"", "file", "hash", "download", "comic vine", "debug"}
+	groupOrder = []string{"", "file", "hash", "download", "comic vine", "metron", "debug"}
 	groups     = map[string]string{
 		"load-embedded-hashes": "file",
 		"save-embedded-hashes": "file",
@@ -238,9 +244,12 @@ var (
 		"hash-downloaded":      "download",
 		"cv":                   "comic vine",
 		"cv-api-key":           "comic vine",
+		"metron":               "metron",
+		"metron-api-key":       "metron",
 		"cv-images":            "comic vine",
 		"cpuprofile":           "debug",
 		"memprofile":           "debug",
 		"debug-port":           "debug",
+		"log-level":            "debug",
 	}
 )
