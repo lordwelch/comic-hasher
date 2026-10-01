@@ -44,12 +44,16 @@ import (
 	_ "crypto/sha3"
 	_ "crypto/sha512"
 
+	"github.com/labstack/echo/v5"
+	"github.com/valyala/fasthttp"
+	"github.com/valyala/fasthttp/fasthttpadaptor"
 	_ "golang.org/x/crypto/blake2b"
 	_ "golang.org/x/crypto/blake2s"
 )
 
 type Server struct {
 	httpServer     *http.Server
+	fasthttpServer     *fasthttp.Server
 	mux            *CHMux
 	BaseURL        *url.URL
 	hashes         ch.HashStorage
@@ -68,6 +72,8 @@ type Server struct {
 	match_cover_duration  *prometheus.HistogramVec
 	hash_count            *prometheus.CounterVec
 	last_request_duration prometheus.Gauge
+
+	e *echo.Echo
 }
 
 type HashServer struct {
@@ -95,6 +101,17 @@ func (s *Server) authenticated(w http.ResponseWriter, r *http.Request) (string, 
 }
 
 func (s *Server) setupAppHandlers() {
+	s.fasthttpServer.Handler = func(ctx *fasthttp.RequestCtx) {
+	switch string(ctx.Path()) {
+	case "/match_cover_hash":
+		fasthttpadaptor.NewFastHTTPHandlerFunc(s.matchCoverHash )(ctx)
+	case "/metrics":
+		fasthttpadaptor.NewFastHTTPHandler(promhttp.HandlerFor(s.reg, promhttp.HandlerOpts{}))(ctx)
+	default:
+		ctx.Error("not found", fasthttp.StatusNotFound)
+	}
+}
+	s.e.GET("/match_cover_hash", s.matchCoverHashE)
 	s.mux.HandleFunc("/add_cover", s.addCover)
 	s.mux.HandleFunc("/match_cover_hash", s.matchCoverHash)
 	s.mux.HandleFunc("/associate_ids", s.associateIDs)
@@ -405,7 +422,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		ahash     uint64
 		dhash     uint64
 		phash     uint64
-		max       int
+		max       int = 8
 		err       error
 		hashes    []ch.Hash
 		hash_str  string
@@ -448,7 +465,9 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, result{Msg: fmt.Sprintf("Invalid Max: %s", maxStr)})
 		return
 	} else {
-		max = tmpMax
+		if maxStr != "" {
+			max = tmpMax
+		}
 	}
 
 	hash_str = strings.TrimRight(hash_str, "_")
@@ -495,6 +514,107 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusNotFound, result{Msg: "No hashes found"})
+}
+
+func (s *Server) matchCoverHashE(c *echo.Context) error {
+
+	var (
+		values    = c.Request().URL.Query()
+		ahashStr  = strings.TrimSpace(values.Get("ahash"))
+		dhashStr  = strings.TrimSpace(values.Get("dhash"))
+		phashStr  = strings.TrimSpace(values.Get("phash"))
+		maxStr    = strings.TrimSpace(values.Get("max"))
+		exactOnly = strings.ToLower(strings.TrimSpace(values.Get("exactOnly"))) != "false"
+		simple    = strings.ToLower(strings.TrimSpace(values.Get("simple"))) == "true"
+		ahash     uint64
+		dhash     uint64
+		phash     uint64
+		max       int = 8
+		err       error
+		hashes    []ch.Hash
+		hash_str  string
+	)
+
+	if simple {
+		c.JSON(http.StatusBadRequest, result{Msg: "Simple results are no longer Supported"})
+		return nil
+	}
+
+	if ahash, err = strconv.ParseUint(ahashStr, 16, 64); err != nil && ahashStr != "" {
+		log.Printf("could not parse ahash: %s", ahashStr)
+		c.JSON(http.StatusBadRequest, result{Msg: "hash parse failed"})
+		return nil
+	}
+	if ahash > 0 {
+		hashes = append(hashes, ch.Hash{Hash: ahash, Kind: goimagehash.AHash})
+		hash_str += "ahash_"
+	}
+	if dhash, err = strconv.ParseUint(dhashStr, 16, 64); err != nil && dhashStr != "" {
+		log.Printf("could not parse dhash: %s", dhashStr)
+		c.JSON(http.StatusBadRequest, result{Msg: "hash parse failed"})
+		return nil
+	}
+	if dhash > 0 {
+		hashes = append(hashes, ch.Hash{Hash: dhash, Kind: goimagehash.DHash})
+		hash_str += "dhash_"
+	}
+	if phash, err = strconv.ParseUint(phashStr, 16, 64); err != nil && phashStr != "" {
+		log.Printf("could not parse phash: %s", phashStr)
+		c.JSON(http.StatusBadRequest, result{Msg: "hash parse failed"})
+		return nil
+	}
+	if phash > 0 {
+		hashes = append(hashes, ch.Hash{Hash: phash, Kind: goimagehash.PHash})
+		hash_str += "phash_"
+	}
+	if tmpMax, err := strconv.Atoi(maxStr); err != nil && maxStr != "" {
+		log.Printf("Invalid Max: %s", maxStr)
+		c.JSON(http.StatusBadRequest, result{Msg: fmt.Sprintf("Invalid Max: %s", maxStr)})
+		return nil
+	} else {
+		if maxStr != "" {
+			max = tmpMax
+		}
+	}
+
+	hash_str = strings.TrimRight(hash_str, "_")
+
+	if max > 8 {
+		log.Printf("Max must be less than 9: %d", max)
+		c.JSON(http.StatusBadRequest, result{Msg: fmt.Sprintf("Max must be less than 9: %d", max)})
+		return nil
+	}
+	timer := prometheus.NewTimer(prometheus.ObserverFunc(func(v float64) {
+		s.match_cover_duration.WithLabelValues(hash_str).Observe(v)
+		s.last_request_duration.Set(v)
+	}))
+	defer timer.ObserveDuration()
+
+	s.match_cover_total.Inc()
+	matches, err := s.hashes.GetMatches(hashes, max, exactOnly)
+	slices.SortFunc(matches, func(a ch.Result, b ch.Result) int {
+		return cmp.Compare(a.Distance, b.Distance)
+	})
+	if len(matches) > 0 {
+		var (
+			msg    string
+			status = http.StatusOK
+		)
+		if err != nil {
+			log.Println("Internal error:", err)
+			status = http.StatusInternalServerError
+			msg = err.Error()
+		}
+
+		c.JSON(status, result{
+			Results: matches,
+			Msg:     msg,
+		})
+		return nil
+	}
+
+	c.JSON(http.StatusNotFound, result{Msg: "No hashes found"})
+	return nil
 }
 
 func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {

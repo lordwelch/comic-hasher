@@ -1,36 +1,29 @@
 module gitea.narnian.us/lordwelch/comic-hasher
 
-go 1.26
+go 1.27.1
 
 // Main comic-hasher
+//
+// Storage types
 require (
 	gitea.narnian.us/lordwelch/goimagehash v0.0.0-20250130004139-e91c39c79e0d
+	github.com/OneOfOne/xxhash v1.2.8
 	github.com/disintegration/imaging v1.6.3-0.20201218193011-d40f48ce0f09
 	github.com/json-iterator/go v1.1.12
 	github.com/kr/pretty v0.3.1
-	github.com/vmihailenco/msgpack/v5 v5.4.1
-	go.etcd.io/bbolt v1.4.3
-	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
-	golang.org/x/image v0.36.0
-)
-
-// Storage types
-require (
 	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/ncruces/go-sqlite3 v0.30.5
-	gonum.org/v1/gonum v0.17.0
-	modernc.org/sqlite v1.46.1
-)
-
-// other commands
-require golang.org/x/text v0.40.0
-
-require (
-	github.com/OneOfOne/xxhash v1.2.8
 	github.com/prometheus/client_golang v1.24.1
 	github.com/twmb/murmur3 v1.1.8
+	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/zeebo/xxh3 v1.1.0
-	golang.org/x/crypto v0.47.0
+	go.etcd.io/bbolt v1.4.3
+	golang.org/x/crypto v0.55.0
+	golang.org/x/image v0.36.0
+	// other commands
+	golang.org/x/text v0.41.0
+	gonum.org/v1/gonum v0.17.0
+	modernc.org/sqlite v1.46.1
 )
 
 require (
@@ -38,11 +31,14 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/klauspost/compress v1.20.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/kr/text v0.2.0 // indirect
+	github.com/labstack/echo/v5 v5.3.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/molecule-man/go-brrr v1.0.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
@@ -52,10 +48,15 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
+	github.com/valyala/bytebufferpool v1.0.0 // indirect
+	github.com/valyala/fasthttp v1.74.0 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
+	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	modernc.org/libc v1.69.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+replace gitea.narnian.us/lordwelch/goimagehash => ../goimagehash

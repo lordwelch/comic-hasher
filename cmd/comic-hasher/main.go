@@ -27,6 +27,8 @@ import (
 
 	"github.com/disintegration/imaging"
 	"github.com/kr/pretty"
+	"github.com/labstack/echo/v5"
+	"github.com/valyala/fasthttp"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -325,14 +327,19 @@ func startServer(opts Opts) {
 		httpServer: &http.Server{
 			Addr:           opts.addr,
 			Handler:        mux,
+		},
+		fasthttpServer: &fasthttp.Server{
+			Name: "Comic-Hasher "+opts.version,
 			ReadTimeout:    10 * time.Second,
 			WriteTimeout:   10 * time.Second,
-			MaxHeaderBytes: 1 << 20,
+			MaxRequestBodySize: 1 << 20,
+			CloseOnShutdown: true,
 		},
 		onlyHashNewIDs: opts.onlyHashNewIDs,
 		version:        opts.version,
 		reg:            prometheus.NewRegistry(),
 		hashServer:     NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format),
+		e: echo.New(),
 	}
 	Notify(server.signalQueue)
 	var err error
@@ -443,7 +450,9 @@ func startServer(opts Opts) {
 	}
 
 	log.Println("Listening on ", server.httpServer.Addr)
-	err = server.httpServer.ListenAndServe()
+	// err = server.e.Start(server.httpServer.Addr)
+	// err = server.httpServer.ListenAndServe()
+	err = server.fasthttpServer.ListenAndServe(server.httpServer.Addr)
 	if err != nil {
 		log.Println(err)
 	}
