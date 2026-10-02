@@ -5,7 +5,7 @@ package storage
 import (
 	"errors"
 
-	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 )
 
 func NewVPStorage() (ch.HashStorage, error) {

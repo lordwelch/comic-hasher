@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"math/bits"
 
-	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	_ "modernc.org/sqlite"
 )
