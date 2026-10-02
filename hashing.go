@@ -103,7 +103,7 @@ func (id ID) String() string {
 }
 
 func (id ID) GoString() string {
-	return fmt.Sprintf("%s: %v", *id.Domain, id.ID)
+	return fmt.Sprintf("ch.Source{Domain: %#v, ID: %#v}", *id.Domain, id.ID)
 }
 
 func newSourceMap() *sync.Map {

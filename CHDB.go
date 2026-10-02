@@ -3,7 +3,6 @@ package ch
 import "gitea.narnian.us/lordwelch/comic-hasher/log"
 
 type CHDB interface {
-	// OpenCHDB(path string, comicvinePath string, deleteExisting bool) (CHDB, error)
 	PathHashed(path string) bool
 	PathDownloaded(path string) bool
 	AddPath(path string)
@@ -12,7 +11,7 @@ type CHDB interface {
 	AddURL(url string)
 	Close() error
 
-	GetSource(string) byte
+	GetSourceID(string) byte
 	GetSourceName(sourceID byte) string
 }
 

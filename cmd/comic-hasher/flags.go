@@ -21,7 +21,7 @@ import (
 type Storage int
 
 const (
-	Map = iota + 1
+	_ = iota + 1
 	BasicMap
 	Sqlite
 	Sqlite3
@@ -29,7 +29,7 @@ const (
 )
 
 var storageNames = map[Storage]string{
-	Map:      "map",
+	// Map:      "map",
 	BasicMap: "basicmap",
 	Sqlite:   "sqlite",
 	Sqlite3:  "sqlite3",
@@ -37,7 +37,7 @@ var storageNames = map[Storage]string{
 }
 
 var storageValues = map[string]Storage{
-	"map":      Map,
+	// "map":      Map,
 	"basicmap": BasicMap,
 	"sqlite":   Sqlite,
 	"sqlite3":  Sqlite3,
@@ -207,7 +207,7 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 	fs.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", true, "Allows blocking the saving of the embedded hashes")
 	fs.Var(&opts.format, "save-format", "Specify the `format` to save hashes in (json, msgpack)")
 
-	fs.Var(&opts.storageType, "storage-type", "Specify the `storage type` used internally to search hashes\n(Sqlite,Sqlite3,Map,BasicMap,VPTree)")
+	fs.Var(&opts.storageType, "storage-type", "Specify the `storage type` used internally to search hashes\n(Sqlite,Sqlite3,BasicMap,VPTree)")
 	fs.DurationVar(&opts.hashSaveInterval, "hash-save-interval", time.Hour, "Specify the interval that hashes will automaticall be saved to disk. 0 means never")
 
 	fs.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers\n\nIf multiple image types (-cv-images) are selected more than 1 may get through")

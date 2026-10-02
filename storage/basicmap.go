@@ -4,30 +4,17 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"math"
 	"math/bits"
 	"slices"
 	"sync"
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"gitea.narnian.us/lordwelch/goimagehash"
 )
 
-type RuntimeID uint64
-
-type IndexedID struct {
-	Index uint8  // Pads to uint64
-	ID    string // uses size(int64) ptr(int64)
-}
-
-// String size is 16 (uint64*2)
-// Source size is effectively minimum 8 (uint64)
-// Using []ch.ID is ((24(uint64*3)+16(uint64*3)+(~6)) * n) + 24(uint64*3)
-// Using IDList is 8(uint64) + 24(uint64*3)
-type IDList struct {
-	// Source uint8
-	Source uint64
-	IDs    []string
-}
+type RuntimeID uint32
 
 type RuntimeHash struct {
 	Hash uint64
@@ -39,43 +26,54 @@ type RuntimeHash2 struct {
 }
 type BasicMapStorage struct {
 	hashMutex *sync.RWMutex
-	AllIDs    []IDList
 	ids       IDMap
-	AHashes   []RuntimeHash
-	DHashes   []RuntimeHash
-	PHashes   []RuntimeHash
+	AHashes   []RuntimeHash2
+	DHashes   []RuntimeHash2
+	PHashes   []RuntimeHash2
 }
-type IDs struct {
-	RuntimeID     RuntimeID // size 8
-	Source        ch.Source
-	id            string // size (16 + (8))
-	EquivalentIDs int    // index into IDMap.EquivalentIDs
+type ID struct {
+	Domain        *ch.Source
+	RuntimeID     RuntimeID // index into IDMap.IDs // This technically shouldn't be needed
+	ID            string    // size (16 + (8))
+	EquivalentIDs uint32    // index into IDMap.EquivalentIDs
 }
+
+func (i ID) CHID() ch.ID {
+	return ch.ID{
+		Domain: i.Domain,
+		ID:     i.ID,
+	}
+}
+
 type IDMap struct {
-	ids           []IDs
+	ids           []ID
 	IDIndex       []RuntimeID
 	EquivalentIDs [][]RuntimeID
 }
 
 func (m *IDMap) Sort() {
-	slices.SortFunc(m.ids, func(a IDs, b IDs) int {
+	if slices.IsSortedFunc(m.ids, func(a ID, b ID) int {
 		return cmp.Compare(a.RuntimeID, b.RuntimeID)
-	})
+	}) {
+		panic("ID list is unsorted. This should be impossible")
+	}
 }
 
-func (m *IDMap) GetItem(rid RuntimeID) IDs {
+func (m *IDMap) GetID(rid RuntimeID) ID {
+	// This should be automatically inlined
 	return m.ids[rid]
 }
 
 func (m *IDMap) SortIndex() {
 	slices.SortFunc(m.IDIndex, func(a RuntimeID, b RuntimeID) int {
-		return cmp.Compare(m.ids[a].id, m.ids[b].id)
+		return cmp.Compare(m.ids[a].ID, m.ids[b].ID)
 	})
 }
 
-func (m *IDMap) FindID(id *ch.ID) (RuntimeID, bool) {
-	index, found := slices.BinarySearchFunc(m.IDIndex, id.ID, func(rid RuntimeID, target string) int {
-		return cmp.Compare(m.ids[rid].id, target)
+func (m *IDMap) FindID(id ch.ID) (RuntimeID, bool) {
+	index, found := slices.BinarySearchFunc(m.IDIndex, id, func(rid RuntimeID, target ch.ID) int {
+		return cmp.Or(cmp.Compare(*m.ids[rid].Domain, *target.Domain),
+			cmp.Compare(m.ids[rid].ID, target.ID))
 	})
 	if !found {
 		return 0, false
@@ -84,62 +82,64 @@ func (m *IDMap) FindID(id *ch.ID) (RuntimeID, bool) {
 }
 
 func (m *IDMap) InsertID(id ch.ID) RuntimeID {
-	rid := RuntimeID(len(m.ids))
-	m.ids = append(m.ids, IDs{
-		id:            id.ID,
-		RuntimeID:     rid,
-		Source:        *id.Domain,
-		EquivalentIDs: -1,
-	})
-	m.IDIndex = append(m.IDIndex, rid)
+	rid := m.insertID(id)
 	m.SortIndex()
 	return rid
 }
 
-func (m *IDMap) insertID(id ch.ID, idList *[]*ch.ID) *ch.ID {
-	index, found := m.FindID(&id)
-	if !found {
-		m.ids = slices.Insert(m.ids, index, IDs{
-			&id,
-			idList,
-		})
+func (m *IDMap) insertID(id ch.ID) RuntimeID {
+	rid, found := m.FindID(id)
+	if found {
+		return rid
 	}
-	return m.ids[index].id
-}
-
-func (m *IDMap) sort() {
-	slices.SortFunc(m.ids, func(a, b IDs) int {
-		return a.id.Compare(*b.id)
+	rid = RuntimeID(len(m.ids))
+	m.ids = append(m.ids, ID{
+		ID:            id.ID,
+		RuntimeID:     rid,
+		Domain:        id.Domain,
+		EquivalentIDs: math.MaxUint32,
 	})
+	m.IDIndex = append(m.IDIndex, rid)
+	return rid
 }
 
-func (m *IDMap) FindID(id *ch.ID) (int, bool) {
-	return slices.BinarySearchFunc(m.ids, id, func(id IDs, target *ch.ID) int {
-		return id.id.Compare(*target)
-	})
-}
-
-func (m *IDMap) GetIDs(id *ch.ID) []ch.ID {
-	index, found := m.FindID(id)
+func (m *IDMap) FindAllIDs(id ch.ID) []ch.ID {
+	rid, found := m.FindID(id)
 
 	if !found {
 		return nil
 	}
-	ids := make([]ch.ID, 0, len(*m.ids[index].idList))
-	ids = append(ids, *m.ids[index].id)
-	for _, id := range *m.ids[index].idList {
-		ids = append(ids, *id)
+
+	return m.GetAllIDs(rid)
+}
+
+func (m *IDMap) GetAllIDs(rid RuntimeID) []ch.ID {
+	var ids []ch.ID
+	id := m.GetID(rid)
+	if m.ids[rid].EquivalentIDs == math.MaxUint32 {
+		return []ch.ID{id.CHID()}
+	}
+	if len(m.EquivalentIDs[m.ids[rid].EquivalentIDs]) < 2 {
+		log.Println(log.Fatal, "An ID refers to an empty id list. This should never happen")
+		return nil
+	}
+	ids = make([]ch.ID, 0, len(m.EquivalentIDs[m.ids[rid].EquivalentIDs]))
+	for _, eid := range m.EquivalentIDs[m.ids[rid].EquivalentIDs] {
+		ids = append(ids, ch.ID{
+			Domain: m.ids[eid].Domain,
+			ID:     m.ids[eid].ID,
+		})
 	}
 	return ids
 }
 
 func (m *IDMap) AssociateIDs(newids []ch.NewIDs) error {
 	for _, newid := range newids {
-		orid, found := m.FindID(&newid.OldID)
+		orid, found := m.FindID(newid.OldID)
 		if !found {
 			return ErrIDNotFound
 		}
-		nrid, found := m.FindID(&newid.NewID)
+		nrid, found := m.FindID(newid.NewID)
 		if !found {
 			return ErrIDNotFound
 		}
@@ -148,50 +148,67 @@ func (m *IDMap) AssociateIDs(newids []ch.NewIDs) error {
 		if oeid == neid {
 			return nil
 		}
-		if oeid == -1 && neid != -1 {
+		if oeid == math.MaxUint32 && neid != math.MaxUint32 {
 			m.EquivalentIDs[neid] = append(m.EquivalentIDs[neid], orid)
 			m.ids[orid].EquivalentIDs = neid
 			return nil
 		}
-		if neid == -1 && oeid != -1 {
+		if neid == math.MaxUint32 && oeid != math.MaxUint32 {
 			m.EquivalentIDs[oeid] = append(m.EquivalentIDs[oeid], nrid)
 			m.ids[nrid].EquivalentIDs = oeid
 			return nil
 		}
-		if neid == -1 && oeid == -1 {
-			eid := len(m.EquivalentIDs)
+		if neid == math.MaxUint32 && oeid == math.MaxUint32 {
+			eid := uint32(len(m.EquivalentIDs))
 			m.EquivalentIDs = append(m.EquivalentIDs, []RuntimeID{orid, nrid})
 			m.ids[nrid].EquivalentIDs = eid
 			m.ids[orid].EquivalentIDs = eid
 			return nil
 		}
 		// neid and oeid both have an exist list
-		// NewID.Domain == metron
-		// OldID.Domain == GCD
-		// NewID(metron) already equivalent to CV:123
-		// OldID(GCD)    already equivalent to CV:321
+		// if NewID.Domain == metron: check that no metron exists in OldID's id list
 		for _, rid := range m.EquivalentIDs[neid] {
-			if m.ids[rid].Source == *newid.OldID.Domain {
-				return fmt.Errorf("ID %v is already matched to %v:%v. Cannot associate two ID's in the same source", newid.NewID, m.ids[rid].Source, m.ids[rid].id)
+			if *m.ids[rid].Domain == *newid.OldID.Domain {
+				return fmt.Errorf("ID %v is already matched to %v:%v. Cannot associate two ID's in the same source", newid.NewID, m.ids[rid].Domain, m.ids[rid].ID)
 			}
 		}
+		// if OldID.Domain == GCD: check that no gcd exists in NewID's id list
 		for _, rid := range m.EquivalentIDs[oeid] {
-			if m.ids[rid].Source == *newid.NewID.Domain {
-				return fmt.Errorf("ID %v is already matched to %v:%v. Cannot associate two ID's in the same source", newid.OldID, m.ids[rid].Source, m.ids[rid].id)
+			if *m.ids[rid].Domain == *newid.NewID.Domain {
+				return fmt.Errorf("ID %v is already matched to %v:%v. Cannot associate two ID's in the same source", newid.OldID, m.ids[rid].Domain, m.ids[rid].ID)
 			}
 		}
+		// if NewID(metron) already equivalent to CV:123
+		// and if OldID(GCD)    already equivalent to CV:321
+		// return err
 		for _, nnrid := range m.EquivalentIDs[neid] {
-			nnSource := m.ids[nnrid].Source
-			nnID := m.ids[nnrid].Source
+			nnSource := m.ids[nnrid].Domain
+			nnID := m.ids[nnrid].Domain
 			for _, oorid := range m.EquivalentIDs[oeid] {
-				ooSource := m.ids[oorid].Source
-				ooID := m.ids[oorid].Source
+				ooSource := m.ids[oorid].Domain
+				ooID := m.ids[oorid].Domain
 				if nnSource == ooSource {
 					// return fmt.Errorf("ID metron:1 == CV:123 and ID GCD:45 == CV:321. Cannot associate metron:1 to GCD:45", newid.OldID, nnSource, nnID)
-					return fmt.Errorf("ID %v == %v:%v and ID %v == %v:%v. Cannot associate metron:1 to GCD:45", newid.NewID, nnSource, nnID, newid.OldID, ooSource, ooID, newid.NewID, newid.OldID)
+					return fmt.Errorf(
+						"ID %v == %v:%v and ID %v == %v:%v. Cannot associate %v to %v",
+						newid.NewID, nnSource, nnID, newid.OldID, ooSource, ooID, newid.NewID, newid.OldID,
+					)
 				}
 			}
 		}
+
+		// we've now validated that their are no conflicts so we need to merge and re-do everything
+		allIDs := make([]RuntimeID, 0, len(m.EquivalentIDs[oeid])+len(m.EquivalentIDs[neid]))
+		allIDs = append(allIDs, m.EquivalentIDs[oeid]...)
+		allIDs = append(allIDs, m.EquivalentIDs[neid]...)
+		// For no particular reason we use the neid as the only real id
+		// Because we currently use the index into the slice as an index we can't delete it so we just leave it empty
+		for _, id := range m.EquivalentIDs[oeid] {
+			m.ids[id].EquivalentIDs = neid
+			m.EquivalentIDs[neid] = append(m.EquivalentIDs[neid], id)
+		}
+		m.EquivalentIDs[oeid] = nil // marks as unused
+		// Nothing should refer to this index again
 	}
 	return nil
 }
@@ -210,7 +227,7 @@ func (b *BasicMapStorage) RUnlock() {
 func (b *BasicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, searchHash uint64) []ch.Result {
 	otherHashes := make([]ch.Result, 0, 20) // hope that we don't need more
 
-	storedHash := RuntimeHash{}
+	storedHash := RuntimeHash2{}
 	for _, storedHash = range *b.getCurrentHashes(kind) {
 		distance := bits.OnesCount64(searchHash ^ storedHash.Hash)
 		if distance <= maxDistance {
@@ -219,16 +236,15 @@ func (b *BasicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, search
 					Hash: storedHash.Hash,
 					Kind: kind,
 				},
-				ID:            *storedHash.ID,
+				ID:            b.ids.GetID(storedHash.ID).CHID(),
 				Distance:      distance,
-				EquivalentIDs: nil,
+				EquivalentIDs: b.ids.GetAllIDs(storedHash.ID),
 			})
 		}
 	}
 
 	matchingHashes := make([]ch.Result, 0, len(otherHashes)) // For some reason copying to this slice is faster than not........
 	for i := range otherHashes {
-		otherHashes[i].EquivalentIDs = b.ids.GetIDs(&otherHashes[i].ID)
 		matchingHashes = append(matchingHashes, ch.Result{
 			Hash:          otherHashes[i].Hash,
 			ID:            otherHashes[i].ID,
@@ -242,30 +258,26 @@ func (b *BasicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, search
 func (b *BasicMapStorage) exactMatches(hashes []ch.Hash) []ch.Result {
 	var foundMatches []ch.Result
 	for _, hash := range hashes {
-		mappedIds := map[int]bool{}
+		mappedIds := map[RuntimeID]bool{}
 
 		index, count := b.findHash(hash)
 		if count < 1 {
 			continue
 		}
-		var storedHash RuntimeHash
+		var storedHash RuntimeHash2
 		for _, storedHash = range (*b.getCurrentHashes(hash.Kind))[index : index+count] {
-			index, _ := b.ids.FindID(storedHash.ID)
-			if mappedIds[index] {
+			if mappedIds[storedHash.ID] {
 				continue
 			}
-			mappedIds[index] = true
+			mappedIds[storedHash.ID] = true
 
 			foundMatches = append(foundMatches, ch.Result{
-				Hash:     ch.Hash{Hash: storedHash.Hash, Kind: hash.Kind},
-				ID:       *storedHash.ID,
-				Distance: 0,
+				Hash:          ch.Hash{Hash: storedHash.Hash, Kind: hash.Kind},
+				ID:            b.ids.GetID(storedHash.ID).CHID(),
+				Distance:      0,
+				EquivalentIDs: b.ids.GetAllIDs(storedHash.ID),
 			})
 		}
-		for i := range foundMatches {
-			foundMatches[i].EquivalentIDs = b.ids.GetIDs(storedHash.ID)
-		}
-
 	}
 	return foundMatches
 }
@@ -299,7 +311,7 @@ func (b *BasicMapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) 
 }
 
 // getCurrentHashes must have a read lock before using
-func (b *BasicMapStorage) getCurrentHashes(kind goimagehash.Kind) *[]RuntimeHash {
+func (b *BasicMapStorage) getCurrentHashes(kind goimagehash.Kind) *[]RuntimeHash2 {
 	if kind == goimagehash.AHash {
 		return &b.AHashes
 	}
@@ -318,7 +330,7 @@ func (b *BasicMapStorage) getCurrentHashes(kind goimagehash.Kind) *[]RuntimeHash
 // if count < 1 then no results were found
 func (b *BasicMapStorage) findHash(hash ch.Hash) (int, int) {
 	currentHashes := *b.getCurrentHashes(hash.Kind)
-	index, found := slices.BinarySearchFunc(currentHashes, hash, func(existing RuntimeHash, target ch.Hash) int {
+	index, found := slices.BinarySearchFunc(currentHashes, hash, func(existing RuntimeHash2, target ch.Hash) int {
 		return cmp.Compare(existing.Hash, target.Hash)
 	})
 	if !found {
@@ -338,18 +350,18 @@ func (b *BasicMapStorage) insertHash(hash ch.Hash, id ch.ID) bool {
 	m := start + count
 	index := start
 	for ; index < m; index++ {
-		if (*currentHashes)[index].ID.Compare(id) == 0 {
+		if id.Compare(b.ids.GetID((*currentHashes)[index].ID).CHID()) == 0 {
 			return true
 		}
 	}
 
-	rh := RuntimeHash{
+	rh := RuntimeHash2{
 		Hash: hash.Hash,
 		ID:   b.ids.InsertID(id),
 	}
 	*currentHashes = slices.Insert(*currentHashes, index, rh)
 
-	slices.SortFunc((*currentHashes), hashCmp)
+	slices.SortFunc((*currentHashes), b.hashCmp)
 	return false
 }
 
@@ -364,24 +376,6 @@ func (b *BasicMapStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 		if b.insertHash(ih, hash.ID) {
 			count.Hashes[ch.Metric{Source: hash.ID.Domain, Kind: ih.Kind}] += 1
 		}
-		index, c := b.findHash(ih)
-		metronHashes := make([]ch.SavedHash, 0, c)
-		if c > 0 {
-			for _, existingHash := range (*b.getCurrentHashes(ih.Kind))[index : index+c] {
-				if *existingHash.ID.Domain == ch.Metron {
-					metronHashes = append(metronHashes, ch.SavedHash{
-						Hash: ch.Hash{
-							Hash: existingHash.Hash,
-							Kind: ih.Kind,
-						},
-						ID: *existingHash.ID,
-					})
-				}
-			}
-		}
-		if len(metronHashes) > 1 {
-			panic(metronHashes)
-		}
 	}
 	return count
 }
@@ -391,23 +385,24 @@ func (b *BasicMapStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, erro
 	if hashes == nil {
 		return ch.Metrics{}, nil
 	}
-	b.ids.ids = make([]IDs, 0, len(hashes.Hashes))
+	b.ids.ids = make([]ID, 0, len(hashes.Hashes))
 
 	// Initialize all the known equal IDs
 	for _, ids := range hashes.IDs {
-		newIDs := make([]*ch.ID, 0, len(ids))
-		for _, id := range ids {
-			newIDs = append(newIDs, &id)
+		if len(ids) < 2 {
+			continue
 		}
-		for _, id := range newIDs {
-			b.ids.ids = append(b.ids.ids, IDs{
-				id, // should this be a pointer?????. Yes it should
-				// I would have duplicate ID pointers hanging around if there was anything to load in this loop
-				&newIDs,
+		eid := uint32(len(b.ids.EquivalentIDs))
+		b.ids.EquivalentIDs = append(b.ids.EquivalentIDs, make([]RuntimeID, 0, len(ids)))
+		for _, id := range ids {
+			b.ids.ids = append(b.ids.ids, ID{
+				Domain:        id.Domain,
+				ID:            id.ID,
+				RuntimeID:     RuntimeID(len(b.ids.ids)),
+				EquivalentIDs: eid,
 			})
 		}
 	}
-	b.ids.sort()
 
 	slices.SortFunc(hashes.Hashes, func(existing, target ch.SavedHash) int {
 		return cmp.Or(
@@ -421,7 +416,6 @@ func (b *BasicMapStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, erro
 	dHashCount := 0
 	pHashCount := 0
 	for _, savedHash := range hashes.Hashes {
-
 		if savedHash.Hash.Kind == goimagehash.AHash {
 			aHashCount += 1
 		}
@@ -433,81 +427,80 @@ func (b *BasicMapStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, erro
 		}
 	}
 
-	b.AHashes = make([]RuntimeHash, 0, aHashCount)
-	b.DHashes = make([]RuntimeHash, 0, dHashCount)
-	b.PHashes = make([]RuntimeHash, 0, pHashCount)
+	b.AHashes = make([]RuntimeHash2, 0, aHashCount)
+	b.DHashes = make([]RuntimeHash2, 0, dHashCount)
+	b.PHashes = make([]RuntimeHash2, 0, pHashCount)
 	var hash ch.SavedHash
 	for _, hash = range hashes.Hashes {
 		// TODO: Investigate better options to load in the ID
 		if hash.Hash.Kind == goimagehash.AHash {
-			b.AHashes = append(b.AHashes, RuntimeHash{
+			b.AHashes = append(b.AHashes, RuntimeHash2{
 				Hash: hash.Hash.Hash,
-				ID:   b.ids.InsertID(hash.ID),
+				ID:   b.ids.insertID(hash.ID),
 			})
 		} else if hash.Hash.Kind == goimagehash.DHash {
-			b.DHashes = append(b.DHashes, RuntimeHash{
+			b.DHashes = append(b.DHashes, RuntimeHash2{
 				Hash: hash.Hash.Hash,
-				ID:   b.ids.InsertID(hash.ID),
+				ID:   b.ids.insertID(hash.ID),
 			})
 		} else if hash.Hash.Kind == goimagehash.PHash {
-			b.PHashes = append(b.PHashes, RuntimeHash{
+			b.PHashes = append(b.PHashes, RuntimeHash2{
 				Hash: hash.Hash.Hash,
-				ID:   b.ids.InsertID(hash.ID),
+				ID:   b.ids.insertID(hash.ID),
 			})
-		}
-		if *hash.ID.Domain == ch.Metron {
 		}
 
 		if hash.ID == (ch.ID{}) {
 			return ch.Metrics{}, fmt.Errorf("Empty ID detected: %v", hash)
 		}
 	}
+	b.ids.SortIndex()
 
-	hashCompact := func(existing, target RuntimeHash) bool {
-		return hashCmp(existing, target) == 0
+	hashCompact := func(existing, target RuntimeHash2) bool {
+		return b.hashCmp(existing, target) == 0
 	}
 	// sort for lookup
-	slices.SortFunc(b.AHashes, hashCmp)
-	slices.SortFunc(b.DHashes, hashCmp)
-	slices.SortFunc(b.PHashes, hashCmp)
+	slices.SortFunc(b.AHashes, b.hashCmp)
+	slices.SortFunc(b.DHashes, b.hashCmp)
+	slices.SortFunc(b.PHashes, b.hashCmp)
 	// remove duplicates
 	b.AHashes = slices.CompactFunc(b.AHashes, hashCompact)
 	b.DHashes = slices.CompactFunc(b.DHashes, hashCompact)
 	b.PHashes = slices.CompactFunc(b.PHashes, hashCompact)
-	b.ids.sort()
 
 	count := ch.Metrics{
 		Hashes: make(map[ch.Metric]int, 6),
 	}
-	var rhash RuntimeHash
+	var rhash RuntimeHash2
 	for _, rhash = range b.AHashes {
-		count.Hashes[ch.Metric{Source: rhash.ID.Domain, Kind: goimagehash.AHash}] += 1
+		count.Hashes[ch.Metric{Source: b.ids.GetID(rhash.ID).Domain, Kind: goimagehash.AHash}] += 1
 	}
 	for _, rhash = range b.DHashes {
-		count.Hashes[ch.Metric{Source: rhash.ID.Domain, Kind: goimagehash.DHash}] += 1
+		count.Hashes[ch.Metric{Source: b.ids.GetID(rhash.ID).Domain, Kind: goimagehash.DHash}] += 1
 	}
 	for _, rhash = range b.PHashes {
-		count.Hashes[ch.Metric{Source: rhash.ID.Domain, Kind: goimagehash.PHash}] += 1
+		count.Hashes[ch.Metric{Source: b.ids.GetID(rhash.ID).Domain, Kind: goimagehash.PHash}] += 1
 	}
 	return count, nil
 }
 
-func hashCmp(existing, target RuntimeHash) int {
+func (b *BasicMapStorage) hashCmp(existing, target RuntimeHash2) int {
+	existingID := b.ids.GetID(existing.ID).CHID()
 	return cmp.Or(
 		cmp.Compare(existing.Hash, target.Hash),
-		existing.ID.Compare(*target.ID),
+		existingID.Compare(b.ids.GetID(target.ID).CHID()),
 	)
 }
 
-func appendHashes(kind goimagehash.Kind, rhashes []RuntimeHash, savedHashes *ch.SavedHashes) {
-	var rhash RuntimeHash
+func appendHashes(kind goimagehash.Kind, rhashes []RuntimeHash2, ids IDMap, savedHashes *ch.SavedHashes) {
+	var rhash RuntimeHash2
 	for _, rhash = range rhashes {
 		savedHashes.Hashes = append(savedHashes.Hashes, ch.SavedHash{
 			Hash: ch.Hash{
 				Hash: rhash.Hash,
 				Kind: kind,
 			},
-			ID: *rhash.ID,
+			ID: ids.GetID(rhash.ID).CHID(),
 		})
 	}
 }
@@ -517,16 +510,16 @@ func (b *BasicMapStorage) EncodeHashes() (*ch.SavedHashes, error) {
 	savedHashes := ch.SavedHashes{
 		Hashes: make([]ch.SavedHash, 0, len(b.AHashes)+len(b.DHashes)+len(b.PHashes)),
 	}
-	appendHashes(goimagehash.AHash, b.AHashes, &savedHashes)
-	appendHashes(goimagehash.DHash, b.DHashes, &savedHashes)
-	appendHashes(goimagehash.PHash, b.PHashes, &savedHashes)
+	appendHashes(goimagehash.AHash, b.AHashes, b.ids, &savedHashes)
+	appendHashes(goimagehash.DHash, b.DHashes, b.ids, &savedHashes)
+	appendHashes(goimagehash.PHash, b.PHashes, b.ids, &savedHashes)
 
 	// Only keep groups len>1 as they are mapped in SavedHashes.Hashes
-	for _, ids := range b.ids.ids {
-		if len(*ids.idList) > 1 {
-			idl := make([]ch.ID, 0, len(*ids.idList))
-			for _, id := range *ids.idList {
-				idl = append(idl, *id)
+	for _, ids := range b.ids.EquivalentIDs {
+		if len(ids) > 1 {
+			idl := make([]ch.ID, 0, len(ids))
+			for _, rid := range ids {
+				idl = append(idl, b.ids.GetID(rid).CHID())
 			}
 
 			savedHashes.IDs = append(savedHashes.IDs, idl)
@@ -545,19 +538,22 @@ func (b *BasicMapStorage) AssociateIDs(newids []ch.NewIDs) error {
 func (b *BasicMapStorage) GetIDs(id ch.ID) ch.IDList {
 	b.hashMutex.RLock()
 	defer b.hashMutex.RUnlock()
-	ids := b.ids.GetIDs(&id)
-	return ch.ToIDList(ids)
+	rid, ok := b.ids.FindID(id)
+	if !ok {
+		return ch.IDList{}
+	}
+	return ch.ToIDList(b.ids.GetAllIDs(rid))
 }
 
 func NewBasicMapStorage() (ch.HashStorage, error) {
 	storage := &BasicMapStorage{
 		hashMutex: &sync.RWMutex{},
 		ids: IDMap{
-			ids: []IDs{},
+			ids: []ID{},
 		},
-		AHashes: []RuntimeHash{},
-		DHashes: []RuntimeHash{},
-		PHashes: []RuntimeHash{},
+		AHashes: []RuntimeHash2{},
+		DHashes: []RuntimeHash2{},
+		PHashes: []RuntimeHash2{},
 	}
 	return storage, nil
 }

@@ -73,7 +73,7 @@ func (v *VPTree) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Res
 				matches = append(matches, ch.Result{
 					Hash:          storedHash.Hash,
 					ID:            storedHash.ID,
-					Distance:      0,
+					Distance:      int(result.Dist),
 					EquivalentIDs: *v.ids[storedHash.ID],
 				})
 			}
@@ -82,7 +82,7 @@ func (v *VPTree) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Res
 	if exactOnly && len(exactMatches) > 0 {
 		return exactMatches, nil
 	}
-	exactMatches = append(exactMatches, matches...)
+	matches = append(matches, exactMatches...)
 	return matches, nil
 }
 
@@ -123,13 +123,13 @@ func (v *VPTree) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error) {
 			Source: savedHash.ID.Domain,
 			Kind:   savedHash.Hash.Kind,
 		}] += 1
-		if savedHash.Hash.Kind == goimagehash.AHash {
+
+		switch savedHash.Hash.Kind {
+		case goimagehash.AHash:
 			v.aHashes = append(v.aHashes, &VPHash{savedHash})
-		}
-		if savedHash.Hash.Kind == goimagehash.DHash {
+		case goimagehash.DHash:
 			v.dHashes = append(v.dHashes, &VPHash{savedHash})
-		}
-		if savedHash.Hash.Kind == goimagehash.PHash {
+		case goimagehash.PHash:
 			v.pHashes = append(v.pHashes, &VPHash{savedHash})
 		}
 
@@ -154,6 +154,9 @@ func (v *VPTree) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error) {
 	if err != nil {
 		return ch.Metrics{}, err
 	}
+	v.aHashes = nil
+	v.dHashes = nil
+	v.pHashes = nil
 	return m, nil
 }
 
@@ -179,6 +182,7 @@ func NewVPStorage() (ch.HashStorage, error) {
 		aHashes: []vptree.Comparable{},
 		dHashes: []vptree.Comparable{},
 		pHashes: []vptree.Comparable{},
+		ids:     make(map[ch.ID]*[]ch.ID),
 	}
 	v.aTree, err = vptree.New(v.aHashes, 3, nil)
 	if err != nil {

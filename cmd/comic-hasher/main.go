@@ -40,7 +40,6 @@ import (
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"gitea.narnian.us/lordwelch/comic-hasher/metron"
 	"gitea.narnian.us/lordwelch/comic-hasher/storage"
-	"gitea.narnian.us/lordwelch/goimagehash"
 )
 
 var bufPool = &sync.Pool{
@@ -69,7 +68,7 @@ func main() {
 		}
 	}
 	opts := Opts{
-		format: ch.Msgpack, storageType: Map, version: Version,
+		format: ch.Msgpack, storageType: BasicMap, version: Version,
 		cv: CVOpts{
 			images: cv.Images{"thumb": {}},
 		},
@@ -128,8 +127,8 @@ func signalHandler(s *Server) {
 
 func initializeStorage(opts Opts) (ch.HashStorage, error) {
 	switch opts.storageType {
-	case Map:
-		return storage.NewMapStorage()
+	// case Map:
+	// 	return storage.NewMapStorage()
 	case BasicMap:
 		return storage.NewBasicMapStorage()
 	case Sqlite:
@@ -449,29 +448,6 @@ func startServer(opts Opts) {
 				finishedDownloadQueue,
 			)
 			metron.DownloadCovers(server.Context, metronDownloader)
-			time.Sleep(time.Second * 3)
-			fmt.Println()
-			fmt.Println()
-			fmt.Println()
-			fmt.Println()
-			fmt.Println()
-			fmt.Println()
-			fmt.Println()
-			fmt.Println()
-			fmt.Println("FUCK POINTERS")
-			for _, existingHash := range server.storage.(*storage.BasicMapStorage).PHashes {
-				if *existingHash.ID.Domain == ch.ComicVine {
-					continue
-				}
-				fmt.Printf("%#v\n", ch.SavedHash{
-					Hash: ch.Hash{
-						Hash: existingHash.Hash,
-						Kind: goimagehash.PHash,
-					},
-					ID: *existingHash.ID,
-				})
-
-			}
 			for {
 				select {
 				case <-time.After(1 * time.Hour):

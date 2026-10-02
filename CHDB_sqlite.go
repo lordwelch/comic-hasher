@@ -1,4 +1,4 @@
-//go:build !gokrazy
+//go:build !gokrazy && never
 
 package ch
 
@@ -154,3 +154,5 @@ func (s CHDBSqlite) AddURL(url string) {
 func (s CHDBSqlite) Close() error {
 	return s.sql.Close()
 }
+
+var _ CHDB = CHDBSqlite{}

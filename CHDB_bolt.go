@@ -305,3 +305,5 @@ func (c CHDBBolt) GetSourceName(sourceID byte) string {
 	})
 	return sourceName
 }
+
+var _ CHDB = CHDBBolt{}
