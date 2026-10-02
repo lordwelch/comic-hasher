@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"math/bits"
 
-	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	"gitea.narnian.us/lordwelch/goimagehash"
 	"gonum.org/v1/gonum/spatial/vptree"
 )

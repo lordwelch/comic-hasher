@@ -27,14 +27,12 @@ import (
 	"github.com/disintegration/imaging"
 	"github.com/kr/pretty"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/vp8"
 	_ "golang.org/x/image/vp8l"
 	_ "golang.org/x/image/webp"
 
-	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	"gitea.narnian.us/lordwelch/comic-hasher/cv"
 	"gitea.narnian.us/lordwelch/comic-hasher/download"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
@@ -113,16 +111,15 @@ func main() {
 	startServer(opts)
 }
 
-func signalHandler(s *Server) {
+func signalHandler(s *ch.Server, signalQueue <-chan os.Signal) {
 	select {
-	case sig := <-s.signalQueue:
+	case sig := <-signalQueue:
 		log.Log(log.Verbose, "Signal: %v\n", sig)
-		s.cancel()
 	case <-s.Context.Done():
 		log.Log(log.Standard, "Recieved quit: Attempting to shutdown gracefully")
 	}
-	err := s.httpServer.Shutdown(context.TODO())
-	log.Println(log.Fatal, "Err:", err)
+	err := s.Shutdown()
+	log.Println(log.Fatal, "Shutting down server Err:", err)
 }
 
 func initializeStorage(opts Opts) (ch.HashStorage, error) {
@@ -247,13 +244,13 @@ func saveHashes(opts Opts, hashes *ch.SavedHashes) error {
 	return nil
 }
 
-func downloadProcessor(chdb ch.CHDB, opts Opts, finishedDownloads <-chan download.Download, server *Server) {
+func downloadProcessor(chdb ch.CHDB, opts Opts, finishedDownloads <-chan download.Download, server *ch.Server) {
 	defer func() {
 		log.Println(log.Verbose, "Download Processor completed")
-		close(server.hashingQueue)
+		close(server.HashingQueue)
 	}()
 	for dl := range finishedDownloads {
-		if opts.onlyHashNewIDs && len(server.storage.GetIDs(dl.IssueID)) > 0 {
+		if opts.onlyHashNewIDs && len(server.Storage.GetIDs(dl.IssueID)) > 0 {
 			log.Println(log.Standard, "Skipping already hashed ID", dl.IssueID)
 			continue
 		}
@@ -296,7 +293,7 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, finishedDownloads <-chan downloa
 			ID:      dl.IssueID,
 			NewOnly: opts.onlyHashNewIDs,
 		}
-		server.hashingQueue <- im
+		server.HashingQueue <- im
 	}
 }
 
@@ -322,69 +319,39 @@ func startServer(opts Opts) {
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
 	}
-
-	mux := &CHMux{opts.version, &http.ServeMux{}}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	server := Server{
-		Context:      ctx,
-		cancel:       cancel,
-		signalQueue:  make(chan os.Signal, 1),
-		readerQueue:  make(chan string, 1),
-		hashingQueue: make(chan ch.Im, 1),
-		mappingQueue: make(chan ch.ImageHash, 1),
-		mux:          mux,
-		httpServer: &http.Server{
-			Addr:           opts.addr,
-			Handler:        mux,
-			ReadTimeout:    10 * time.Second,
-			WriteTimeout:   10 * time.Second,
-			MaxHeaderBytes: 1 << 20,
-		},
-		onlyHashNewIDs: opts.onlyHashNewIDs,
-		version:        opts.version,
-		reg:            prometheus.NewRegistry(),
-	}
-	Notify(server.signalQueue)
+	server := ch.NewServer(context.Background(), opts.version, opts.addr, opts.onlyHashNewIDs)
+	signalQueue := make(chan os.Signal, 1)
+	Notify(signalQueue)
 	var err error
 	log.Println(log.Verbose, "Init storage")
-	server.storage, err = initializeStorage(opts)
+	server.Storage, err = initializeStorage(opts)
 	if err != nil {
 		panic(err)
 	}
 
-	log.Println(log.Verbose, "Init handlers")
-	server.setupAppHandlers()
-
 	log.Println(log.Verbose, "Init 10 readers")
 	rwg := sync.WaitGroup{}
 	for i := range 10 {
-		rwg.Go(func() { server.reader(i) })
+		rwg.Go(func() { server.Reader(i) })
 	}
 
 	log.Println(log.Verbose, "Init 10 hashers")
 	hwg := sync.WaitGroup{}
 	for i := range 10 {
-		hwg.Go(func() { server.hasher(i) })
+		hwg.Go(func() { server.Hasher(i) })
 	}
 
 	log.Println(log.Verbose, "Init 1 mapper")
 	mwg := sync.WaitGroup{}
-	mwg.Go(func() { server.mapper(1) })
+	mwg.Go(func() { server.Mapper(1) })
 
 	// DecodeHashes would normally need a write lock
 	// nothing else has been started yet so we don't need one
 	loadedHashes := loadHashes(opts)
-	metrics, err := server.storage.DecodeHashes(loadedHashes)
-	if err != nil {
-		panic(err)
-	}
-	// This is loaded here so that the log doesn't hang for a few seconds before the first line
-	server.hashServer = NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format)
-	for m, count := range metrics.Hashes {
-		server.hash_count.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
-	}
+	server.DecodeHashes(loadedHashes)
 	log.Println(log.Standard, "Loaded hashes")
+	// This is loaded here so that the log doesn't hang for a few seconds before the first line
+	server.HashServer = ch.NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format)
 	loadedHashes = nil //nolint:ineffassign
 
 	// TODO: this may cause issues if listen below fails and there are images being hashed
@@ -410,7 +377,7 @@ func startServer(opts Opts) {
 				opts.version,
 				bufPool,
 				opts.onlyHashNewIDs,
-				server.storage.GetIDs,
+				server.Storage.GetIDs,
 				chdb,
 				filepath.Join(opts.path, cv.WorkDirectory),
 				opts.cv.APIKey,
@@ -439,7 +406,7 @@ func startServer(opts Opts) {
 				opts.version,
 				bufPool,
 				opts.onlyHashNewIDs,
-				server.storage.GetIDs,
+				server.Storage.GetIDs,
 				chdb,
 				filepath.Join(opts.path, metron.WorkDirectory),
 				opts.metron.APIKey,
@@ -465,7 +432,7 @@ func startServer(opts Opts) {
 			for {
 				select {
 				case <-time.After(opts.hashSaveInterval):
-					err := server.hashServer.writeHashes(server.storage)
+					err := server.HashServer.WriteHashes(server.Storage)
 					if err != nil {
 						log.Log(log.Fatal, "Failed to save the current hashes: %v", err)
 					}
@@ -476,7 +443,7 @@ func startServer(opts Opts) {
 		})
 	}
 
-	go signalHandler(&server)
+	go signalHandler(&server, signalQueue)
 	if opts.memprofile != "" {
 		f, err := os.Create(opts.memprofile)
 		if err != nil {
@@ -498,17 +465,16 @@ func startServer(opts Opts) {
 
 	}
 
-	log.Println(log.Required, "Listening on ", server.httpServer.Addr)
-	err = server.httpServer.ListenAndServe()
+	log.Println(log.Required, "Listening on ", server.HttpServer.Addr)
+	err = server.ListenAndServe()
 	if err != nil {
 		log.Println(log.Fatal, err)
-		server.cancel()
 	}
 	log.Println(log.Required, "Shutting down comic-hasher")
-	close(server.readerQueue)
+	close(server.ReaderQueue)
 	log.Println(log.Standard, "waiting on readers")
 	rwg.Wait()
-	for dw := range server.readerQueue {
+	for dw := range server.ReaderQueue {
 		log.Println(log.Verbose, "Skipping read", dw)
 	}
 
@@ -526,22 +492,22 @@ func startServer(opts Opts) {
 	// close(server.hashingQueue) // Closed by downloadProcessor
 	log.Println(log.Standard, "waiting on hashers")
 	hwg.Wait()
-	for dw := range server.hashingQueue {
+	for dw := range server.HashingQueue {
 		log.Println(log.Verbose, "Skipping hashing", dw.ID)
 	}
 
-	close(server.mappingQueue)
+	close(server.MappingQueue)
 	log.Println(log.Standard, "waiting on mapper")
 	mwg.Wait()
-	for dw := range server.mappingQueue {
+	for dw := range server.MappingQueue {
 		log.Println(log.Verbose, "Skipping mapping", dw.ID)
 	}
 	log.Println(log.Standard, "waiting on hash encoder")
 	hashEncoders.Wait()
 	log.Println(log.Required, "If you press Ctrl+C after this point the saved hashes will be corrupted")
-	signal.Stop(server.signalQueue)
-	close(server.signalQueue)
-	for dw := range server.signalQueue {
+	signal.Stop(signalQueue)
+	close(signalQueue)
+	for dw := range signalQueue {
 		log.Println(log.Verbose, "Skipping", dw)
 	}
 
@@ -549,7 +515,7 @@ func startServer(opts Opts) {
 
 	// server.EncodeHashes would normally need a read lock
 	// the server has been stopped so it's not needed here
-	hashes, err := server.storage.EncodeHashes()
+	hashes, err := server.Storage.EncodeHashes()
 	if err != nil {
 		log.Println(log.Fatal, "Failed to save hashes:", err)
 		os.Exit(1)

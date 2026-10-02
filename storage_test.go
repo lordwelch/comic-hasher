@@ -1,16 +1,20 @@
-package ch_test
+package main_test
 
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto"
 	"errors"
+	"fmt"
 	"io"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	gcmp "cmp"
 
-	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"gitea.narnian.us/lordwelch/comic-hasher/storage"
 	"gitea.narnian.us/lordwelch/goimagehash"
@@ -267,6 +271,49 @@ func TestSqliteStorage(t *testing.T) {
 	t.Run("GetMatchesNearDHash", func(t *testing.T) { GetMatchesNearDHash(t, hs) })
 	t.Run("GetMatchesMultipleHashes", func(t *testing.T) { GetMatchesMultipleHashes(t, hs) })
 	t.Run("GetIDs", func(t *testing.T) { GetIDs(t, hs) })
+}
+
+func TestHashServer(t *testing.T) {
+	hs, err := storage.NewBasicMapStorage()
+	if err != nil {
+		t.Fatal("Failed to create basic storage:", err)
+	}
+	SeedHashes(hs)
+
+	HashServer := ch.NewHashServer(filepath.Join(t.TempDir(), "hashes.gz"), ch.Msgpack)
+	req := httptest.NewRequest("GET", "/", nil)
+	err = HashServer.WriteHashes(hs)
+	if err != nil {
+		t.Fatal("failed to write hashes:", err)
+	}
+	recorder := httptest.NewRecorder()
+	HashServer.DownloadHashes(recorder, req)
+	gz, err := gzip.NewReader(recorder.Body)
+	if err != nil {
+		t.Fatal("HashServer did not send a gzipped response:", err)
+	}
+	decompressedHashes, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatal("Failed to read response:", err)
+	}
+	_, err = ch.DecodeHashes(ch.Msgpack, decompressedHashes)
+	if err != nil {
+		t.Fatal("failed to validate hashes:", err)
+	}
+	var md5 []byte
+	for _, digest := range strings.Split(recorder.Header().Get("Repr-Digest"), ",") {
+		kind, b64 := log.Partition(digest, "=:")
+		b64 = b64[:len(b64)-1]
+		if kind != "MD5" {
+			continue
+		}
+		md5 = crypto.MD5.New().Sum(recorder.Body.Bytes())
+
+	}
+	expected := "d41d8cd98f00b204e9800998ecf8427e"
+	if diff := cmp.Diff(expected, fmt.Sprintf("%x", md5), cmpOpts...); diff != "" {
+		t.Errorf("GetMatches() mismatch (-want +got):\n%s", diff)
+	}
 }
 
 func SeedEmbeddedHashes(hs ch.HashStorage) {
