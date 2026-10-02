@@ -411,7 +411,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		ahash     uint64
 		dhash     uint64
 		phash     uint64
-		max       int
+		max       int = 8
 		err       error
 		hashes    []ch.Hash
 		hash_str  string
@@ -454,7 +454,9 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, result{Msg: fmt.Sprintf("Invalid Max: %s", maxStr)})
 		return
 	} else {
-		max = tmpMax
+		if maxStr != "" {
+			max = tmpMax
+		}
 	}
 
 	hash_str = strings.TrimRight(hash_str, "_")
