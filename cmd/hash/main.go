@@ -13,7 +13,7 @@ import (
 
 	_ "golang.org/x/image/webp"
 
-	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	"gitea.narnian.us/lordwelch/goimagehash"
 )
 

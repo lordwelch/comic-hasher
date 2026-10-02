@@ -1,4 +1,4 @@
-package ch_test
+package main_test
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 
 	gcmp "cmp"
 
-	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"gitea.narnian.us/lordwelch/comic-hasher/storage"
 	"gitea.narnian.us/lordwelch/goimagehash"

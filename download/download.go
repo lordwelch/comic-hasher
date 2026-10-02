@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 )
 

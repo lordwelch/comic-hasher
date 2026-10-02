@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	dl "gitea.narnian.us/lordwelch/comic-hasher/download"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"github.com/go-json-experiment/json"
