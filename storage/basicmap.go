@@ -243,15 +243,8 @@ func (b *BasicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, search
 		}
 	}
 
-	matchingHashes := make([]ch.Result, 0, len(otherHashes)) // For some reason copying to this slice is faster than not........
-	for i := range otherHashes {
-		matchingHashes = append(matchingHashes, ch.Result{
-			Hash:          otherHashes[i].Hash,
-			ID:            otherHashes[i].ID,
-			Distance:      otherHashes[i].Distance,
-			EquivalentIDs: otherHashes[i].EquivalentIDs,
-		})
-	}
+	matchingHashes := make([]ch.Result, len(otherHashes)) // For some reason copying to this slice is faster than not........
+	copy(matchingHashes, otherHashes)
 	return matchingHashes
 }
 
@@ -381,7 +374,7 @@ func (b *BasicMapStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 }
 
 // DecodeHashes must already have a lock
-func (b *BasicMapStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error) {
+func (b *BasicMapStorage) DecodeHashes(hashes *ch.SavedHashesV2) (ch.Metrics, error) {
 	if hashes == nil {
 		return ch.Metrics{}, nil
 	}
@@ -404,7 +397,7 @@ func (b *BasicMapStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, erro
 		}
 	}
 
-	slices.SortFunc(hashes.Hashes, func(existing, target ch.SavedHash) int {
+	slices.SortFunc(hashes.Hashes, func(existing, target ch.SavedHashV2) int {
 		return cmp.Or(
 			cmp.Compare(*existing.ID.Domain, *target.ID.Domain), // Sorted for id insertion efficiency
 			cmp.Compare(existing.ID.ID, target.ID.ID),           // Sorted for id insertion efficiency
@@ -430,7 +423,7 @@ func (b *BasicMapStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, erro
 	b.AHashes = make([]RuntimeHash2, 0, aHashCount)
 	b.DHashes = make([]RuntimeHash2, 0, dHashCount)
 	b.PHashes = make([]RuntimeHash2, 0, pHashCount)
-	var hash ch.SavedHash
+	var hash ch.SavedHashV2
 	for _, hash = range hashes.Hashes {
 		// TODO: Investigate better options to load in the ID
 		if hash.Hash.Kind == goimagehash.AHash {
@@ -492,10 +485,10 @@ func (b *BasicMapStorage) hashCmp(existing, target RuntimeHash2) int {
 	)
 }
 
-func appendHashes(kind goimagehash.Kind, rhashes []RuntimeHash2, ids IDMap, savedHashes *ch.SavedHashes) {
+func appendHashes(kind goimagehash.Kind, rhashes []RuntimeHash2, ids IDMap, savedHashes *ch.SavedHashesV2) {
 	var rhash RuntimeHash2
 	for _, rhash = range rhashes {
-		savedHashes.Hashes = append(savedHashes.Hashes, ch.SavedHash{
+		savedHashes.Hashes = append(savedHashes.Hashes, ch.SavedHashV2{
 			Hash: ch.Hash{
 				Hash: rhash.Hash,
 				Kind: kind,
@@ -506,9 +499,9 @@ func appendHashes(kind goimagehash.Kind, rhashes []RuntimeHash2, ids IDMap, save
 }
 
 // EncodeHashes should already have a lock
-func (b *BasicMapStorage) EncodeHashes() (*ch.SavedHashes, error) {
-	savedHashes := ch.SavedHashes{
-		Hashes: make([]ch.SavedHash, 0, len(b.AHashes)+len(b.DHashes)+len(b.PHashes)),
+func (b *BasicMapStorage) EncodeHashes() (*ch.SavedHashesV2, error) {
+	savedHashes := ch.SavedHashesV2{
+		Hashes: make([]ch.SavedHashV2, 0, len(b.AHashes)+len(b.DHashes)+len(b.PHashes)),
 	}
 	appendHashes(goimagehash.AHash, b.AHashes, b.ids, &savedHashes)
 	appendHashes(goimagehash.DHash, b.DHashes, b.ids, &savedHashes)

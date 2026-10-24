@@ -120,7 +120,7 @@ func (m *MapStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 	return metrics
 }
 
-func (m *MapStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error) {
+func (m *MapStorage) DecodeHashes(hashes *ch.SavedHashesV2) (ch.Metrics, error) {
 	if hashes == nil {
 		return ch.Metrics{}, nil
 	}

@@ -17,7 +17,6 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// Logger for decoding and encoding saved hashes
 var DELogger = log.NewLogger("Decode/Encode")
 
 type Format int
@@ -63,16 +62,16 @@ type Metrics struct {
 	// IDs map[*Source]int
 }
 
-// SavedHashes The IDs and Hashes fields have no direct correlation
+// SavedHashesV2 The IDs and Hashes fields have no direct correlation
 // It is perfectly valid to have an empty IDs or an empty Hashes field
 // If two covers have identical hashes then they should be two entries in Hashes not a set in IDs with two IDs from the same source
-type SavedHashes struct {
+type SavedHashesV2 struct {
 	Version int
-	IDs     [][]ID      // List of sets of IDs that are the same across Sources, should generally only have one Source per set
-	Hashes  []SavedHash // List of all known hashes, hashes will be duplicated for each source
+	IDs     [][]ID        // List of sets of IDs that are the same across Sources, should generally only have one Source per set
+	Hashes  []SavedHashV2 // List of all known hashes, hashes will be duplicated for each source
 }
 
-type SavedHash struct {
+type SavedHashV2 struct {
 	ID   ID
 	Hash Hash
 }
@@ -80,7 +79,7 @@ type SavedHash struct {
 type (
 	Encoder        func(any) ([]byte, error)
 	Decoder        func([]byte, any) error
-	versionDecoder func(Decoder, []byte) (*SavedHashes, error)
+	versionDecoder func(Decoder, []byte) (*SavedHashesV2, error)
 )
 
 var (
@@ -104,8 +103,8 @@ func (f *Format) Set(s string) error {
 	return nil
 }
 
-func (h *SavedHash) Clone() SavedHash {
-	return SavedHash{
+func (h *SavedHashV2) Clone() SavedHashV2 {
+	return SavedHashV2{
 		Hash: Hash{
 			Hash: h.Hash.Hash,
 			Kind: h.Hash.Kind,
@@ -117,8 +116,8 @@ func (h *SavedHash) Clone() SavedHash {
 	}
 }
 
-func (s *SavedHashes) InsertHash(hash SavedHash) {
-	index, itemFound := slices.BinarySearchFunc(s.Hashes, hash, func(existing SavedHash, target SavedHash) int {
+func (s *SavedHashesV2) InsertHash(hash SavedHashV2) {
+	index, itemFound := slices.BinarySearchFunc(s.Hashes, hash, func(existing SavedHashV2, target SavedHashV2) int {
 		return cmp.Or(
 			cmp.Compare(existing.Hash.Hash, target.Hash.Hash),
 			cmp.Compare(existing.Hash.Kind, target.Hash.Kind),
@@ -131,17 +130,17 @@ func (s *SavedHashes) InsertHash(hash SavedHash) {
 	}
 }
 
-func ConvertHashesV0(oldHashes OldSavedHashes) *SavedHashes {
-	t := SavedHashes{}
+func ConvertHashesV0(oldHashes OldSavedHashes) *SavedHashesV2 {
+	t := SavedHashesV2{}
 	idcount := 0
 	for _, ids := range oldHashes {
 		idcount += len(ids)
 	}
-	t.Hashes = make([]SavedHash, 0, idcount)
+	t.Hashes = make([]SavedHashV2, 0, idcount)
 	for domain, sourceHashes := range oldHashes {
 		for id, hashes := range sourceHashes {
 			for hashType, hash := range hashes {
-				t.Hashes = append(t.Hashes, SavedHash{
+				t.Hashes = append(t.Hashes, SavedHashV2{
 					Hash: Hash{
 						Kind: goimagehash.Kind(hashType + 1),
 						Hash: hash,
@@ -156,18 +155,18 @@ func ConvertHashesV0(oldHashes OldSavedHashes) *SavedHashes {
 	return &t
 }
 
-func ConvertHashesV1(oldHashes SavedHashesv1) *SavedHashes {
-	t := SavedHashes{}
+func ConvertHashesV1(oldHashes SavedHashesv1) *SavedHashesV2 {
+	t := SavedHashesV2{}
 	hashCount := 0
 	for _, hashes := range oldHashes.Hashes {
 		hashCount += len(hashes)
 	}
 	t.IDs = oldHashes.IDs
-	t.Hashes = make([]SavedHash, 0, hashCount)
+	t.Hashes = make([]SavedHashV2, 0, hashCount)
 	for hashType, sourceHashes := range oldHashes.Hashes {
 		for hash, index := range sourceHashes {
 			for _, id := range oldHashes.IDs[index] {
-				t.Hashes = append(t.Hashes, SavedHash{
+				t.Hashes = append(t.Hashes, SavedHashV2{
 					ID: ID{NewSource(*id.Domain), id.ID},
 					Hash: Hash{
 						Kind: goimagehash.Kind(hashType + 1),
@@ -182,7 +181,7 @@ func ConvertHashesV1(oldHashes SavedHashesv1) *SavedHashes {
 	return &t
 }
 
-func DecodeHashesV0(decode Decoder, hashes []byte) (*SavedHashes, error) {
+func DecodeHashesV0(decode Decoder, hashes []byte) (*SavedHashesV2, error) {
 	DELogger.Println(log.Debug, "Attempting to decode v0 hashes")
 	loadedHashes := OldSavedHashes{}
 	err := decode(hashes, &loadedHashes)
@@ -196,7 +195,7 @@ func DecodeHashesV0(decode Decoder, hashes []byte) (*SavedHashes, error) {
 	return ConvertHashesV0(loadedHashes), nil
 }
 
-func DecodeHashesV1(decode Decoder, hashes []byte) (*SavedHashes, error) {
+func DecodeHashesV1(decode Decoder, hashes []byte) (*SavedHashesV2, error) {
 	DELogger.Println(log.Debug, "Attempting to decode v1 hashes")
 	loadedHashes := SavedHashesv1{}
 	err := decode(hashes, &loadedHashes)
@@ -214,9 +213,9 @@ func DecodeHashesV1(decode Decoder, hashes []byte) (*SavedHashes, error) {
 	return ConvertHashesV1(loadedHashes), nil
 }
 
-func DecodeHashesV2(decode Decoder, hashes []byte) (*SavedHashes, error) {
+func DecodeHashesV2(decode Decoder, hashes []byte) (*SavedHashesV2, error) {
 	DELogger.Println(log.Debug, "Attempting to decode v2 hashes")
-	loadedHashes := SavedHashes{}
+	loadedHashes := SavedHashesV2{}
 	err := decode(hashes, &loadedHashes)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDecodeFail, err)
@@ -249,7 +248,7 @@ func getSavedHashesVersion(decode Decoder, hashes []byte) (int, error) {
 	return -1, nil
 }
 
-func DecodeHashes(format Format, hashes []byte) (*SavedHashes, error) {
+func DecodeHashes(format Format, hashes []byte) (*SavedHashesV2, error) {
 	if len(hashes) < 18 { // keys in ch.SavedHashes are 18 characters even with no values so if it's less than that we don't have anything to load
 		return nil, ErrNoHashes
 	}
@@ -291,7 +290,7 @@ func DecodeHashes(format Format, hashes []byte) (*SavedHashes, error) {
 	return nil, ErrNoHashes
 }
 
-func EncodeHashes(hashes *SavedHashes, format Format) ([]byte, error) {
+func EncodeHashes(hashes *SavedHashesV2, format Format) ([]byte, error) {
 	var encoder Encoder
 	switch format {
 	case Msgpack:

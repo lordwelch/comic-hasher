@@ -1,3 +1,5 @@
+//go:build !386 && !arm
+
 package ch
 
 import (
@@ -50,7 +52,7 @@ import (
 var logger = log.NewLogger("server")
 
 type Server struct {
-	HttpServer     *http.Server
+	HTTPServer     *http.Server
 	Mux            *CHMux
 	BaseURL        *url.URL
 	Storage        HashStorage
@@ -63,16 +65,16 @@ type Server struct {
 	OnlyHashNewIDs bool
 	Version        string
 
-	reg                   *prometheus.Registry
-	match_cover_total     prometheus.Counter
-	match_cover_duration  *prometheus.HistogramVec
-	hash_count            *prometheus.CounterVec
-	last_request_duration prometheus.Gauge
+	reg                 *prometheus.Registry
+	matchCoverTotal     prometheus.Counter
+	matchCoverDuration  *prometheus.HistogramVec
+	hashCount           *prometheus.CounterVec
+	lastRequestDuration prometheus.Gauge
 }
 
 func NewServer(ctx context.Context, Version string, addr string, onlyHashNewIDs bool) Server {
 	mux := &CHMux{Version: Version, ServeMux: &http.ServeMux{}}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 
 	s := Server{
 		Context:      ctx,
@@ -81,7 +83,7 @@ func NewServer(ctx context.Context, Version string, addr string, onlyHashNewIDs 
 		HashingQueue: make(chan Im, 1),
 		MappingQueue: make(chan ImageHash, 1),
 		Mux:          mux,
-		HttpServer: &http.Server{
+		HTTPServer: &http.Server{
 			Addr:           addr,
 			Handler:        mux,
 			ReadTimeout:    10 * time.Second,
@@ -105,7 +107,7 @@ type HashServer struct {
 	reprHeaderCache   string
 	format            Format
 	digesters         map[string]hash.Hash
-	hashes_downloaded prometheus.Counter
+	hashesDownloaded  prometheus.Counter
 }
 
 type CHMux struct {
@@ -120,11 +122,11 @@ func (CHM *CHMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Shutdown() error {
 	s.cancel()
-	return s.HttpServer.Shutdown(context.TODO())
+	return s.HTTPServer.Shutdown(context.TODO())
 }
 
 func (s *Server) ListenAndServe() error {
-	err := s.HttpServer.ListenAndServe()
+	err := s.HTTPServer.ListenAndServe()
 	if err != nil {
 		s.cancel()
 		return err
@@ -144,28 +146,28 @@ func (s *Server) setupAppHandlers() {
 	s.Mux.HandleFunc("/hashes", s.HashServer.DownloadHashes)
 	s.Mux.Handle("/metrics", promhttp.HandlerFor(s.reg, promhttp.HandlerOpts{}))
 	promauto.With(s.reg)
-	s.match_cover_total = promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
+	s.matchCoverTotal = promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
 		Name: "comic_hasher_match_cover_hash",
 		Help: "The total number of processed /match_cover_hash requests",
 	})
 
-	s.HashServer.hashes_downloaded = promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
+	s.HashServer.hashesDownloaded = promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
 		Name: "comic_hasher_hashes_download",
 		Help: "The total number of times the hash database has been downloaded: /hashes",
 	})
 
-	s.hash_count = promauto.With(s.reg).NewCounterVec(prometheus.CounterOpts{
+	s.hashCount = promauto.With(s.reg).NewCounterVec(prometheus.CounterOpts{
 		Name: "comic_hasher_hashes",
 		Help: "The total number of hashes",
 	}, []string{"kind", "source"})
-	s.match_cover_duration = promauto.With(s.reg).NewHistogramVec(
+	s.matchCoverDuration = promauto.With(s.reg).NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name: "comic_hasher_match_cover_hash_request_seconds",
 			Help: "Summary for the request duration of the /match_cover_hash",
 		},
 		[]string{"hashes"},
 	)
-	s.last_request_duration = promauto.With(s.reg).NewGauge(
+	s.lastRequestDuration = promauto.With(s.reg).NewGauge(
 		prometheus.GaugeOpts{
 			Name: "comic_hasher_match_cover_hash_last_request_seconds",
 			Help: "The request duration of the last /match_cover_hash request",
@@ -183,8 +185,8 @@ func (s *Server) setupAppHandlers() {
 func (h *HashServer) DownloadHashes(w http.ResponseWriter, r *http.Request) {
 	h.mut.RLock()
 	defer h.mut.RUnlock()
-	if h.hashes_downloaded != nil {
-		h.hashes_downloaded.Inc()
+	if h.hashesDownloaded != nil {
+		h.hashesDownloaded.Inc()
 	}
 	if r.Header.Get("Want-Digest") != "" {
 		w.Header().Set("Digest", h.digestHeader())
@@ -251,8 +253,8 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	if err != nil {
 		return err
 	}
-	tmp_file_path := h.hashes + ".tmp.gz"
-	f, err := os.Create(tmp_file_path)
+	tmpFilePath := h.hashes + ".tmp.gz"
+	f, err := os.Create(tmpFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashes+".tmp", err)
 	}
@@ -279,7 +281,7 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 		h.digests[name] = digest.Sum(nil)
 		digest.Reset() // may possibly keep some memory free...
 	}
-	err = os.Rename(tmp_file_path, h.hashes)
+	err = os.Rename(tmpFilePath, h.hashes)
 	if err != nil {
 		return fmt.Errorf("failed to update existing file: %w", err)
 	}
@@ -464,7 +466,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		max       int = 8
 		err       error
 		hashes    []Hash
-		hash_str  string
+		hashStr   string
 	)
 
 	if simple {
@@ -479,7 +481,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 	if ahash > 0 {
 		hashes = append(hashes, Hash{Hash: ahash, Kind: goimagehash.AHash})
-		hash_str += "ahash_"
+		hashStr += "ahash_"
 	}
 	if dhash, err = strconv.ParseUint(dhashStr, 16, 64); err != nil && dhashStr != "" {
 		logger.Log(log.Verbose, "could not parse dhash: %s", dhashStr)
@@ -488,7 +490,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 	if dhash > 0 {
 		hashes = append(hashes, Hash{Hash: dhash, Kind: goimagehash.DHash})
-		hash_str += "dhash_"
+		hashStr += "dhash_"
 	}
 	if phash, err = strconv.ParseUint(phashStr, 16, 64); err != nil && phashStr != "" {
 		logger.Log(log.Verbose, "could not parse phash: %s", phashStr)
@@ -497,7 +499,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 	if phash > 0 {
 		hashes = append(hashes, Hash{Hash: phash, Kind: goimagehash.PHash})
-		hash_str += "phash_"
+		hashStr += "phash_"
 	}
 	if tmpMax, err := strconv.Atoi(maxStr); err != nil && maxStr != "" {
 		logger.Log(log.Verbose, "Invalid Max: %s", maxStr)
@@ -509,7 +511,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	hash_str = strings.TrimRight(hash_str, "_")
+	hashStr = strings.TrimRight(hashStr, "_")
 
 	if max > 8 {
 		logger.Log(log.Verbose, "Max must be less than 9: %d", max)
@@ -517,12 +519,12 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	timer := prometheus.NewTimer(prometheus.ObserverFunc(func(v float64) {
-		s.match_cover_duration.WithLabelValues(hash_str).Observe(v)
-		s.last_request_duration.Set(v)
+		s.matchCoverDuration.WithLabelValues(hashStr).Observe(v)
+		s.lastRequestDuration.Set(v)
 	}))
 	defer timer.ObserveDuration()
 
-	s.match_cover_total.Inc()
+	s.matchCoverTotal.Inc()
 	matches, err := s.Storage.GetMatches(hashes, max, exactOnly)
 	cmpFunc := func(a Result, b Result) int {
 		return cmp.Or(
@@ -604,7 +606,7 @@ func (s *Server) Mapper(workerID int) {
 	defer logger.Println(log.Verbose2, "Mapper", workerID, "completed")
 	for hash := range s.MappingQueue {
 		for m, count := range s.Storage.MapHashes(hash).Hashes {
-			s.hash_count.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
+			s.hashCount.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
 		}
 	}
 }
@@ -673,13 +675,13 @@ func (s *Server) Reader(workerID int) {
 	}
 }
 
-func (s *Server) DecodeHashes(loadedHashes *SavedHashes) {
+func (s *Server) DecodeHashes(loadedHashes *SavedHashesV2) {
 	metrics, err := s.Storage.DecodeHashes(loadedHashes)
 	if err != nil {
 		panic(err)
 	}
 	for m, count := range metrics.Hashes {
-		s.hash_count.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
+		s.hashCount.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
 	}
 }
 
@@ -697,7 +699,7 @@ func (s *Server) HashLocalImages(coverPath string) {
 			select {
 			case <-s.Context.Done():
 				logger.Println(log.Verbose, "Recieved quit")
-				err = s.HttpServer.Shutdown(context.TODO())
+				err = s.HTTPServer.Shutdown(context.TODO())
 				return fmt.Errorf("recieved quit: %w", err)
 			default:
 			}

@@ -70,11 +70,11 @@ func (s *sqliteStorage) findPartialHashes(tl ch.TimeLog, statement *sql.Stmt, ma
 		return hashResults, err
 	}
 
-	results := map[ch.SavedHash][]ch.ID{}
+	results := map[ch.SavedHashV2][]ch.ID{}
 	for rows.Next() {
 		var (
 			tmpHash int64
-			sqlHash = ch.SavedHash{
+			sqlHash = ch.SavedHashV2{
 				Hash: ch.Hash{Kind: hash.Kind},
 			}
 			id ch.ID
@@ -269,7 +269,7 @@ func (s *sqliteStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 	return metrics
 }
 
-func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error) {
+func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashesV2) (ch.Metrics, error) {
 	// return ch.Metrics{}, nil
 	err := s.dropIndexes()
 	if err != nil {
@@ -333,8 +333,8 @@ func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error)
 	return m, nil
 }
 
-func (s *sqliteStorage) EncodeHashes() (*ch.SavedHashes, error) {
-	hashes := ch.SavedHashes{}
+func (s *sqliteStorage) EncodeHashes() (*ch.SavedHashesV2, error) {
+	hashes := ch.SavedHashesV2{}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return &hashes, err
@@ -346,7 +346,7 @@ func (s *sqliteStorage) EncodeHashes() (*ch.SavedHashes, error) {
 	}
 	for rows.Next() {
 		var (
-			hash    ch.SavedHash
+			hash    ch.SavedHashV2
 			tmpHash int64
 		)
 		err = rows.Scan(&hash.Hash.Kind, &tmpHash, &hash.ID.Domain, &hash.ID.ID)

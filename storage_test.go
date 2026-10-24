@@ -35,31 +35,31 @@ var cmpOpts = []cmp.Option{
 }
 
 var (
-	sample1SavedHashes = []ch.SavedHash{
+	sample1SavedHashes = []ch.SavedHashV2{
 		{ID: ch.ID{ID: "sample1.jpg", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.AHash, Hash: 0x7eff3f030703c1fc}},
 		{ID: ch.ID{ID: "sample1.jpg", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.DHash, Hash: 0xe89f6f63af4f8b69}},
 		{ID: ch.ID{ID: "sample1.jpg", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.PHash, Hash: 0xaf95d2205c7b1f82}},
 	}
 
-	sample2SavedHashes = []ch.SavedHash{
+	sample2SavedHashes = []ch.SavedHashV2{
 		{ID: ch.ID{ID: "sample2.jpg", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.AHash, Hash: 0x003c7e7e7e7e3c18}},
 		{ID: ch.ID{ID: "sample2.jpg", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.DHash, Hash: 0x71f0f4d2f0b8f071}},
 		{ID: ch.ID{ID: "sample2.jpg", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.PHash, Hash: 0x95274a996be4349e}},
 	}
 
-	sample3SavedHashes = []ch.SavedHash{
+	sample3SavedHashes = []ch.SavedHashV2{
 		{ID: ch.ID{ID: "sample3.jpg", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.AHash, Hash: 0x7eff3f030703c1fc}},
 		{ID: ch.ID{ID: "sample3.jpg", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.DHash, Hash: 0xe89f6f63af4f8bc9}},
 		{ID: ch.ID{ID: "sample3.jpg", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.PHash, Hash: 0xaf95d2205c7b1f82}},
 	}
 
-	sample4SavedHashes = []ch.SavedHash{
+	sample4SavedHashes = []ch.SavedHashV2{
 		{ID: ch.ID{ID: "sample4.jpg", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.AHash, Hash: 0x183c3e3e7e2e3c18}},
 		{ID: ch.ID{ID: "sample4.jpg", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.DHash, Hash: 0x716cd4e8dccc78b1}},
 		{ID: ch.ID{ID: "sample4.jpg", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.PHash, Hash: 0x979c5a9369cd6518}},
 	}
 
-	exampleSavedHashes = []ch.SavedHash{
+	exampleSavedHashes = []ch.SavedHashV2{
 		{ID: ch.ID{ID: "example.png", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.AHash, Hash: 0x246e7e3c1c181800}},
 		{ID: ch.ID{ID: "example.png", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.DHash, Hash: 0xccccccf139b0b210}},
 		{ID: ch.ID{ID: "example.png", Domain: ch.NewSource("example.org")}, Hash: ch.Hash{Kind: goimagehash.PHash, Hash: 0xd2f2361e2f496368}},
@@ -67,13 +67,13 @@ var (
 )
 
 func SeedHashes(hs ch.HashStorage) {
-	hashes := []ch.SavedHash{}
+	hashes := []ch.SavedHashV2{}
 	hashes = append(hashes, sample1SavedHashes...)
 	hashes = append(hashes, sample2SavedHashes...)
 	hashes = append(hashes, sample3SavedHashes...)
 	hashes = append(hashes, sample4SavedHashes...)
 	hashes = append(hashes, exampleSavedHashes...)
-	hs.DecodeHashes(&ch.SavedHashes{
+	hs.DecodeHashes(&ch.SavedHashesV2{
 		Version: 2,
 		Hashes:  hashes,
 	})
@@ -330,7 +330,7 @@ func SeedEmbeddedHashes(hs ch.HashStorage) {
 
 	var (
 		format       ch.Format
-		loadedHashes *ch.SavedHashes
+		loadedHashes *ch.SavedHashesV2
 	)
 
 	for _, format = range []ch.Format{ch.Msgpack, ch.JSON} {

@@ -28,7 +28,7 @@ func (s *VPTree) RLock()   {}
 func (s *VPTree) RUnlock() {}
 
 type VPHash struct {
-	ch.SavedHash
+	ch.SavedHashV2
 }
 
 func (h *VPHash) Distance(c vptree.Comparable) float64 {
@@ -52,7 +52,7 @@ func (v *VPTree) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Res
 		results := vptree.NewDistKeeper(float64(max))
 
 		currentTree := v.getCurrentTree(hash.Kind)
-		currentTree.NearestSet(results, &VPHash{ch.SavedHash{Hash: hash}})
+		currentTree.NearestSet(results, &VPHash{ch.SavedHashV2{Hash: hash}})
 
 		mappedIds := map[*[]ch.ID]bool{}
 		for _, result := range results.Heap {
@@ -103,7 +103,7 @@ func (v *VPTree) MapHashes(ch.ImageHash) ch.Metrics {
 	panic("Not Implemented")
 }
 
-func (v *VPTree) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error) {
+func (v *VPTree) DecodeHashes(hashes *ch.SavedHashesV2) (ch.Metrics, error) {
 	if hashes == nil {
 		return ch.Metrics{}, nil
 	}
@@ -160,8 +160,8 @@ func (v *VPTree) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error) {
 	return m, nil
 }
 
-func (v *VPTree) EncodeHashes() (*ch.SavedHashes, error) {
-	return &ch.SavedHashes{}, errors.New("Not Implemented")
+func (v *VPTree) EncodeHashes() (*ch.SavedHashesV2, error) {
+	return &ch.SavedHashesV2{}, errors.New("Not Implemented")
 }
 
 func (v *VPTree) AssociateIDs(newIDs []ch.NewIDs) error {
