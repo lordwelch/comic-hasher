@@ -399,11 +399,19 @@ func (c *CVDownloader) processDownloadQueue(list *CVResult, added *int) {
 			if waited > time.Duration(7.4*float64(time.Second)) {
 				t := 10 * time.Second
 				logger.Println(log.Verbose, "Waiting for", t, "at offset", list.Offset, "had to wait for", waited)
-				time.Sleep(t) // TODO: why don't we allow canceling early here?
+				select {
+				case <-time.After(t):
+				case <-c.Context.Done():
+					return
+				}
 			} else {
 				// Things are too fast we can't depend CV being slow to manage our download speed
 				// We sleep for 3 seconds so we don't overload CV
-				time.Sleep(3 * time.Second)
+				select {
+				case <-time.After(3 * time.Second):
+				case <-c.Context.Done():
+					return
+				}
 			}
 		}
 	}
@@ -613,8 +621,8 @@ func DownloadCovers(ctx context.Context, c *CVDownloader) {
 	if err != nil {
 		panic(fmt.Errorf("unable to read directory for json files: %w", err))
 	}
-	for i := len(c.fileList) - 1; i >= 0; i-- {
-		if !strings.Contains(c.fileList[i], "json") {
+	for i, v := range slices.Backward(c.fileList) {
+		if !strings.Contains(v, "json") {
 			c.fileList = slices.Delete(c.fileList, i, i+1)
 		}
 	}
@@ -633,7 +641,6 @@ func DownloadCovers(ctx context.Context, c *CVDownloader) {
 	pwg.Go(c.processCVIssues)
 	for i := range 5 {
 		dwg.Go(func() {
-			// todo: add the context here so that we can cancel in-progress downloads
 			dl.Worker(c.Context, c.chdb, c.basePath, c.KeepDownloadedImages, c.StartDownloadQueue, c.FinishedDownloadQueue, i)
 		})
 	}

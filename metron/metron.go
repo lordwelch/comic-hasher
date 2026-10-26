@@ -360,7 +360,7 @@ func (d *Downloader) processIssues() error {
 	// }
 	retries := 0
 	// TODO: we have a count attribute. Calculate what page we should end on so that we don't have an infinite loop here
-	nextApiRequestTime := time.Time{}
+	nextAPIRequestTime := time.Time{}
 	i := 0
 	for resultList.Next != (url.URL{}) {
 		err := d.Context.Err()
@@ -380,13 +380,17 @@ func (d *Downloader) processIssues() error {
 				content []byte
 				err     error
 			)
-			if !nextApiRequestTime.IsZero() {
-				timeLeft := nextApiRequestTime.Sub(time.Now())
+			if !nextAPIRequestTime.IsZero() {
+				timeLeft := time.Until(nextAPIRequestTime)
 				if timeLeft > time.Millisecond*100 {
-					time.Sleep(timeLeft)
+					select {
+					case <-time.After(timeLeft):
+					case <-d.Context.Done():
+						return d.Context.Err()
+					}
 				}
 			}
-			content, nextApiRequestTime, err = d.getPage(currentURL)
+			content, nextAPIRequestTime, err = d.getPage(currentURL)
 			if errors.Is(err, ErrRetry) {
 				retries += 1
 				if retries >= 3 {
@@ -476,8 +480,13 @@ func (d *Downloader) processIssues() error {
 					continue
 				}
 
-				if sleepTime := imageNextRequestTime.Sub(time.Now()); sleepTime > time.Millisecond*100 {
-					time.Sleep(sleepTime)
+				if sleepTime := time.Until(imageNextRequestTime); sleepTime > time.Millisecond*100 {
+					select {
+					case <-time.After(sleepTime):
+					case <-d.Context.Done():
+						return d.Context.Err()
+					}
+
 				}
 				if i > 20 {
 					return errExit
@@ -528,6 +537,7 @@ func GetServerTime(resp *http.Response) time.Time {
 	return t
 }
 
+// GetRatelimitTime checks these http headers
 // x-ratelimit-burst-limit: 45
 // x-ratelimit-burst-remaining: 41
 // x-ratelimit-burst-reset: 1790207705 // 1 Minute
@@ -543,12 +553,12 @@ func GetRatelimitTime(resp *http.Response, ratelimit string) (time.Time, error) 
 	}
 	limit, err := strconv.Atoi(remaining)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("Failed to parse %s limit remaining: %w", ratelimit, err)
+		return time.Time{}, fmt.Errorf("failed to parse %s limit remaining: %w", ratelimit, err)
 	}
 	if limit < 1 {
 		sustainedReset, err := strconv.ParseInt(resetTime, 10, 64)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("Failed to parse %s limit reset: %w", ratelimit, err)
+			return time.Time{}, fmt.Errorf("failed to parse %s limit reset: %w", ratelimit, err)
 		}
 		return time.Unix(sustainedReset, 0), nil
 	}

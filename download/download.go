@@ -114,10 +114,16 @@ func DownloadImage(dl Download, ctx context.Context, chdb ch.CHDB, baseDir strin
 func Worker(ctx context.Context, chdb ch.CHDB, baseDir string, keepImages bool, downloads <-chan Download, finished chan<- Download, id int) {
 	log.Println(log.Verbose2, "starting downloader", id)
 	for dl := range downloads {
-		resp := DownloadImage(dl, ctx, chdb, baseDir, keepImages, finished, id)
-		if resp != nil && dl.Done != nil {
-			dl.Done(resp)
-		}
+		func() {
+			resp := &http.Response{}
+			if dl.Done != nil {
+				defer dl.Done(resp)
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			*resp = *DownloadImage(dl, ctx, chdb, baseDir, keepImages, finished, id)
+		}()
 	}
 }
 

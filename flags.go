@@ -38,11 +38,12 @@ var storageNames = map[Storage]string{
 }
 
 var storageValues = map[string]Storage{
-	"map":     Map,
-	"basic":   BasicMap,
-	"sqlite":  Sqlite,
-	"sqlite3": Sqlite3,
-	"vptree":  VPTree,
+	"map":      Map,
+	"basic":    BasicMap,
+	"basicmap": BasicMap,
+	"sqlite":   Sqlite,
+	"sqlite3":  Sqlite3,
+	"vptree":   VPTree,
 }
 
 func (f Storage) String() string {
