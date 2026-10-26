@@ -198,25 +198,22 @@ func (c *CVDownloader) getDownloadedIssues(offset int, update bool) (*CVResult, 
 	JSONPath := filepath.Join(c.basePath, jsonDirectory)
 	issue, err := c.loadIssues(c.fileList[index])
 	if err != nil || issue == nil {
-		err = fmt.Errorf("failed to read page at offset %d: %w", offset, err)
 		_ = os.Remove(filepath.Join(JSONPath, c.fileList[index]))
 		c.fileList = slices.Delete(c.fileList, index, index+1)
-		return nil, err
+		return nil, fmt.Errorf("failed to read page at offset %d: %w", offset, err)
 	}
 
 	c.totalResults = max(c.totalResults, issue.NumberOfTotalResults)
 
 	if update && (len(issue.Results) == 0 || issue.Results[0].IssueNumber == "") {
-		err = fmt.Errorf("deleting page %d to update records from cv", offset)
 		_ = os.Remove(filepath.Join(JSONPath, c.fileList[index]))
 		c.fileList = slices.Delete(c.fileList, index, index+1)
-		return nil, err
+		return nil, fmt.Errorf("deleting page %d to update records from cv", offset)
 	}
 
 	if c.totalResults-offset <= 100 {
 		if index != len(c.fileList)-1 {
-			err = fmt.Errorf("wrong index: expected %d got %d", len(c.fileList), index)
-			return nil, err
+			return nil, fmt.Errorf("wrong index: expected %d got %d", len(c.fileList), index)
 		}
 		logger.Println(log.Verbose, "Deleting the last page to detect new comics on next run")
 		_ = os.Remove(filepath.Join(JSONPath, c.fileList[index]))
