@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"testing"
 
+	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"gitea.narnian.us/lordwelch/goimagehash"
 )
 
 func TestSavedHashesV3RoundTrip(t *testing.T) {
+	log.LogLevels[log.ALL] = -99
 	cvID := ID{Domain: NewSource("comicvine.gamespot.com"), ID: "100"}
 	metronID := ID{Domain: NewSource("metron.cloud"), ID: "200"}
 	otherID := ID{Domain: NewSource("example.org"), ID: "a"}
@@ -70,7 +72,7 @@ func TestSavedHashesV3RoundTrip(t *testing.T) {
 		t.Fatal("failed to find CV ID after insert")
 	}
 
-	// New hashes use the existing ID and are encoded in the correct kind range.
+	// New hashes use the existing ID
 	newHash := Hash{Kind: goimagehash.DHash, Hash: 5}
 	if !loaded.InsertHash(newHash, cvID) {
 		t.Fatal("expected a new hash to be inserted")
