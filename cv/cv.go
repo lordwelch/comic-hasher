@@ -28,7 +28,7 @@ import (
 	chlog "gitea.narnian.us/lordwelch/comic-hasher/log"
 )
 
-var logger = chlog.NewLogger("comicvine")
+var logger = chlog.NewLogger("comicvine", "downloads")
 
 type CVAuth string
 

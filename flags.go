@@ -225,7 +225,7 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 	fs.StringVar(&opts.debugPort, "debug-port", "", "`Port` to listen to for debug info")
 	showVersion := fs.Bool("version", false, "Show version and quit")
 	fs.BoolVar(showVersion, "V", false, "")
-	fs.Var(&opts.logLevels, "log-level", "Change logging level\nAvailable loggers: "+strings.Join([]string(log.AvailableLoggers()), ", "))
+	fs.Var(&opts.logLevels, "log-level", "Change logging level\nAvailable Loggers: "+strings.Join([]string(log.AvailableLoggers()), ", ")+"\nAvailable Aliases: "+strings.Join(log.Aliases(), ", "))
 
 	return showVersion, fs
 }

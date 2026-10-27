@@ -28,7 +28,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var logger = log.NewLogger("metron")
+var logger = log.NewLogger("metron", "downloads")
 
 // Buckets
 const (

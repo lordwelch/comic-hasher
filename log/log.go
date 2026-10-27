@@ -49,10 +49,32 @@ func FormatInt[T uint32 | int | int64](n T) string {
 	}
 }
 
-var LogLevels = map[Logger]Level{} // TODO: investigate having multiple loggers for filtering. Eg I want all downloads to be on Trace but I don't want metron to be on Trace
+var LogLevels = map[Logger]Level{}
+
+var LoggerAliases = map[Logger][]Logger{}
+
+func Aliases() []string {
+	aliases := make([]string, 0, len(LoggerAliases))
+	for alias := range LoggerAliases {
+		aliases = append(aliases, string(alias))
+	}
+	return aliases
+}
+
+func applyLevel(name Logger, level Level) {
+	loggers, isAlias := LoggerAliases[name]
+	if isAlias {
+		for _, logger := range loggers {
+			LogLevels[logger] = level
+		}
+		return
+	}
+	LogLevels[name] = level
+}
 
 func AvailableLoggers() []string {
 	_loggers := make([]string, len(LogLevels))
+	_loggers[0] = string(defaultLogger)
 	loggers := _loggers[1:1]
 	for logger := range LogLevels {
 		if logger == defaultLogger {
@@ -61,11 +83,10 @@ func AvailableLoggers() []string {
 		loggers = append(loggers, string(logger))
 	}
 	slices.Sort(loggers)
-	_loggers[0] = string(defaultLogger)
 	return _loggers
 }
 
-// Logger. Use NewLogger
+// Logger Use NewLogger
 type Logger string
 
 const (
@@ -104,9 +125,6 @@ func (f Flag) String() string {
 
 func (f *Flag) Get() any {
 	delete(*f, "started")
-	for logger, level := range *f {
-		LogLevels[logger] = level // TODO:? move this to set
-	}
 	return *f
 }
 
@@ -119,24 +137,25 @@ func (f *Flag) Set(s string) error {
 	items := strings.SplitSeq(strings.ToLower(s), ",")
 	for item := range items {
 		logName, levelName := Partition(item, ":")
-		// TODO: should there be a fake "all" logger to allow the "main" logger to be standard
-		// while setting everithing else to verbose?
 		if logName == "" {
-			logName = "main"
+			logName = "ALL"
 		}
 		if levelName == "" {
 			levelName = logName
-			logName = "main"
+			logName = "ALL"
 		}
 		logger := Logger(logName)
-		_, ok := LogLevels[logger]
-		if !ok {
+		_, isLogger := LogLevels[logger]
+		_, isAlias := LoggerAliases[logger]
+		if !(isLogger || isAlias || logger == "ALL") {
 			return fmt.Errorf("unknown log name: %v", logName)
 		}
-		(*f)[logger], ok = GetLevel(levelName)
-		if !ok {
+		var validLevel bool
+		(*f)[logger], validLevel = GetLevel(levelName)
+		if !validLevel {
 			return fmt.Errorf("unknown log level: %v", levelName)
 		}
+		applyLevel(logger, (*f)[logger])
 	}
 	return nil
 }
@@ -316,10 +335,7 @@ func RealFunc(name string) bool {
 	subMod, modName := RPartition(name, "/")
 	_ = subMod
 	modName, _ = Partition(modName, ".")
-	if modNames[modName] {
-		return false
-	}
-	return true
+	return !modNames[modName]
 }
 
 func GetRealFunc(pcs []uintptr) (string, string, int) {
@@ -331,7 +347,7 @@ func GetRealFunc(pcs []uintptr) (string, string, int) {
 		if !RealFunc(frame.Function) {
 			continue
 		}
-		return frame.Function, strings.Replace(frame.File, "gitea.narnian.us/lordwelch/comic-hasher/", "./", -1), frame.Line
+		return frame.Function, strings.ReplaceAll(frame.File, "gitea.narnian.us/lordwelch/comic-hasher/", "./"), frame.Line
 	}
 	return "", "", 0
 }
@@ -340,7 +356,7 @@ func (l Logger) Log(level Level, msg string, stuff ...any) {
 	pcs := make([]uintptr, 16) // just to make sure we don't run into any idiocy about function call depth
 	n := runtime.Callers(2, pcs)
 	pcs = pcs[0:n]
-	if level < LogLevels[l] && level < LogLevels["main"] {
+	if level < LogLevels[l] && level < LogLevels[ALL] {
 		return
 	}
 	// fmt.Println("allowing log record through", Record{
@@ -372,11 +388,20 @@ func EnableNonBlocking(ctx context.Context, queueSize int) {
 	go asyncLog(ctx, Diode)
 }
 
-func NewLogger(name string) Logger {
+// NewLogger creates a logger. Any aliases are additional names that select the
+// same logger, so two loggers that select the same alias can get their level set through a single name.
+func NewLogger(name string, aliases ...string) Logger {
 	l := Logger(strings.ToLower(name))
 	LogLevels[l] = 0
+	for _, alias := range aliases {
+		a := Logger(strings.ToLower(alias))
+		LoggerAliases[a] = append(LoggerAliases[a], l)
+	}
 	return l
 }
+
+// ALL is the name that selects every logger.
+const ALL Logger = "ALL"
 
 var defaultLogger = NewLogger("main")
 
