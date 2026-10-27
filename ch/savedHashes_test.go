@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"testing"
 
-	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"gitea.narnian.us/lordwelch/goimagehash"
 )
 
 func TestSavedHashesV3RoundTrip(t *testing.T) {
-	log.LogLevels[log.ALL] = -99
 	cvID := ID{Domain: NewSource("comicvine.gamespot.com"), ID: "100"}
 	metronID := ID{Domain: NewSource("metron.cloud"), ID: "200"}
 	otherID := ID{Domain: NewSource("example.org"), ID: "a"}

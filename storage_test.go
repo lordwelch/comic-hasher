@@ -22,6 +22,8 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
+func init() { log.LogLevels[log.ALL] = -99 }
+
 var cmpOpts = []cmp.Option{
 	cmpopts.EquateEmpty(),
 	cmpopts.SortSlices(func(a ch.Result, b ch.Result) int {
@@ -302,14 +304,13 @@ func TestHashServer(t *testing.T) {
 		t.Fatal("failed to validate hashes:", err)
 	}
 	var md5 []byte
-	for _, digest := range strings.Split(recorder.Header().Get("Repr-Digest"), ",") {
-		kind, b64 := log.Partition(digest, "=:")
-		b64 = b64[:len(b64)-1]
+	for digest := range strings.SplitSeq(recorder.Header().Get("Repr-Digest"), ",") {
+		kind, _ := log.Partition(digest, "=:")
+		// b64 = b64[:len(b64)-1]
 		if kind != "MD5" {
 			continue
 		}
 		md5 = crypto.MD5.New().Sum(recorder.Body.Bytes())
-
 	}
 	expected := "d41d8cd98f00b204e9800998ecf8427e"
 	if diff := cmp.Diff(expected, fmt.Sprintf("%x", md5), cmpOpts...); diff != "" {
