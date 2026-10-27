@@ -5,7 +5,6 @@ package ch
 import (
 	"bufio"
 	"cmp"
-	"compress/gzip"
 	"context"
 	"crypto"
 	"encoding/base64"
@@ -19,6 +18,7 @@ import (
 	"image"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -28,6 +28,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	gzip "github.com/klauspost/pgzip"
 
 	"github.com/OneOfOne/xxhash"
 	"github.com/twmb/murmur3"
@@ -107,6 +109,8 @@ type HashServer struct {
 	reprHeaderCache   string
 	digesters         map[string]hash.Hash
 	hashesDownloaded  prometheus.Counter
+	gzip              *gzip.Writer
+	useAllChecksums   bool
 }
 
 type CHMux struct {
@@ -260,22 +264,24 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	}
 
 	defer f.Close() //nolint:errcheck
-	writer := h.initDigests(f)
-	gzw := gzip.NewWriter(writer)
-	err = EncodeHashesV3(encodedHashes, gzw)
+	writer := bufio.NewWriter(h.initDigests(f))
+	h.gzip.Reset(writer)
+	b := bufio.NewWriterSize(h.gzip, 32*1024)
+	err = EncodeHashesV3(encodedHashes, b)
 	if err != nil {
 		return fmt.Errorf("failed to encode hashes to temporary file %q, %w", h.hashes+".tmp", err)
 	}
+	b.Flush()
 
 	// Close gzip so we have a proper stream
-	if err = gzw.Close(); err != nil {
+	if err = h.gzip.Close(); err != nil {
 		return fmt.Errorf("failed to write hashes: %w", err)
 	}
+	writer.Flush()
 
 	h.mut.Lock()
 	defer h.mut.Unlock()
 	h.digestHeaderCache = ""
-	// Explicit close. Windows has issues with operating on open files
 	_ = f.Close()
 	for name, digest := range h.digesters {
 		h.digests[name] = digest.Sum(nil)
@@ -288,13 +294,15 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	return nil
 }
 
-func NewHashServer(hashes string) HashServer {
+func NewHashServer(hashes string, useAllChecksums bool) HashServer {
 	if !filepath.IsAbs(hashes) {
 		panic("NewHashServer needs an absolute path for hashes")
 	}
 	h := HashServer{
-		hashes:  hashes,
-		digests: map[string][]byte{},
+		hashes:          hashes,
+		digests:         map[string][]byte{},
+		useAllChecksums: useAllChecksums,
+		gzip:            gzip.NewWriter(io.Discard),
 	}
 	f, err := os.Open(hashes)
 	if err != nil {
@@ -320,38 +328,42 @@ func NewHashServer(hashes string) HashServer {
 func (h *HashServer) initDigests(writer io.Writer) io.Writer {
 	if h.digesters == nil {
 		h.digesters = map[string]hash.Hash{
-			"sha":                       crypto.SHA1.New(),
-			"adler":                     adler32.New(),
-			"crc32c":                    crc32.NewIEEE(),
-			"fnv1-32":                   fnv.New32(),
-			"fnv1a-32":                  fnv.New32a(),
-			"fnv1-64":                   fnv.New64(),
-			"fnv1a-64":                  fnv.New64a(),
-			"fnv1-128":                  fnv.New128(),
-			"fnv1a-128":                 fnv.New128a(),
-			crypto.MD5.String():         crypto.MD5.New(),
-			crypto.SHA1.String():        crypto.SHA1.New(),
-			crypto.SHA224.String():      crypto.SHA224.New(),
-			crypto.SHA256.String():      crypto.SHA256.New(),
-			crypto.SHA384.String():      crypto.SHA384.New(),
-			crypto.SHA512.String():      crypto.SHA512.New(),
-			crypto.SHA3_224.String():    crypto.SHA3_224.New(),
-			crypto.SHA3_256.String():    crypto.SHA3_256.New(),
-			crypto.SHA3_384.String():    crypto.SHA3_384.New(),
-			crypto.SHA3_512.String():    crypto.SHA3_512.New(),
-			crypto.SHA512_224.String():  crypto.SHA512_224.New(),
-			crypto.SHA512_256.String():  crypto.SHA512_256.New(),
-			crypto.BLAKE2s_256.String(): crypto.BLAKE2s_256.New(),
-			crypto.BLAKE2b_256.String(): crypto.BLAKE2b_256.New(),
-			crypto.BLAKE2b_384.String(): crypto.BLAKE2b_384.New(),
-			crypto.BLAKE2b_512.String(): crypto.BLAKE2b_512.New(),
-			"XXH64":                     xxhash.New64(),
-			"XXH32":                     xxhash.New32(),
-			"XXH3":                      xxh3.New(),
-			"XXH128":                    xxh3.New128(),
-			"murmur3-32":                murmur3.New32(),
-			"murmur3-64":                murmur3.New64(),
-			"murmur3-128":               murmur3.New128(),
+			"sha":                  crypto.SHA1.New(),
+			crypto.SHA1.String():   crypto.SHA1.New(),
+			crypto.SHA256.String(): crypto.SHA256.New(),
+			crypto.MD5.String():    crypto.MD5.New(),
+			"XXH3":                 xxh3.New(),
+		}
+		if h.useAllChecksums {
+			maps.Copy(h.digesters, map[string]hash.Hash{
+				"adler":                     adler32.New(),
+				"crc32c":                    crc32.NewIEEE(),
+				"fnv1-32":                   fnv.New32(),
+				"fnv1a-32":                  fnv.New32a(),
+				"fnv1-64":                   fnv.New64(),
+				"fnv1a-64":                  fnv.New64a(),
+				"fnv1-128":                  fnv.New128(),
+				"fnv1a-128":                 fnv.New128a(),
+				crypto.SHA224.String():      crypto.SHA224.New(),
+				crypto.SHA384.String():      crypto.SHA384.New(),
+				crypto.SHA512.String():      crypto.SHA512.New(),
+				crypto.SHA3_224.String():    crypto.SHA3_224.New(),
+				crypto.SHA3_256.String():    crypto.SHA3_256.New(),
+				crypto.SHA3_384.String():    crypto.SHA3_384.New(),
+				crypto.SHA3_512.String():    crypto.SHA3_512.New(),
+				crypto.SHA512_224.String():  crypto.SHA512_224.New(),
+				crypto.SHA512_256.String():  crypto.SHA512_256.New(),
+				crypto.BLAKE2s_256.String(): crypto.BLAKE2s_256.New(),
+				crypto.BLAKE2b_256.String(): crypto.BLAKE2b_256.New(),
+				crypto.BLAKE2b_384.String(): crypto.BLAKE2b_384.New(),
+				crypto.BLAKE2b_512.String(): crypto.BLAKE2b_512.New(),
+				"XXH64":                     xxhash.New64(),
+				"XXH32":                     xxhash.New32(),
+				"XXH128":                    xxh3.New128(),
+				"murmur3-32":                murmur3.New32(),
+				"murmur3-64":                murmur3.New64(),
+				"murmur3-128":               murmur3.New128(),
+			})
 		}
 	}
 	writers := make([]io.Writer, 0, len(h.digesters)+1)

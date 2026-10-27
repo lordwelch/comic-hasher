@@ -13,6 +13,8 @@ require (
 	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3
 	github.com/google/go-cmp v0.7.0
 	github.com/json-iterator/go v1.1.12
+	github.com/klauspost/compress v1.20.3
+	github.com/klauspost/pgzip v1.3.0
 	github.com/kr/pretty v0.3.1
 	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/ncruces/go-sqlite3 v0.30.5

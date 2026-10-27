@@ -87,6 +87,7 @@ type Opts struct {
 	version            string
 	addr               string
 	debugPort          string
+	useAllChecksums    bool
 
 	logLevels log.Flag
 
@@ -203,6 +204,7 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 	fs.StringVar(&opts.addr, "listen", ":8080", "Address to listen on")
 	fs.StringVar(&opts.path, "path", "./"+wd, "Path for comic-hasher to store files")
 	fs.StringVar(&opts.coverPath, "cover-path", "", "`Path` to local covers to add to hash database.\nMust be in the form '{cover-path}/{domain}/{id}/*'\neg for --cover-path /covers it should look like /covers/comicvine.gamespot.com/10000/image.gif")
+	fs.BoolVar(&opts.useAllChecksums, "use-all-checksums", false, "Enable using all known checksums when serving the /hashes http endpoint")
 
 	fs.BoolVar(&opts.loadEmbeddedHashes, "load-embedded-hashes", true, "Use hashes embedded in the application if there are no saved hashes to load")
 	fs.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", true, "Allows blocking the saving of the embedded hashes")

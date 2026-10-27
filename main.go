@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -23,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	gzip "github.com/klauspost/pgzip"
 
 	"github.com/disintegration/imaging"
 	"github.com/kr/pretty"
@@ -159,10 +160,6 @@ func loadHashes(opts Opts) *ch.SavedHashesV3 {
 		// We don't read everything here because we want some of these to be separate allocations
 		// And we don't want duplicate allocations
 		hashReader = bufio.NewReader(r)
-		if err != nil {
-			log.Println(log.Fatal, "Failed to load hashes from disk:", err)
-			os.Exit(1)
-		}
 	} else {
 		if !errors.Is(err, os.ErrNotExist) {
 			log.Println(log.Standard, "Unable to load saved hashes", err)
@@ -217,18 +214,19 @@ func saveHashes(opts Opts, hashes *ch.SavedHashesV3) error {
 	if err != nil {
 		return fmt.Errorf("unabled to save hashes: %w", err)
 	}
-
-	gzw := gzip.NewWriter(f)
-
-	err = ch.EncodeHashesV3(hashes, gzw)
+	b := bufio.NewWriter(f)
+	gzw := gzip.NewWriter(b)
+	gzb := bufio.NewWriterSize(gzw, 32*1024)
+	err = ch.EncodeHashesV3(hashes, gzb)
 	if err != nil {
 		return fmt.Errorf("unable to encode hashes: %w", err)
 	}
+	gzb.Flush()
 
 	if err = gzw.Close(); err != nil {
 		return fmt.Errorf("failed to write hashes: %w", err)
 	}
-
+	b.Flush()
 	if err = f.Close(); err != nil {
 		return fmt.Errorf("failed to write hashes: %w", err)
 	}
@@ -344,7 +342,7 @@ func startServer(opts Opts) {
 	log.Println(log.Standard, "Loaded hashes")
 	// This is loaded here so that the log doesn't hang for a few seconds before the first line
 	if opts.hashSaveInterval > 0 {
-		server.HashServer = ch.NewHashServer(filepath.Join(opts.path, hashesFilename))
+		server.HashServer = ch.NewHashServer(filepath.Join(opts.path, hashesFilename), opts.useAllChecksums)
 	}
 	loadedHashes = nil //nolint:ineffassign
 
