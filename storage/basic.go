@@ -11,21 +11,21 @@ import (
 	"gitea.narnian.us/lordwelch/goimagehash"
 )
 
-type BasicMapStorage struct {
+type BasicStorage struct {
 	hashMutex *sync.RWMutex
 	hashes    *ch.SavedHashesV3
 }
 
-func (b *BasicMapStorage) RLock() {
+func (b *BasicStorage) RLock() {
 	b.hashMutex.RLock()
 }
 
-func (b *BasicMapStorage) RUnlock() {
+func (b *BasicStorage) RUnlock() {
 	b.hashMutex.RUnlock()
 }
 
 // atleast must have a read lock before using
-func (b *BasicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, searchHash uint64) []ch.Result {
+func (b *BasicStorage) atleast(kind goimagehash.Kind, maxDistance int, searchHash uint64) []ch.Result {
 	otherHashes := make([]ch.Result, 0, 20) // hope that we don't need more
 
 	for _, storedHash := range *b.hashes.HashesForKind(kind) {
@@ -48,7 +48,7 @@ func (b *BasicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, search
 	return matchingHashes
 }
 
-func (b *BasicMapStorage) exactMatches(hashes []ch.Hash) []ch.Result {
+func (b *BasicStorage) exactMatches(hashes []ch.Hash) []ch.Result {
 	var foundMatches []ch.Result
 	for _, hash := range hashes {
 		mappedIds := map[uint32]bool{}
@@ -75,7 +75,7 @@ func (b *BasicMapStorage) exactMatches(hashes []ch.Hash) []ch.Result {
 	return foundMatches
 }
 
-func (b *BasicMapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Result, error) {
+func (b *BasicStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Result, error) {
 	var (
 		foundMatches []ch.Result
 		tl           ch.TimeLog
@@ -104,7 +104,7 @@ func (b *BasicMapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) 
 // must have a read lock before using
 // return value is index, count
 // if count < 1 then no results were found
-func (b *BasicMapStorage) findHash(hash ch.Hash) (int, int) {
+func (b *BasicStorage) findHash(hash ch.Hash) (int, int) {
 	currentHashes := *b.hashes.HashesForKind(hash.Kind)
 	index, found := slices.BinarySearchFunc(currentHashes, hash.Hash, func(existing ch.SavedHashV3, target uint64) int {
 		return cmp.Compare(existing.Hash, target)
@@ -123,7 +123,7 @@ func (b *BasicMapStorage) findHash(hash ch.Hash) (int, int) {
 	return start, end - start
 }
 
-func (b *BasicMapStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
+func (b *BasicStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 	b.hashMutex.Lock()
 	defer b.hashMutex.Unlock()
 
@@ -140,7 +140,7 @@ func (b *BasicMapStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 
 // DecodeHashes must already have a lock. SavedHashesV3 is already in the
 // runtime representation so all that is needed is to keep the pointer.
-func (b *BasicMapStorage) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) {
+func (b *BasicStorage) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) {
 	if hashes == nil {
 		return ch.Metrics{}, nil
 	}
@@ -149,11 +149,11 @@ func (b *BasicMapStorage) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, er
 }
 
 // EncodeHashes should already have a lock
-func (b *BasicMapStorage) EncodeHashes() (*ch.SavedHashesV3, error) {
+func (b *BasicStorage) EncodeHashes() (*ch.SavedHashesV3, error) {
 	return b.hashes, nil
 }
 
-func (b *BasicMapStorage) AssociateIDs(newids []ch.NewIDs) error {
+func (b *BasicStorage) AssociateIDs(newids []ch.NewIDs) error {
 	b.hashMutex.Lock()
 	defer b.hashMutex.Unlock()
 	var err error
@@ -166,7 +166,7 @@ func (b *BasicMapStorage) AssociateIDs(newids []ch.NewIDs) error {
 	return nil
 }
 
-func (b *BasicMapStorage) GetIDs(id ch.ID) ch.IDList {
+func (b *BasicStorage) GetIDs(id ch.ID) ch.IDList {
 	b.hashMutex.RLock()
 	defer b.hashMutex.RUnlock()
 	rid, ok := b.hashes.FindID(id)
@@ -176,8 +176,8 @@ func (b *BasicMapStorage) GetIDs(id ch.ID) ch.IDList {
 	return ch.ToIDList(b.hashes.GetAllIDs(rid))
 }
 
-func NewBasicMapStorage() (ch.HashStorage, error) {
-	storage := &BasicMapStorage{
+func NewBasicStorage() (ch.HashStorage, error) {
+	storage := &BasicStorage{
 		hashMutex: &sync.RWMutex{},
 		hashes:    &ch.SavedHashesV3{},
 	}

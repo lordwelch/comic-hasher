@@ -67,7 +67,7 @@ func main() {
 		}
 	}
 	opts := Opts{
-		storageType: BasicMap, version: Version,
+		storageType: Basic, version: Version,
 		cv: CVOpts{
 			images: cv.Images{"thumb": {}},
 		},
@@ -127,8 +127,8 @@ func initializeStorage(opts Opts) (ch.HashStorage, error) {
 	switch opts.storageType {
 	case Map:
 		return storage.NewMapStorage()
-	case BasicMap:
-		return storage.NewBasicMapStorage()
+	case Basic:
+		return storage.NewBasicStorage()
 	case Sqlite:
 		return storage.NewSqliteStorage("sqlite", filepath.Join(opts.path, "tmp.sqlite"))
 	case Sqlite3:

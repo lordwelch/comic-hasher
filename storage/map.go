@@ -10,7 +10,7 @@ import (
 )
 
 type MapStorage struct {
-	BasicMapStorage
+	BasicStorage
 	partialAHash [8]map[uint8][]uint64
 	partialDHash [8]map[uint8][]uint64
 	partialPHash [8]map[uint8][]uint64
@@ -104,7 +104,7 @@ func (m *MapStorage) getCurrentHashes(kind goimagehash.Kind) ([]ch.SavedHashV3, 
 }
 
 func (m *MapStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
-	metrics := m.BasicMapStorage.MapHashes(hash)
+	metrics := m.BasicStorage.MapHashes(hash)
 	for _, hash := range hash.Hashes {
 		_, partialHashes := m.getCurrentHashes(hash.Kind)
 		for i, partialHash := range ch.SplitHash(hash.Hash) {
@@ -118,7 +118,7 @@ func (m *MapStorage) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) 
 	if hashes == nil {
 		return ch.Metrics{}, nil
 	}
-	metrics, err := m.BasicMapStorage.DecodeHashes(hashes)
+	metrics, err := m.BasicStorage.DecodeHashes(hashes)
 	if err != nil {
 		return ch.Metrics{}, err
 	}
@@ -140,7 +140,7 @@ func (m *MapStorage) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) 
 
 func NewMapStorage() (ch.HashStorage, error) {
 	storage := &MapStorage{
-		BasicMapStorage: BasicMapStorage{
+		BasicStorage: BasicStorage{
 			hashMutex: &sync.RWMutex{},
 			hashes:    &ch.SavedHashesV3{},
 		},

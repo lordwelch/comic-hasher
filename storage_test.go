@@ -215,7 +215,7 @@ func GetIDs(t *testing.T, hs ch.HashStorage) {
 }
 
 func TestBasicStorage(t *testing.T) {
-	hs, err := storage.NewBasicMapStorage()
+	hs, err := storage.NewBasicStorage()
 	if err != nil {
 		t.Fatal("Failed to create basic storage:", err)
 	}
@@ -275,7 +275,7 @@ func TestSqliteStorage(t *testing.T) {
 }
 
 func TestHashServer(t *testing.T) {
-	hs, err := storage.NewBasicMapStorage()
+	hs, err := storage.NewBasicStorage()
 	if err != nil {
 		t.Fatal("Failed to create basic storage:", err)
 	}
@@ -318,7 +318,7 @@ func TestHashServer(t *testing.T) {
 }
 
 func TestLoadEmbeddedHashes(t *testing.T) {
-	hs, err := storage.NewBasicMapStorage()
+	hs, err := storage.NewBasicStorage()
 	if err != nil {
 		t.Fatal("failed to create basic map storage:", err)
 	}
@@ -349,7 +349,7 @@ func BenchmarkStorageSmall(fuck *testing.B) {
 		{Hash: 0xf95ac0669da8b4a9, Kind: goimagehash.PHash},
 	}
 
-	hs, err := storage.NewBasicMapStorage()
+	hs, err := storage.NewBasicStorage()
 	if err != nil {
 		fuck.Fatal("Failed to create Basic storage:", err)
 	}
@@ -408,7 +408,7 @@ func BenchmarkStorageLarge(b *testing.B) {
 		{Hash: 0x95274a996be4349e, Kind: goimagehash.PHash},
 	}
 
-	hs, err := storage.NewBasicMapStorage()
+	hs, err := storage.NewBasicStorage()
 	if err != nil {
 		b.Fatal("Failed to create Basic storage:", err)
 	}

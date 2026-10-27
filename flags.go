@@ -22,7 +22,7 @@ type Storage int
 
 const (
 	_ = iota + 1
-	BasicMap
+	Basic
 	Map
 	Sqlite
 	Sqlite3
@@ -30,17 +30,17 @@ const (
 )
 
 var storageNames = map[Storage]string{
-	Map:      "Map",
-	BasicMap: "Basic",
-	Sqlite:   "Sqlite",
-	Sqlite3:  "Sqlite3",
-	VPTree:   "VPTree",
+	Map:     "Map",
+	Basic:   "Basic",
+	Sqlite:  "Sqlite",
+	Sqlite3: "Sqlite3",
+	VPTree:  "VPTree",
 }
 
 var storageValues = map[string]Storage{
 	"map":      Map,
-	"basic":    BasicMap,
-	"basicmap": BasicMap,
+	"basic":    Basic,
+	"basicmap": Basic,
 	"sqlite":   Sqlite,
 	"sqlite3":  Sqlite3,
 	"vptree":   VPTree,
