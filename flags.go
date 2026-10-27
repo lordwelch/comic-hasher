@@ -23,25 +23,26 @@ type Storage int
 const (
 	_ = iota + 1
 	BasicMap
+	Map
 	Sqlite
 	Sqlite3
 	VPTree
 )
 
 var storageNames = map[Storage]string{
-	// Map:      "map",
-	BasicMap: "basicmap",
-	Sqlite:   "sqlite",
-	Sqlite3:  "sqlite3",
-	VPTree:   "vptree",
+	Map:      "Map",
+	BasicMap: "Basic",
+	Sqlite:   "Sqlite",
+	Sqlite3:  "Sqlite3",
+	VPTree:   "VPTree",
 }
 
 var storageValues = map[string]Storage{
-	// "map":      Map,
-	"basicmap": BasicMap,
-	"sqlite":   Sqlite,
-	"sqlite3":  Sqlite3,
-	"vptree":   VPTree,
+	"map":     Map,
+	"basic":   BasicMap,
+	"sqlite":  Sqlite,
+	"sqlite3": Sqlite3,
+	"vptree":  VPTree,
 }
 
 func (f Storage) String() string {
@@ -55,7 +56,7 @@ func (f *Storage) Set(s string) error {
 	if storage, known := storageValues[strings.ToLower(s)]; known {
 		*f = storage
 	} else {
-		return fmt.Errorf("unknown storage type: %d", f)
+		return fmt.Errorf("unknown storage type: %d", *f)
 	}
 	return nil
 }
@@ -204,8 +205,7 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 
 	fs.BoolVar(&opts.loadEmbeddedHashes, "load-embedded-hashes", true, "Use hashes embedded in the application if there are no saved hashes to load")
 	fs.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", true, "Allows blocking the saving of the embedded hashes")
-
-	fs.Var(&opts.storageType, "storage-type", "Specify the `storage type` used internally to search hashes\n(Sqlite,Sqlite3,BasicMap,VPTree)")
+	fs.Var(&opts.storageType, "storage-type", "Specify the `storage type` used internally to search hashes\n(Basic, Map, Sqlite, Sqlite3, VPTree)")
 	fs.DurationVar(&opts.hashSaveInterval, "hash-save-interval", time.Hour, "Specify the interval that hashes will automaticall be saved to disk. 0 means never")
 
 	fs.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers\n\nIf multiple image types (-cv-images) are selected more than 1 may get through")
@@ -214,7 +214,7 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 
 	fs.BoolVar(&opts.cv.enabled, "cv", false, "Enabled automatically downloading covers from ComicVine to add to the database\n(averages 1 api call per hour once cought up)")
 	fs.StringVar(&opts.cv.APIKey, "cv-api-key", "", "API `Key` to use to access the ComicVine API")
-	fs.Var(&opts.cv.images, "cv-images", "Download the selected `image types` from comicvine\n(Original,Thumb,Icon,Medium,Screen,ScreenLarge,Small,Super,Tiny)")
+	fs.Var(&opts.cv.images, "cv-images", "Download the selected `image types` from comicvine\n(Original, Thumb, Icon, Medium, Screen, ScreenLarge, Small, Super, Tiny)")
 
 	fs.BoolVar(&opts.metron.enabled, "metron", false, "Enabled automatically downloading covers from metron.cloud to add to the database\n(averages 1 api call per hour once cought up)")
 	fs.StringVar(&opts.metron.APIKey, "metron-api-key", "", "API `Key` to use to access the metron.cloud API")

@@ -124,8 +124,8 @@ func signalHandler(s *ch.Server, signalQueue <-chan os.Signal) {
 
 func initializeStorage(opts Opts) (ch.HashStorage, error) {
 	switch opts.storageType {
-	// case Map:
-	// 	return storage.NewMapStorage()
+	case Map:
+		return storage.NewMapStorage()
 	case BasicMap:
 		return storage.NewBasicMapStorage()
 	case Sqlite:
