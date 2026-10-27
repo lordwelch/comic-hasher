@@ -76,7 +76,6 @@ type Opts struct {
 	coverPath          string
 	loadEmbeddedHashes bool
 	saveEmbeddedHashes bool
-	format             ch.Format
 	storageType        Storage
 	hashSaveInterval   time.Duration
 	onlyHashNewIDs     bool
@@ -205,7 +204,6 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 
 	fs.BoolVar(&opts.loadEmbeddedHashes, "load-embedded-hashes", true, "Use hashes embedded in the application if there are no saved hashes to load")
 	fs.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", true, "Allows blocking the saving of the embedded hashes")
-	fs.Var(&opts.format, "save-format", "Specify the `format` to save hashes in (json, msgpack)")
 
 	fs.Var(&opts.storageType, "storage-type", "Specify the `storage type` used internally to search hashes\n(Sqlite,Sqlite3,BasicMap,VPTree)")
 	fs.DurationVar(&opts.hashSaveInterval, "hash-save-interval", time.Hour, "Specify the interval that hashes will automaticall be saved to disk. 0 means never")
@@ -236,7 +234,6 @@ var (
 	groups     = map[string]string{
 		"load-embedded-hashes": "file",
 		"save-embedded-hashes": "file",
-		"save-format":          "file",
 		"storage-type":         "hash",
 		"only-hash-new-ids":    "hash",
 		"hash-save-interval":   "hash",

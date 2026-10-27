@@ -105,7 +105,6 @@ type HashServer struct {
 	digests           map[string][]byte
 	digestHeaderCache string
 	reprHeaderCache   string
-	format            Format
 	digesters         map[string]hash.Hash
 	hashesDownloaded  prometheus.Counter
 }
@@ -192,7 +191,7 @@ func (h *HashServer) DownloadHashes(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Digest", h.digestHeader())
 	}
 	w.Header().Set("Repr-Digest", h.reprDigestHeader())
-	w.Header().Set("Content-Type", "application/x-image-hash-db+"+h.format.String())
+	w.Header().Set("Content-Type", "application/x-image-hash-db+gzip")
 	w.Header().Set("Content-Disposition", `"attachment; filename="hashes.gz"`)
 	http.ServeFile(w, r, h.hashes)
 }
@@ -243,13 +242,11 @@ func (h *HashServer) digestHeader() string {
 
 func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	// Encoding hashes requires a lock as it assumes pointers are in use to reduce unnecessary memory usage
+	logger.Println(log.Verbose, "Writing hashes to disk")
+	defer logger.Println(log.Verbose, "Finished writing hashes to disk")
 	hashes.RLock()
 	defer hashes.RUnlock()
 	encodedHashes, err := hashes.EncodeHashes()
-	if err != nil {
-		return err
-	}
-	content, err := EncodeHashes(encodedHashes, h.format)
 	if err != nil {
 		return err
 	}
@@ -262,9 +259,9 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	defer f.Close() //nolint:errcheck
 	writer := h.initDigests(f)
 	gzw := gzip.NewWriter(writer)
-	_, err = gzw.Write(content)
+	err = EncodeHashesV3(encodedHashes, gzw)
 	if err != nil {
-		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashes+".tmp", err)
+		return fmt.Errorf("failed to encode hashes to temporary file %q, %w", h.hashes+".tmp", err)
 	}
 
 	// Close gzip so we have a proper stream
@@ -288,13 +285,12 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	return nil
 }
 
-func NewHashServer(hashes string, format Format) HashServer {
+func NewHashServer(hashes string) HashServer {
 	if !filepath.IsAbs(hashes) {
 		panic("NewHashServer needs an absolute path for hashes")
 	}
 	h := HashServer{
 		hashes:  hashes,
-		format:  format,
 		digests: map[string][]byte{},
 	}
 	f, err := os.Open(hashes)
@@ -675,7 +671,7 @@ func (s *Server) Reader(workerID int) {
 	}
 }
 
-func (s *Server) DecodeHashes(loadedHashes *SavedHashesV2) {
+func (s *Server) DecodeHashes(loadedHashes *SavedHashesV3) {
 	metrics, err := s.Storage.DecodeHashes(loadedHashes)
 	if err != nil {
 		panic(err)

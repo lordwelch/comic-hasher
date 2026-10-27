@@ -50,10 +50,6 @@ const (
 	Metron    Source = "metron.cloud"
 )
 
-const (
-	SavedHashVersion int = 2
-)
-
 var sources *sync.Map = newSourceMap()
 
 type Source string
@@ -261,8 +257,8 @@ type NewIDs struct {
 type HashStorage interface {
 	GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error)
 	MapHashes(ImageHash) Metrics
-	DecodeHashes(hashes *SavedHashesV2) (Metrics, error)
-	EncodeHashes() (*SavedHashesV2, error)
+	DecodeHashes(hashes *SavedHashesV3) (Metrics, error)
+	EncodeHashes() (*SavedHashesV3, error)
 	AssociateIDs(newIDs []NewIDs) error
 	GetIDs(id ID) IDList
 	RLock()

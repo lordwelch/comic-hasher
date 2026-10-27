@@ -11,6 +11,7 @@ import (
 
 	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
+	"gitea.narnian.us/lordwelch/goimagehash"
 	_ "modernc.org/sqlite"
 )
 
@@ -269,8 +270,10 @@ func (s *sqliteStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 	return metrics
 }
 
-func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashesV2) (ch.Metrics, error) {
-	// return ch.Metrics{}, nil
+func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) {
+	if hashes == nil {
+		return ch.Metrics{}, nil
+	}
 	err := s.dropIndexes()
 	if err != nil {
 		return ch.Metrics{}, err
@@ -282,10 +285,14 @@ func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashesV2) (ch.Metrics, erro
 	insertID := tx.Stmt(s.insertID)
 	insertEID := tx.Stmt(s.insertEID)
 	insertIEID := tx.Stmt(s.insertIEID)
-	for _, idlist := range hashes.IDs {
+	for _, group := range hashes.IDGroups {
+		if len(group) < 2 {
+			continue
+		}
 		var eid int64
-		id_ids := make([]int64, 0, len(idlist))
-		for _, id := range idlist {
+		id_ids := make([]int64, 0, len(group))
+		for _, idIndex := range group {
+			id := hashes.IDAt(idIndex)
 			var id_id int64
 			row := insertID.QueryRow(id.Domain, id.ID)
 			err = row.Scan(&id_id)
@@ -310,16 +317,18 @@ func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashesV2) (ch.Metrics, erro
 		Hashes: make(map[ch.Metric]int),
 	}
 
-	for _, savedHash := range hashes.Hashes {
-		s.mapHashes(tx, ch.ImageHash{
-			Hashes: []ch.Hash{savedHash.Hash},
-			ID:     savedHash.ID,
-		})
-		m.Hashes[ch.Metric{
-			Source: savedHash.ID.Domain,
-			Kind:   savedHash.Hash.Kind,
-		}] += 1
-
+	for _, kind := range []goimagehash.Kind{goimagehash.AHash, goimagehash.DHash, goimagehash.PHash} {
+		for _, savedHash := range *hashes.HashesForKind(kind) {
+			id := hashes.IDAt(savedHash.ID)
+			s.mapHashes(tx, ch.ImageHash{
+				Hashes: []ch.Hash{{Hash: savedHash.Hash, Kind: kind}},
+				ID:     id,
+			})
+			m.Hashes[ch.Metric{
+				Source: id.Domain,
+				Kind:   kind,
+			}] += 1
+		}
 	}
 
 	err = tx.Commit()
@@ -333,16 +342,17 @@ func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashesV2) (ch.Metrics, erro
 	return m, nil
 }
 
-func (s *sqliteStorage) EncodeHashes() (*ch.SavedHashesV2, error) {
-	hashes := ch.SavedHashesV2{}
+func (s *sqliteStorage) EncodeHashes() (*ch.SavedHashesV3, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return &hashes, err
+		return &ch.SavedHashesV3{}, err
 	}
+	defer tx.Rollback()
 
+	entries := make([]ch.SavedHashV2, 0)
 	rows, err := tx.Query("SELECT Hashes.kind, Hashes.hash, IDs.domain, IDs.stringid FROM Hashes JOIN IDs ON Hashes.id=IDs.id ORDER BY Hashes.kind, Hashes.hash;")
 	if err != nil {
-		return &hashes, err
+		return &ch.SavedHashesV3{}, err
 	}
 	for rows.Next() {
 		var (
@@ -351,39 +361,48 @@ func (s *sqliteStorage) EncodeHashes() (*ch.SavedHashesV2, error) {
 		)
 		err = rows.Scan(&hash.Hash.Kind, &tmpHash, &hash.ID.Domain, &hash.ID.ID)
 		if err != nil {
-			return &hashes, err
+			rows.Close()
+			return &ch.SavedHashesV3{}, err
 		}
 		hash.Hash.Hash = uint64(tmpHash)
-		hashes.InsertHash(hash)
+		entries = append(entries, hash)
 	}
+	rows.Close()
+
 	rows, err = tx.Query("SELECT IEIDs.equivalentid, IDs.domain, IDs.stringid FROM IDs JOIN IDsToEquivalantIDs AS IEIDs ON IDs.id=IEIDs.idid ORDER BY IEIDs.equivalentid, IDs.domain, IDs.stringid;")
 	if err != nil {
-		return &hashes, err
+		return &ch.SavedHashesV3{}, err
 	}
 	var (
 		previousEid int64 = -1
 		ids         []ch.ID
+		groups      [][]ch.ID
 	)
 	for rows.Next() {
 		var (
 			id     ch.ID
 			newEid int64
 		)
-		err = rows.Scan(&newEid, &id.Domain, &id.Domain)
+		err = rows.Scan(&newEid, &id.Domain, &id.ID)
 		if err != nil {
-			return &hashes, err
+			rows.Close()
+			return &ch.SavedHashesV3{}, err
 		}
 		if newEid != previousEid {
 			previousEid = newEid
-			// Only keep groups len>1 as they are mapped in SavedHashes.Hashes
+			// Only keep groups len>1 as they are mapped in Hashes
 			if len(ids) > 1 {
-				hashes.IDs = append(hashes.IDs, ids)
+				groups = append(groups, ids)
 			}
 			ids = make([]ch.ID, 0)
 		}
 		ids = append(ids, id)
 	}
-	return &hashes, nil
+	rows.Close()
+	if len(ids) > 1 {
+		groups = append(groups, ids)
+	}
+	return ch.NewSavedHashesV3(&ch.SavedHashesV2{Hashes: entries, IDs: groups})
 }
 
 func (s *sqliteStorage) AssociateIDs(newIDs []ch.NewIDs) error {
@@ -404,7 +423,7 @@ func (s *sqliteStorage) AssociateIDs(newIDs []ch.NewIDs) error {
 		err := rows.Scan(&oldRowid, &eid)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return ErrIDNotFound
+				return ch.ErrIDNotFound
 			}
 			return err
 		}
@@ -431,7 +450,7 @@ func (s *sqliteStorage) AssociateIDs(newIDs []ch.NewIDs) error {
 func (s *sqliteStorage) GetIDs(id ch.ID) ch.IDList {
 	var ids []ch.ID
 	rows, err := s.idMatchStatement.Query(id.Domain, id.ID)
-	if err != nil {
+	if err != nil || rows.Err() != nil {
 		return nil
 	}
 	for rows.Next() {
