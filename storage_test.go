@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto"
-	"errors"
 	"fmt"
 	"io"
 	"net/http/httptest"
@@ -73,10 +72,11 @@ func SeedHashes(hs ch.HashStorage) {
 	hashes = append(hashes, sample3SavedHashes...)
 	hashes = append(hashes, sample4SavedHashes...)
 	hashes = append(hashes, exampleSavedHashes...)
-	hs.DecodeHashes(&ch.SavedHashesV2{
-		Version: 2,
-		Hashes:  hashes,
-	})
+	savedHashes, err := ch.NewSavedHashesV3(&ch.SavedHashesV2{Hashes: hashes})
+	if err != nil {
+		panic(err)
+	}
+	hs.DecodeHashes(savedHashes)
 }
 
 //	type HashStorage interface {
@@ -281,7 +281,7 @@ func TestHashServer(t *testing.T) {
 	}
 	SeedHashes(hs)
 
-	HashServer := ch.NewHashServer(filepath.Join(t.TempDir(), "hashes.gz"), ch.Msgpack)
+	HashServer := ch.NewHashServer(filepath.Join(t.TempDir(), "hashes.gz"))
 	req := httptest.NewRequest("GET", "/", nil)
 	err = HashServer.WriteHashes(hs)
 	if err != nil {
@@ -297,7 +297,7 @@ func TestHashServer(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to read response:", err)
 	}
-	_, err = ch.DecodeHashes(ch.Msgpack, decompressedHashes)
+	_, err = ch.DecodeHashesV3(bytes.NewReader(decompressedHashes))
 	if err != nil {
 		t.Fatal("failed to validate hashes:", err)
 	}
@@ -317,8 +317,15 @@ func TestHashServer(t *testing.T) {
 	}
 }
 
+func TestLoadEmbeddedHashes(t *testing.T) {
+	hs, err := storage.NewBasicMapStorage()
+	if err != nil {
+		t.Fatal("failed to create basic map storage:", err)
+	}
+	SeedEmbeddedHashes(hs)
+}
+
 func SeedEmbeddedHashes(hs ch.HashStorage) {
-	var err error
 	hashes := ch.Hashes
 	if gr, err := gzip.NewReader(bytes.NewReader(ch.Hashes)); err == nil {
 		hashes, err = io.ReadAll(gr)
@@ -328,16 +335,9 @@ func SeedEmbeddedHashes(hs ch.HashStorage) {
 		gr.Close()
 	}
 
-	var (
-		format       ch.Format
-		loadedHashes *ch.SavedHashesV2
-	)
-
-	for _, format = range []ch.Format{ch.Msgpack, ch.JSON} {
-		if loadedHashes, err = ch.DecodeHashes(format, hashes); errors.Is(err, ch.ErrDecodeFail) {
-			continue
-		}
-		break
+	loadedHashes, err := ch.DecodeHashesV3(bytes.NewReader(hashes))
+	if err != nil {
+		panic(err)
 	}
 	hs.DecodeHashes(loadedHashes)
 }
