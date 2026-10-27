@@ -76,6 +76,69 @@ type SavedHashV2 struct {
 	Hash Hash
 }
 
+// V3Header is stored verbatim at the beginning of a V3 hash file. The arrays
+// that follow it are fixed size records so they can be used directly from the
+// memory that was read from disk.
+type V3Header struct {
+	Magic      [4]byte
+	Version    uint32
+	Sources    [256][128]byte
+	IDCount    uint32
+	GroupCount uint32
+	GroupBytes uint32 // size of the IDGroups section in bytes
+	AHashCount uint32
+	DHashCount uint32
+	PHashCount uint32
+	// TODO: decide on an option for later additions
+}
+
+// SavedHashesV3 is designed to be loaded from disk in-place and used during runtime
+type SavedHashesV3 struct {
+	V3Header
+	Sources  []string
+	AHashes  []SavedHashV3
+	DHashes  []SavedHashV3
+	PHashes  []SavedHashV3
+	IDs      []SavedIDV3
+	IDIndex  []uint32
+	IDGroups [][]uint32 // This is a list of indexes into IDs. There can only be one id for a given source in a single group
+
+	// IDGroups uses 1 KB per group (256*4) at 1 million groups that is 976 MB
+	// Now we don't really have any groups but we could match them all to GCD data which would add all ~1 million
+	// It doesn't seem to be possible to direct load from disk the in-memory representation
+	// We can do a direct load for Hashes and IDs but IDGroups will have to be parsed in some way
+	// as of 10/24/2026 ComicVine: 1_143_667, Metron: 186_718, GCD: 2_210_245
+
+	// V3Header                       :  40 KB
+	// Hashes   3_540_630 * 3 * 16    :  162 MB
+	// IDs      3_540_630 * 40        :  135 MB
+	// IDIndex  3_540_630 * 4         :   13 MB
+	// IDGroups 3_540_630 * (4*256)   : 3457 MB
+	// IDGroups 3_540_630 * ((4*3)+24):  121 MB
+	// Total                          : 3767 MB
+	// Total (dynamic)                :  431 MB
+}
+
+type SavedIDV3 struct {
+	Source byte     // This is an index into Sources. We only support 256 different sources. There is no logical reason for this but it means that we have an exact size for the table
+	ID     [32]byte // ID is a string but for this use we need it to be sized. All known ID's are numbers so we have a maximum 32 digit number
+	_      byte     // Go Automatically adds padding here
+	_      byte
+	_      byte
+	Group  uint32 // This is an index into IDGroups. This should be math.MaxUint32 if there are no other ID's to group with this ID
+	// IDs are usually 8 characters or less which means we waste ~22 MB
+	// Technically Group will be mostly unused which will also waste ~4 MB but that will actually go down over time
+}
+
+type SavedHashV3 struct {
+	Hash uint64
+	ID   uint32 // index into IDs Go upgrades this value to a 8 byte aligned value no matter what due to the uint64 above
+	_    byte
+	_    byte
+	_    byte
+	_    byte
+}
+
 type (
 	Encoder        func(any) ([]byte, error)
 	Decoder        func([]byte, any) error
