@@ -62,9 +62,6 @@ func TestSavedHashesV3RoundTrip(t *testing.T) {
 	// indexes stored in the hash table.
 	newID := ID{Domain: NewSource("comicvine.gamespot.com"), ID: "0"}
 	loaded.InsertID(newID)
-	// if rid != 0 {
-	// 	t.Fatalf("expected the new ID to sort first, got index %d", rid)
-	// }
 	_, found = loaded.FindID(cvID)
 	if !found {
 		t.Fatal("failed to find CV ID after insert")

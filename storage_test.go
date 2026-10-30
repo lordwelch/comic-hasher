@@ -2,7 +2,6 @@ package main_test
 
 import (
 	"bytes"
-	"compress/gzip"
 	"crypto"
 	"fmt"
 	"io"
@@ -11,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	gzip "github.com/klauspost/pgzip"
 
 	gcmp "cmp"
 
@@ -22,7 +23,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
-func init() { log.LogLevels[log.ALL] = -99 }
+// func init() { log.LogLevels[log.ALL] = -99 }
 
 var cmpOpts = []cmp.Option{
 	cmpopts.EquateEmpty(),
@@ -80,17 +81,6 @@ func SeedHashes(hs ch.HashStorage) {
 	}
 	hs.DecodeHashes(savedHashes)
 }
-
-//	type HashStorage interface {
-//		GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error)
-//		MapHashes(ImageHash) Metrics
-//		DecodeHashes(hashes *SavedHashes) (Metrics, error)
-//		EncodeHashes() (*SavedHashes, error)
-//		AssociateIDs(newIDs []NewIDs) error
-//		GetIDs(id ID) IDList
-//		RLock()
-//		RUnlock()
-//	}
 
 func GetMatchesBasic(t *testing.T, hs ch.HashStorage) {
 	results, err := hs.GetMatches([]ch.Hash{{Hash: 0x183c3e3e7e2e3c18, Kind: goimagehash.AHash}}, 8, true)
@@ -326,7 +316,59 @@ func TestLoadEmbeddedHashes(t *testing.T) {
 	SeedEmbeddedHashes(hs)
 }
 
-func SeedEmbeddedHashes(hs ch.HashStorage) {
+func TestLoadEmbeddedHashesSafeOnly(t *testing.T) {
+	ch.SafeOnly = true
+	defer func() { ch.SafeOnly = false }()
+	hs, err := storage.NewBasicStorage()
+	if err != nil {
+		t.Fatal("failed to create basic map storage:", err)
+	}
+	SeedEmbeddedHashes(hs)
+}
+
+func BenchmarkLoadEmbeddedHashes(b *testing.B) {
+	hs, err := storage.NewBasicStorage()
+	if err != nil {
+		b.Fatal("failed to create basic map storage:", err)
+	}
+	for b.Loop() {
+		SeedEmbeddedHashes(hs)
+	}
+}
+
+func BenchmarkDecodeHashes(b *testing.B) {
+	hashes := unzipEmbedded()
+	hs, err := storage.NewBasicStorage()
+	if err != nil {
+		b.Fatal("failed to create basic map storage:", err)
+	}
+	for b.Loop() {
+		decodeHashes(hs, hashes)
+	}
+}
+
+func BenchmarkDecodeHashesSafeOnly(b *testing.B) {
+	ch.SafeOnly = true
+	defer func() { ch.SafeOnly = false }()
+	hashes := unzipEmbedded()
+	hs, err := storage.NewBasicStorage()
+	if err != nil {
+		b.Fatal("failed to create basic map storage:", err)
+	}
+	for b.Loop() {
+		decodeHashes(hs, hashes)
+	}
+}
+
+func decodeHashes(hs ch.HashStorage, hashes []byte) {
+	loadedHashes, err := ch.DecodeHashesV3(bytes.NewReader(hashes))
+	if err != nil {
+		panic(err)
+	}
+	hs.DecodeHashes(loadedHashes)
+}
+
+func unzipEmbedded() []byte {
 	hashes := ch.Hashes
 	if gr, err := gzip.NewReader(bytes.NewReader(ch.Hashes)); err == nil {
 		hashes, err = io.ReadAll(gr)
@@ -335,12 +377,11 @@ func SeedEmbeddedHashes(hs ch.HashStorage) {
 		}
 		gr.Close()
 	}
+	return hashes
+}
 
-	loadedHashes, err := ch.DecodeHashesV3(bytes.NewReader(hashes))
-	if err != nil {
-		panic(err)
-	}
-	hs.DecodeHashes(loadedHashes)
+func SeedEmbeddedHashes(hs ch.HashStorage) {
+	decodeHashes(hs, unzipEmbedded())
 }
 
 func BenchmarkStorageSmall(fuck *testing.B) {
