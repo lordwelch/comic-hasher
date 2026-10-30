@@ -405,39 +405,37 @@ func (s *sqliteStorage) EncodeHashes() (*ch.SavedHashesV3, error) {
 	return ch.NewSavedHashesV3(&ch.SavedHashesV2{Hashes: entries, IDs: groups})
 }
 
-func (s *sqliteStorage) AssociateIDs(newIDs []ch.NewIDs) error {
+func (s *sqliteStorage) AssociateIDs(OldID, NewID ch.ID) error {
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		panic(err)
 	}
 	insertID := tx.Stmt(s.insertID)
 	insertIEID := tx.Stmt(s.insertIEID)
-	for _, ids := range newIDs {
-		var (
-			newRowid int64
-			oldRowid int64
-			eid      int64
-		)
-		rows := tx.QueryRow(`SELECT ITEI.idid, ITEI.equivalentid from IDs JOIN IDsToEquivalantIDs AS ITEI ON IDs.id=ITEI.idid WHERE domain=? AND stringid=?`, ids.OldID.Domain, ids.OldID.ID)
+	var (
+		newRowid int64
+		oldRowid int64
+		eid      int64
+	)
+	rows := tx.QueryRow(`SELECT ITEI.idid, ITEI.equivalentid from IDs JOIN IDsToEquivalantIDs AS ITEI ON IDs.id=ITEI.idid WHERE domain=? AND stringid=?`, OldID.Domain, OldID.ID)
 
-		err := rows.Scan(&oldRowid, &eid)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ch.ErrIDNotFound
-			}
-			return err
+	err = rows.Scan(&oldRowid, &eid)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ch.ErrIDNotFound
 		}
+		return err
+	}
 
-		rows = insertID.QueryRow(ids.NewID.Domain, ids.NewID.ID)
+	rows = insertID.QueryRow(NewID.Domain, NewID.ID)
 
-		err = rows.Scan(&newRowid)
-		if err != nil {
-			return err
-		}
-		_, err = insertIEID.Exec(newRowid, eid)
-		if err != nil {
-			return err
-		}
+	err = rows.Scan(&newRowid)
+	if err != nil {
+		return err
+	}
+	_, err = insertIEID.Exec(newRowid, eid)
+	if err != nil {
+		return err
 	}
 
 	err = tx.Commit()
@@ -447,7 +445,7 @@ func (s *sqliteStorage) AssociateIDs(newIDs []ch.NewIDs) error {
 	return nil
 }
 
-func (s *sqliteStorage) GetIDs(id ch.ID) ch.IDList {
+func (s *sqliteStorage) GetIDs(id ch.ID) []ch.ID {
 	var ids []ch.ID
 	rows, err := s.idMatchStatement.Query(id.Domain, id.ID)
 	if err != nil || rows.Err() != nil {
@@ -461,7 +459,7 @@ func (s *sqliteStorage) GetIDs(id ch.ID) ch.IDList {
 		}
 		ids = append(ids, id)
 	}
-	return ch.ToIDList(ids)
+	return ids
 }
 
 func (s *sqliteStorage) PrepareStatements() error {
@@ -542,7 +540,8 @@ func NewSqliteStorage(db, path string) (ch.HashStorage, error) {
 		CREATE TABLE IF NOT EXISTS IDs(
 			id INTEGER PRIMARY KEY,
 			stringid TEXT NOT NULL,
-			domain TEXT NOT NULL
+			domain TEXT NOT NULL,
+			UNIQUE(domain, stringid)
 		);
 
 		CREATE TABLE IF NOT EXISTS Hashes(
@@ -550,7 +549,8 @@ func NewSqliteStorage(db, path string) (ch.HashStorage, error) {
 			kind INTEGER NOT NULL,
 			id INTEGER NOT NULL,
 
-			FOREIGN KEY(id) REFERENCES IDs(id)
+			FOREIGN KEY(id) REFERENCES IDs(id),
+			UNIQUE(kind, id)
 		);
 
 		CREATE TABLE IF NOT EXISTS EquivalentIDs(

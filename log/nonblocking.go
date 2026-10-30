@@ -38,7 +38,7 @@ func (d *ManyToOne) Next() Record {
 
 var Diode *ManyToOne //= NewManyToOne(15, nil)
 
-type T struct {
+type T struct { // TODO: what was this initially used for?
 	token string
 	value any
 	index int

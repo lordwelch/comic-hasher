@@ -198,8 +198,8 @@ func GetMatchesMultipleHashes(t *testing.T, hs ch.HashStorage) {
 
 func GetIDs(t *testing.T, hs ch.HashStorage) {
 	results := hs.GetIDs(ch.ID{Domain: ch.NewSource("example.org"), ID: "sample4.jpg"})
-	expected := ch.IDList{
-		ch.Source("example.org"): []string{"sample4.jpg"},
+	expected := []ch.ID{
+		{ch.NewSource("example.org"), "sample4.jpg"},
 	}
 	if diff := cmp.Diff(expected, results, cmpOpts...); diff != "" {
 		t.Errorf("GetIDs() mismatch (-want +got):\n%s", diff)
@@ -324,6 +324,44 @@ func TestLoadEmbeddedHashesSafeOnly(t *testing.T) {
 		t.Fatal("failed to create basic map storage:", err)
 	}
 	SeedEmbeddedHashes(hs)
+	want := hs.GetIDs(ch.ID{ch.NewSource(ch.ComicVine), "1197795"})
+	if diff := cmp.Diff(want, []ch.ID{{ch.NewSource(ch.ComicVine), "1197795"}}, cmpOpts...); diff != "" {
+		t.Errorf("embedded hashes are incorrect (-want +got):\n%s", diff)
+	}
+}
+
+func TestDecodeHashesV3(t *testing.T) {
+	t.Cleanup(func() { ch.SafeOnly = false })
+
+	var all []ch.SavedHashV2
+	all = append(all, sample1SavedHashes...)
+	all = append(all, sample2SavedHashes...)
+	all = append(all, sample3SavedHashes...)
+	all = append(all, sample4SavedHashes...)
+	all = append(all, exampleSavedHashes...)
+
+	want, err := ch.NewSavedHashesV3(&ch.SavedHashesV2{Hashes: all})
+	if err != nil {
+		t.Fatal("failed to build saved hashes:", err)
+	}
+
+	var buf bytes.Buffer
+	if err := ch.EncodeHashesV3(want, &buf); err != nil {
+		t.Fatal("failed to encode hashes:", err)
+	}
+
+	for _, safeOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("SafeOnly=%v", safeOnly), func(t *testing.T) {
+			ch.SafeOnly = safeOnly
+			got, err := ch.DecodeHashesV3(bytes.NewReader(buf.Bytes()))
+			if err != nil {
+				t.Fatal("failed to decode hashes:", err)
+			}
+			if diff := cmp.Diff(want, got, cmpOpts...); diff != "" {
+				t.Errorf("DecodeHashesV3() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
 }
 
 func BenchmarkLoadEmbeddedHashes(b *testing.B) {

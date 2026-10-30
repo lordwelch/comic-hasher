@@ -105,7 +105,7 @@ func TestSavedHashesV3AssociateIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := hashes.AssociateIDs(NewIDs{OldID: cvID, NewID: metronID}); err != nil {
+	if err := hashes.AssociateIDs(cvID, metronID); err != nil {
 		t.Fatal(err)
 	}
 	index, found := hashes.FindID(cvID)

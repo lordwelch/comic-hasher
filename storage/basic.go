@@ -153,27 +153,20 @@ func (b *BasicStorage) EncodeHashes() (*ch.SavedHashesV3, error) {
 	return b.hashes, nil
 }
 
-func (b *BasicStorage) AssociateIDs(newids []ch.NewIDs) error {
+func (b *BasicStorage) AssociateIDs(OldID, NewID ch.ID) error {
 	b.hashMutex.Lock()
 	defer b.hashMutex.Unlock()
-	var err error
-	for _, newid := range newids {
-		err = b.hashes.AssociateIDs(newid)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return b.hashes.AssociateIDs(OldID, NewID)
 }
 
-func (b *BasicStorage) GetIDs(id ch.ID) ch.IDList {
+func (b *BasicStorage) GetIDs(id ch.ID) []ch.ID {
 	b.hashMutex.RLock()
 	defer b.hashMutex.RUnlock()
 	rid, ok := b.hashes.FindID(id)
 	if !ok {
-		return ch.IDList{}
+		return nil
 	}
-	return ch.ToIDList(b.hashes.GetAllIDs(rid))
+	return b.hashes.GetAllIDs(rid)
 }
 
 func NewBasicStorage() (ch.HashStorage, error) {

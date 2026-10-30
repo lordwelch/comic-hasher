@@ -25,10 +25,9 @@ import (
 	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	dl "gitea.narnian.us/lordwelch/comic-hasher/download"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
-	chlog "gitea.narnian.us/lordwelch/comic-hasher/log"
 )
 
-var logger = chlog.NewLogger("comicvine", "downloads")
+var logger = log.NewLogger("comicvine", "downloads")
 
 type CVAuth string
 
@@ -134,10 +133,10 @@ type CVDownloader struct {
 	totalResults   int
 	imageWG        sync.WaitGroup
 	cvIssueQueue   chan *CVResult
-	notFound       chan download
+	notFound       chan failedDownload
 	chdb           ch.CHDB
 	bufPool        *sync.Pool
-	getID          func(id ch.ID) ch.IDList
+	getID          func(id ch.ID) []ch.ID
 	onlyHashNewIDs bool
 }
 
@@ -350,13 +349,11 @@ func (c *CVDownloader) downloadIssues() (int, error) {
 	return offset, nil
 }
 
-type download struct {
+type failedDownload struct {
 	url      string
-	dest     string
 	offset   int
 	volumeID int
 	issueID  int
-	finished bool
 }
 
 func (c *CVDownloader) handleNotFound() {
@@ -428,7 +425,7 @@ func (c *CVDownloader) startCoverDownload(list *CVResult, issue Issue, image Ima
 		return
 	}
 	if strings.HasSuffix(image.url, "6373148-blank.png") {
-		c.notFound <- download{
+		c.notFound <- failedDownload{
 			url:      image.url,
 			offset:   list.Offset,
 			volumeID: issue.Volume.ID,
@@ -439,12 +436,11 @@ func (c *CVDownloader) startCoverDownload(list *CVResult, issue Issue, image Ima
 
 	uri, err := url.ParseRequestURI(image.url)
 	if err != nil {
-		c.notFound <- download{
+		c.notFound <- failedDownload{
 			url:      image.url,
 			offset:   list.Offset,
 			volumeID: issue.Volume.ID,
 			issueID:  issue.ID,
-			finished: true,
 		}
 		return
 	}
@@ -463,7 +459,7 @@ func (c *CVDownloader) startCoverDownload(list *CVResult, issue Issue, image Ima
 	buf := c.bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
 	req, _ := http.NewRequest("GET", image.url, nil)
-	if c.chdb.PathDownloaded(imagePath) || c.onlyHashNewIDs && len(existingIDs) > 0 {
+	if c.chdb.PathDownloaded(filepath.Join(WorkDirectory, imagePath)) || c.onlyHashNewIDs && len(existingIDs) > 0 {
 		if !c.SendExistingImages {
 			return
 		}
@@ -570,7 +566,7 @@ func NewCVDownloader(
 	version string,
 	bufPool *sync.Pool,
 	onlyHashNewIDs bool,
-	getID func(id ch.ID) ch.IDList,
+	getID func(id ch.ID) []ch.ID,
 	chdb ch.CHDB,
 	basePath, APIKey string,
 	imageTypes Images,
@@ -597,8 +593,8 @@ func DownloadCovers(ctx context.Context, c *CVDownloader) {
 	c.Context = log.NewContext(ctx, logger)
 
 	c.StartDownloadQueue = make(chan dl.Download, 1)
-	c.cvIssueQueue = make(chan *CVResult) // This is just json it shouldn't take up much more than 122 MB
-	c.notFound = make(chan download, 1)   // Same here
+	c.cvIssueQueue = make(chan *CVResult)     // This is just json it shouldn't take up much more than 122 MB
+	c.notFound = make(chan failedDownload, 1) // Same here
 	JSONPath := filepath.Join(c.basePath, jsonDirectory)
 	ImagePath := filepath.Join(c.basePath, imageDirectory)
 	_ = os.MkdirAll(JSONPath, 0o777)

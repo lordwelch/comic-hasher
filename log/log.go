@@ -180,12 +180,14 @@ var Levels = map[Level]string{
 	Fatal:    "fatal",
 }
 
-var tokens = []string{
+var tokens = []string{ // TODO: what was this used for initially??
 	"{level}",
 	"{message}",
-	"{filename}",
+	"{file}",
+	"{longfile}",
 	"{line}",
 	"{function}",
+	"{logger}",
 }
 
 var funcNames = map[string]bool{

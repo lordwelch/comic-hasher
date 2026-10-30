@@ -1,5 +1,3 @@
-//go:build !386 && !arm
-
 package ch
 
 import (
@@ -307,7 +305,7 @@ func NewHashServer(hashes string, useAllChecksums bool) HashServer {
 	f, err := os.Open(hashes)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return h //nolint:govet
+			return h // nolint:govet
 		}
 		panic(fmt.Errorf("unable to open the hashes file %q: %w", hashes, err))
 	}
@@ -322,7 +320,7 @@ func NewHashServer(hashes string, useAllChecksums bool) HashServer {
 		digest.Reset() // may possibly keep some memory free...
 	}
 
-	return h //nolint:govet
+	return h // nolint:govet
 }
 
 func (h *HashServer) initDigests(writer io.Writer) io.Writer {
@@ -419,16 +417,10 @@ func (s *Server) associateIDs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logger.Log(log.Standard, "Attempting to associate %s:%s to %s:%s", domain, id, newDomain, newID)
-	err := s.Storage.AssociateIDs([]NewIDs{{
-		OldID: ID{
-			Domain: &domain,
-			ID:     id,
-		},
-		NewID: ID{
-			Domain: &newDomain,
-			ID:     newID,
-		},
-	}})
+	err := s.Storage.AssociateIDs(
+		ID{Domain: &domain, ID: id},
+		ID{Domain: &newDomain, ID: newID},
+	)
 
 	if err == nil {
 		writeJSON(w, http.StatusOK, result{Msg: "New ID added"})

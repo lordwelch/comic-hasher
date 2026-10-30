@@ -25,7 +25,6 @@ import (
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"github.com/go-json-experiment/json"
 	bolt "go.etcd.io/bbolt"
-	"golang.org/x/time/rate"
 )
 
 var logger = log.NewLogger("metron", "downloads")
@@ -147,16 +146,11 @@ type Downloader struct {
 	PageCache Bolt
 	StartDate time.Time
 
-	burstLimit *rate.Limiter
-	token      string
-
-	fileList     []string
 	totalResults int
-	imageWG      sync.WaitGroup
 	// notFound       chan download
 	chdb    ch.CHDB
 	bufPool *sync.Pool
-	getID   func(id ch.ID) ch.IDList
+	getID   func(id ch.ID) []ch.ID
 }
 
 // Key is a key to an item in a bolt bucket
@@ -261,7 +255,7 @@ func NewDownloader(
 	version string,
 	bufPool *sync.Pool,
 	onlyHashNewIDs bool,
-	getID func(id ch.ID) ch.IDList,
+	getID func(id ch.ID) []ch.ID,
 	chdb ch.CHDB,
 	basePath, APIKey string,
 	keepDownloadedImages, sendExistingImages bool,
@@ -304,7 +298,7 @@ func (d *Downloader) cleanDirs() {
 func MustParseURL(rawURI string) *url.URL {
 	uri, err := url.Parse(rawURI)
 	if err != nil {
-		panic(fmt.Errorf("Failed to parse url: %w", err))
+		panic(fmt.Errorf("failed to parse url: %w", err))
 	}
 	return uri
 }
@@ -333,7 +327,7 @@ func (d *Downloader) getPage(pageURL url.URL) ([]byte, time.Time, error) {
 		return content, sleepTo, fmt.Errorf("failed to cache metron search page: %v: %w", pageURL, err)
 	}
 	if resp.StatusCode == http.StatusOK {
-		return content, sleepTo, errExit
+		return content, sleepTo, nil
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return content, sleepTo, ErrRetry
@@ -486,7 +480,6 @@ func (d *Downloader) processIssues() error {
 					case <-d.Context.Done():
 						return d.Context.Err()
 					}
-
 				}
 				if i > 20 {
 					return errExit

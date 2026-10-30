@@ -21,8 +21,8 @@ func TestSavedHashesV3AssociateIDsMergesGroups(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := hashes.AssociateIDs(NewIDs{OldID: metronID, NewID: gcdID}); err != nil {
-		t.Fatal(err)
+	if err := hashes.AssociateIDs(metronID, gcdID); err != nil {
+		t.Fatal("failed to associate IDs:", err)
 	}
 	index, found := hashes.FindID(cvID)
 	if !found {
@@ -50,7 +50,7 @@ func TestSavedHashesV3AssociateIDsSameSourceConflict(t *testing.T) {
 
 	// metron:2 already belongs to a group that contains a comicvine ID so
 	// comicvine:3 cannot be added to it.
-	if err := hashes.AssociateIDs(NewIDs{OldID: cvOther, NewID: metronID}); err == nil {
+	if err := hashes.AssociateIDs(cvOther, metronID); err == nil {
 		t.Fatal("expected associating two IDs from the same source to fail")
 	}
 	index, found := hashes.FindID(cvOther)

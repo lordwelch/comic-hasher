@@ -140,7 +140,7 @@ func (v *VPTree) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) {
 			}
 
 			if id == (ch.ID{}) {
-				return ch.Metrics{}, fmt.Errorf("Empty ID detected")
+				return ch.Metrics{}, fmt.Errorf("empty ID detected")
 			}
 		}
 	}
@@ -165,14 +165,14 @@ func (v *VPTree) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) {
 }
 
 func (v *VPTree) EncodeHashes() (*ch.SavedHashesV3, error) {
-	return &ch.SavedHashesV3{}, errors.New("Not Implemented")
+	return &ch.SavedHashesV3{}, errors.New("not implemented")
 }
 
-func (v *VPTree) AssociateIDs(newIDs []ch.NewIDs) error {
-	return errors.New("Not Implemented")
+func (v *VPTree) AssociateIDs(OldID, NewID ch.ID) error {
+	return errors.New("not implemented")
 }
 
-func (v *VPTree) GetIDs(id ch.ID) ch.IDList {
+func (v *VPTree) GetIDs(id ch.ID) []ch.ID {
 	if v.hashes == nil {
 		return nil
 	}
@@ -180,7 +180,7 @@ func (v *VPTree) GetIDs(id ch.ID) ch.IDList {
 	if !found {
 		return nil
 	}
-	return ch.ToIDList(v.hashes.GetAllIDs(rid))
+	return v.hashes.GetAllIDs(rid)
 }
 
 func NewVPStorage() (ch.HashStorage, error) {
