@@ -298,7 +298,7 @@ func (s *SavedHashesV3) FindID(id ID) (uint32, bool) {
 	return s.IDIndex[index], true
 }
 
-// InsertIDNoSort is the same as InsertID but does not sort the IDIndex
+// InsertIDNoSort is the same as InsertID but does not sort the IDIndex. You must call SortIndex after this
 func (s *SavedHashesV3) InsertIDNoSort(id ID) (uint32, error) {
 	if id.Domain == nil {
 		return 0, errors.New("cannot insert an ID without a source")
@@ -622,8 +622,8 @@ func NewSavedHashesV3(hashes *SavedHashesV2) (*SavedHashesV3, error) {
 	b.PHashes = make([]SavedHashV3, 0, pHashCount)
 	var hash SavedHashV2
 	for _, hash = range hashes.Hashes {
-		// TODO: Investigate better options to load in the ID
-		// This is fine for insert hashes because we already sort by the ID
+		// InsertIDNoSort is an append with extra checks it's fast enough for this purpose
+		// Note that SortIndex must be called after these inserts it creates the IDIndex which is critical for operation
 		id, err := b.InsertIDNoSort(hash.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create V3 hashes: %w", err)
@@ -650,10 +650,7 @@ func NewSavedHashesV3(hashes *SavedHashesV2) (*SavedHashesV3, error) {
 			return nil, fmt.Errorf("empty ID detected: %v", hash)
 		}
 	}
-	b.IDIndex = make([]uint32, len(b.IDs))
-	for i := range b.IDIndex {
-		b.IDIndex[i] = uint32(i)
-	}
+
 	b.SortIndex()
 
 	for _, ids := range hashes.IDs {
