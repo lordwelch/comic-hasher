@@ -10,6 +10,7 @@ type CHDB interface {
 	CheckURL(url string) bool
 	AddURL(url string)
 	Close() error
+	Compact() error
 }
 
 var CHDBLogger = log.NewLogger("chdb")
