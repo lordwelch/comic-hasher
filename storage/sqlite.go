@@ -428,7 +428,7 @@ func (s *sqliteStorage) AssociateIDs(newIDs []ch.NewIDs) error {
 	return nil
 }
 
-func (s *sqliteStorage) GetIDs(id ch.ID) ch.IDList {
+func (s *sqliteStorage) GetIDs(id ch.ID) []ch.ID {
 	var ids []ch.ID
 	rows, err := s.idMatchStatement.Query(id.Domain, id.ID)
 	if err != nil {
@@ -442,7 +442,7 @@ func (s *sqliteStorage) GetIDs(id ch.ID) ch.IDList {
 		}
 		ids = append(ids, id)
 	}
-	return ch.ToIDList(ids)
+	return ids
 }
 
 func (s *sqliteStorage) PrepareStatements() error {

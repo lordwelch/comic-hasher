@@ -146,7 +146,7 @@ type Downloader struct {
 	// notFound       chan download
 	chdb    ch.CHDB
 	bufPool *sync.Pool
-	getID   func(id ch.ID) ch.IDList
+	getID   func(id ch.ID) []ch.ID
 }
 
 // Key is a key to an item in a bolt bucket
@@ -251,7 +251,7 @@ func NewDownloader(
 	version string,
 	bufPool *sync.Pool,
 	onlyHashNewIDs bool,
-	getID func(id ch.ID) ch.IDList,
+	getID func(id ch.ID) []ch.ID,
 	chdb ch.CHDB,
 	basePath, APIKey string,
 	keepDownloadedImages, sendExistingImages bool,
