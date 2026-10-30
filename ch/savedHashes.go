@@ -184,7 +184,176 @@ func UnsafeCString(b []byte, length ...int) string {
 	return unsafe.String(&b[0], length[0])
 }
 
-// Compact must not be called during operation
+func (s *SavedHashesV3) slowMerge(n *SavedHashesV3, _ []byte) error {
+	logger.Println(log.MoreVerbose, "Slow merge")
+	IDMap := make([]uint32, len(n.IDs))
+
+	// Look up against the existing sorted index
+	for i := range n.IDs {
+		// InsertIDNoSort finds any existing ID in IDIndex and if it doesn't find one it adds it to IDs
+		// It never modifies IDIndex so we don't need to worry about sorting until we are done inserting
+		// We already don't allow duplicate IDs so this can never insert a duplicate
+		idx, err := s.InsertIDNoSort(n.IDAt(uint32(i)))
+		if err != nil {
+			return fmt.Errorf("failed to merge hashes: unable to add ID(%v): %w", n.IDAt(uint32(i)), err)
+		}
+		IDMap[i] = idx
+	}
+
+	// sort the index so we include the new IDs we just added
+	s.SortIndex()
+
+	// Merge groups
+	for _, group := range n.IDGroups {
+		for i := 1; i < len(group); i++ {
+			err := s.AssociateIDs(s.IDAt(IDMap[group[0]]), s.IDAt(IDMap[group[i]]))
+			if err != nil {
+				return fmt.Errorf("failed to merge hashes: unable to merge ID (%v) from Group(%v): %w", n.IDAt(group[i]), n.GetAllIDs(group[0]), err)
+			}
+		}
+	}
+
+	for i := range n.AHashes {
+		n.AHashes[i].ID = IDMap[n.AHashes[i].ID]
+	}
+	for i := range n.DHashes {
+		n.DHashes[i].ID = IDMap[n.DHashes[i].ID]
+	}
+	for i := range n.PHashes {
+		n.PHashes[i].ID = IDMap[n.PHashes[i].ID]
+	}
+	return nil
+}
+
+func (s *SavedHashesV3) fastMerge(n *SavedHashesV3, sourceMap []byte) error {
+	logger.Println(log.MoreVerbose, "Fast merge")
+	var i int
+	// None of the sources overlap so inherently none of the IDGroups can overlap
+	s.IDGroups = append(s.IDGroups, n.IDGroups...)
+	// None of the sources overlap so inherently none of the IDs can overlap
+	s.IDs = append(s.IDs, n.IDs...)
+
+	for _, group := range n.IDGroups {
+		for i = range group {
+			group[i] += s.IDCount
+		}
+	}
+	for i = range n.IDs {
+		n.IDs[i].Source = sourceMap[n.IDs[i].Source]
+		n.IDs[i].Group += s.GroupCount
+	}
+
+	for i = range n.AHashes {
+		n.AHashes[i].ID += s.IDCount
+	}
+
+	for i = range n.DHashes {
+		n.DHashes[i].ID += s.IDCount
+	}
+
+	for i = range n.PHashes {
+		n.PHashes[i].ID += s.IDCount
+	}
+	return nil
+}
+
+func (s *SavedHashesV3) LogHashInfo(level log.Level, prefix string) {
+	if prefix != "" {
+		log.Log(level, "% 15s: Hashes loaded         : %v", prefix, log.FormatInt(s.AHashCount+s.DHashCount+s.PHashCount))
+		log.Log(level, "% 15s: IDs loaded            : %v", prefix, log.FormatInt(s.IDCount))
+		log.Log(level, "% 15s: ID groups loaded      : %v", prefix, log.FormatInt(s.GroupCount))
+		log.Log(level, "% 15s: Hashes are consistent : %v", prefix, s.AHashCount == s.DHashCount && s.AHashCount == s.PHashCount)
+		log.Log(level, "% 15s: Hashes match IDs      : %v", prefix, s.AHashCount == s.IDCount)
+		return
+	}
+	log.Log(level, "Hashes loaded         : %v", log.FormatInt(s.AHashCount+s.DHashCount+s.PHashCount))
+	log.Log(level, "IDs loaded            : %v", log.FormatInt(s.IDCount))
+	log.Log(level, "ID groups loaded      : %v", log.FormatInt(s.GroupCount))
+	log.Log(level, "Hashes are consistent : %v", s.AHashCount == s.DHashCount && s.AHashCount == s.PHashCount)
+	log.Log(level, "Hashes match IDs      : %v", s.AHashCount == s.IDCount)
+}
+
+// Merge allows adding hashes to the current set as with a fast path when new hashes come from a separate Source
+func (s *SavedHashesV3) Merge(n *SavedHashesV3) error {
+	s.Compact()
+	n.Compact()
+
+	expectIDCount := s.IDCount + n.IDCount
+	expectGroupCount := s.GroupCount + n.GroupCount
+	expectAHashCount := s.AHashCount + n.AHashCount
+	expectDHashCount := s.DHashCount + n.DHashCount
+	expectPHashCount := s.PHashCount + n.PHashCount
+	expectSourceCount := len(s.Sources) + len(n.Sources)
+	expectConsistent := s.AHashCount == s.DHashCount && s.AHashCount == s.PHashCount && s.AHashCount == s.IDCount
+	expectConsistent = expectConsistent && n.AHashCount == n.DHashCount && n.AHashCount == n.PHashCount && n.AHashCount == n.IDCount
+
+	var err error
+	sourcesOverlap := false
+	sourceMap := make([]byte, 256)
+	for i, source := range n.Sources {
+		index := slices.Index(s.Sources, source)
+		if index < 0 {
+			err = s.addSource(source)
+			if err != nil {
+				return fmt.Errorf("unable to merge hashes: %w", err)
+			}
+		} else {
+			sourcesOverlap = true
+		}
+		index = slices.Index(s.Sources, source)
+		sourceMap[i] = byte(index)
+	}
+
+	if sourcesOverlap {
+		err = s.slowMerge(n, sourceMap)
+	} else {
+		err = s.fastMerge(n, sourceMap)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	// add hashes // not slow
+	s.AHashes = append(s.AHashes, n.AHashes...)
+	s.DHashes = append(s.DHashes, n.DHashes...)
+	s.PHashes = append(s.PHashes, n.PHashes...)
+
+	s.Sort()
+
+	s.LogHashInfo(log.Debug, "post-merge")
+	// de-duplicates hashes and sorts everything
+	s.Compact()
+	if !sourcesOverlap {
+		if len(s.Sources) != expectSourceCount {
+			return fmt.Errorf("failed to merge hashes: expected %d Sources, got %d Sources", expectSourceCount, len(s.Sources))
+		}
+		if s.IDCount != expectIDCount {
+			return fmt.Errorf("failed to merge hashes: expected %d IDs, got %d IDs", expectIDCount, s.IDCount)
+		}
+		if s.GroupCount != expectGroupCount {
+			return fmt.Errorf("failed to merge hashes: expected %d Groups, got %d Groups", expectGroupCount, s.GroupCount)
+		}
+		if s.AHashCount != expectAHashCount {
+			return fmt.Errorf("failed to merge hashes: expected %d A Hashes, got %d A Hashes", expectAHashCount, s.AHashCount)
+		}
+		if s.DHashCount != expectDHashCount {
+			return fmt.Errorf("failed to merge hashes: expected %d D Hashes, got %d D Hashes", expectDHashCount, s.DHashCount)
+		}
+		if s.PHashCount != expectPHashCount {
+			return fmt.Errorf("failed to merge hashes: expected %d P Hashes, got %d P Hashes", expectPHashCount, s.PHashCount)
+		}
+		consistent := s.AHashCount == s.DHashCount && s.AHashCount == s.PHashCount && s.AHashCount == s.IDCount
+		if consistent != expectConsistent {
+			return fmt.Errorf("failed to merge hashes: expected consistency %v, got consistency %v", expectConsistent, consistent)
+		}
+	}
+	s.LogHashInfo(log.Debug, "post-compact")
+
+	return nil
+}
+
+// Compact must not be called during operation. Sort is automatically called after Compacting
 func (s *SavedHashesV3) Compact() {
 	cmpSort := func(a, b SavedHashV3) int { return a.Compare(b) }
 	cmpCompact := func(a, b SavedHashV3) bool { return a.Compare(b) == 0 }
@@ -230,9 +399,13 @@ func (s *SavedHashesV3) Compact() {
 		}
 		s.IDGroups = newGroups
 	}
+	s.Sort()
 }
 
 func (s *SavedHashesV3) SortIDs() {
+	// Having a bad index can corrupt the hashes, so we force a re-build
+	s.IDIndex = nil
+	s.SortIndex()
 	// old -> new map
 	remap := make([]uint32, len(s.IDs))
 	for newIdx, old := range s.IDIndex {
@@ -280,6 +453,13 @@ func (s *SavedHashesV3) compareIndex(a uint32, b uint32) int {
 }
 
 func (s *SavedHashesV3) SortIndex() {
+	if len(s.IDIndex) != len(s.IDs) {
+		s.IDIndex = slices.Grow(s.IDIndex, len(s.IDs))[:len(s.IDs)]
+		s.IDCount = uint32(len(s.IDs))
+		for i := range s.IDIndex {
+			s.IDIndex[i] = uint32(i)
+		}
+	}
 	if !slices.IsSortedFunc(s.IDIndex, s.compareIndex) {
 		slices.SortFunc(s.IDIndex, s.compareIndex)
 	}
@@ -298,7 +478,9 @@ func (s *SavedHashesV3) FindID(id ID) (uint32, bool) {
 	return s.IDIndex[index], true
 }
 
-// InsertIDNoSort is the same as InsertID but does not sort the IDIndex. You must call SortIndex after this
+// InsertIDNoSort finds any existing ID in IDIndex and if it doesn't find one it adds it to IDs.
+// It never modifies IDIndex so you cannot call this with the same ID twice. It may corrupt the hashes.
+// You must call SortIndex after this
 func (s *SavedHashesV3) InsertIDNoSort(id ID) (uint32, error) {
 	if id.Domain == nil {
 		return 0, errors.New("cannot insert an ID without a source")
@@ -325,8 +507,6 @@ func (s *SavedHashesV3) InsertIDNoSort(id ID) (uint32, error) {
 	}
 	i = uint32(len(s.IDs))
 	s.IDs = append(s.IDs, target)
-	s.IDIndex = append(s.IDIndex, i)
-	s.IDCount = uint32(len(s.IDs))
 
 	return i, nil
 }
@@ -337,6 +517,8 @@ func (s *SavedHashesV3) InsertID(id ID) (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
+	s.IDIndex = append(s.IDIndex, i)
+	s.IDCount = uint32(len(s.IDs))
 	s.SortIndex()
 
 	return i, nil
@@ -595,24 +777,18 @@ func NewSavedHashesV3(hashes *SavedHashesV2) (*SavedHashesV3, error) {
 	}
 
 	slices.SortFunc(hashes.Hashes, func(existing, target SavedHashV2) int {
-		return cmp.Or(
-			strings.Compare(string(*existing.ID.Domain), string(*target.ID.Domain)), // Sorted for id insertion efficiency
-			strings.Compare(existing.ID.ID, target.ID.ID),                           // Sorted for id insertion efficiency
-			cmp.Compare(existing.Hash.Kind, target.Hash.Kind),
-			cmp.Compare(existing.Hash.Hash, target.Hash.Hash),
-		)
+		return existing.ID.Compare(target.ID)
 	})
 	aHashCount := 0
 	dHashCount := 0
 	pHashCount := 0
 	for _, savedHash := range hashes.Hashes {
-		if savedHash.Hash.Kind == goimagehash.AHash {
+		switch savedHash.Hash.Kind {
+		case goimagehash.AHash:
 			aHashCount += 1
-		}
-		if savedHash.Hash.Kind == goimagehash.DHash {
+		case goimagehash.DHash:
 			dHashCount += 1
-		}
-		if savedHash.Hash.Kind == goimagehash.PHash {
+		case goimagehash.PHash:
 			pHashCount += 1
 		}
 	}
@@ -623,11 +799,13 @@ func NewSavedHashesV3(hashes *SavedHashesV2) (*SavedHashesV3, error) {
 	var hash SavedHashV2
 	for _, hash = range hashes.Hashes {
 		// InsertIDNoSort is an append with extra checks it's fast enough for this purpose
-		// Note that SortIndex must be called after these inserts it creates the IDIndex which is critical for operation
 		id, err := b.InsertIDNoSort(hash.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create V3 hashes: %w", err)
 		}
+		// We depend on InsertIDNoSort finding the existing ID so we need to append to the IDIndex.
+		// The hashes are already sorted by ID
+		b.IDIndex = append(b.IDIndex, id)
 		switch hash.Hash.Kind {
 		case goimagehash.AHash:
 			b.AHashes = append(b.AHashes, SavedHashV3{
@@ -676,8 +854,6 @@ func NewSavedHashesV3(hashes *SavedHashesV2) (*SavedHashesV3, error) {
 	}
 
 	b.Compact()
-
-	b.Sort()
 	return b, nil
 }
 
@@ -714,7 +890,6 @@ func EncodeHashesV3(hashes *SavedHashesV3, w io.Writer) error {
 		return errors.New("cannot encode nil hashes")
 	}
 	hashes.Compact()
-	hashes.Sort()
 	if hashes.AHashCount != uint32(len(hashes.AHashes)) ||
 		hashes.DHashCount != uint32(len(hashes.DHashes)) ||
 		hashes.PHashCount != uint32(len(hashes.PHashes)) ||
