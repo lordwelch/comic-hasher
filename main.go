@@ -498,6 +498,11 @@ func startServer(opts Opts) {
 		log.Println(log.Verbose, "Skipping", dw)
 	}
 
+	log.Println(log.Verbose, "Compacting CHDB")
+	err = chdb.Compact()
+	if err != nil {
+		log.Println(log.Verbose, "Failed to compact the CHDB, this is probably fine:", err)
+	}
 	_ = chdb.Close()
 
 	// server.EncodeHashes would normally need a read lock
