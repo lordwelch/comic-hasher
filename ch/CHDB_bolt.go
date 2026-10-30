@@ -114,6 +114,52 @@ func BoltTruncate(db *bolt.DB, version Version) (*bolt.DB, error) {
 	return bolt.Open(path, 0o644, nil)
 }
 
+// Compact must not be run while the database is actively being used
+func (c CHDBBolt) Compact() error {
+	var needsCompaction bool
+	c.DB.View(func(tx *bolt.Tx) error {
+		var s bolt.BucketStats
+		var count int
+		if err := tx.ForEach(func(name []byte, b *bolt.Bucket) error {
+			if bytes.HasPrefix(name, []byte{}) {
+				s.Add(b.Stats())
+				count += 1
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		needsCompaction = (s.BranchAlloc > 0 && float32(s.BranchInuse)*100.0/float32(s.BranchAlloc) < 0.7) || (s.LeafAlloc > 0 && float32(s.LeafInuse)*100.0/float32(s.LeafAlloc) < 0.7)
+		return nil
+	})
+	if !needsCompaction {
+		return nil
+	}
+	c.Close()
+
+	compactCHDBPath := c.Path + "compacted.bolt"
+	db, err := bolt.Open(c.Path, 0o644, &bolt.Options{FreelistType: bolt.FreelistArrayType, Timeout: time.Millisecond * 100, ReadOnly: true})
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer db.Close()
+	var compactDB *bolt.DB
+	compactDB, err = bolt.Open(compactCHDBPath, 0o644, &bolt.Options{FreelistType: bolt.FreelistArrayType, Timeout: time.Millisecond * 100, NoSync: true})
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer compactDB.Close()
+	err = bolt.Compact(compactDB, db, 65536)
+	if err != nil {
+		return fmt.Errorf("failed to compact the database: %w", err)
+	}
+	defer func() {
+		os.Rename(compactCHDBPath, c.Path)
+		c.DB, _ = bolt.Open(c.Path, 0o644, &bolt.Options{FreelistType: bolt.FreelistArrayType, Timeout: time.Millisecond * 100})
+		// TODO should I check this? This should basically only happen if the close above fails
+	}()
+	return compactDB.Sync()
+}
 func (c CHDBBolt) Import(paths []string, badURLs []string) {
 	slices.Sort(paths)
 	slices.Sort(badURLs)

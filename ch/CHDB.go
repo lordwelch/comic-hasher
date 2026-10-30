@@ -13,6 +13,7 @@ type CHDB interface {
 
 	GetSourceID(string) byte
 	GetSourceName(sourceID byte) string
+	Compact() error
 }
 
 var CHDBLogger = log.NewLogger("chdb")

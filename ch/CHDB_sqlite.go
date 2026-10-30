@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS bad_urls(
 	return CHDBSqlite{path, sql, deleteExisting}, err
 }
 
+func (s CHDBSqlite) Compact() error {
+	_, err := sql.Exec(`VACUUM;`)
+	return err
+}
 func (s CHDBSqlite) Dump() (paths []string, badURLs []string) {
 	rows, err := s.sql.Query("SELECT path from paths")
 	if err != nil {

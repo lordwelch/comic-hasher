@@ -499,6 +499,9 @@ func startServer(opts Opts) {
 		log.Println(log.Verbose, "Skipping", dw)
 	}
 
+	log.Println(log.Verbose, "Compacting CHDB")
+	err = chdb.Compact()
+	log.Println(log.Verbose, "Finished Compacting CHDB", err)
 	_ = chdb.Close()
 
 	// server.EncodeHashes would normally need a read lock
