@@ -189,12 +189,7 @@ func loadHashes(opts Opts) *ch.SavedHashesV3 {
 		log.Println(log.Fatal, "Failed to decode hashes:", err)
 		os.Exit(1)
 	}
-	log.Println(log.Verbose, "Hashes loaded   ", log.FormatInt(loadedHashes.AHashCount+loadedHashes.DHashCount+loadedHashes.PHashCount))
-	log.Println(log.Verbose, "IDs loaded      ", log.FormatInt(loadedHashes.IDCount))
-	log.Println(log.Verbose, "ID groups loaded", log.FormatInt(loadedHashes.GroupCount))
-	log.Println(log.Debug, "Hashes are consistent:", loadedHashes.AHashCount == loadedHashes.DHashCount && loadedHashes.AHashCount == loadedHashes.PHashCount)
-	log.Println(log.Debug, "Hashes match IDs:", loadedHashes.AHashCount == loadedHashes.IDCount)
-	log.Println(log.Verbose, "Successfully Loaded V3 hashes")
+	loadedHashes.LogHashInfo(log.Verbose, "")
 
 	return loadedHashes
 }
