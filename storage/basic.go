@@ -24,7 +24,7 @@ type RuntimeHash2 struct {
 	Hash uint64
 	ID   RuntimeID
 }
-type BasicMapStorage struct {
+type BasicStorage struct {
 	hashMutex *sync.RWMutex
 	ids       IDMap
 	AHashes   []RuntimeHash2
@@ -215,16 +215,16 @@ func (m *IDMap) AssociateIDs(newids []ch.NewIDs) error {
 
 var ErrIDNotFound = errors.New("ID not found on this server")
 
-func (b *BasicMapStorage) RLock() {
+func (b *BasicStorage) RLock() {
 	b.hashMutex.RLock()
 }
 
-func (b *BasicMapStorage) RUnlock() {
+func (b *BasicStorage) RUnlock() {
 	b.hashMutex.RUnlock()
 }
 
 // atleast must have a read lock before using
-func (b *BasicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, searchHash uint64) []ch.Result {
+func (b *BasicStorage) atleast(kind goimagehash.Kind, maxDistance int, searchHash uint64) []ch.Result {
 	otherHashes := make([]ch.Result, 0, 20) // hope that we don't need more
 
 	storedHash := RuntimeHash2{}
@@ -248,7 +248,7 @@ func (b *BasicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, search
 	return matchingHashes
 }
 
-func (b *BasicMapStorage) exactMatches(hashes []ch.Hash) []ch.Result {
+func (b *BasicStorage) exactMatches(hashes []ch.Hash) []ch.Result {
 	var foundMatches []ch.Result
 	for _, hash := range hashes {
 		mappedIds := map[RuntimeID]bool{}
@@ -275,7 +275,7 @@ func (b *BasicMapStorage) exactMatches(hashes []ch.Hash) []ch.Result {
 	return foundMatches
 }
 
-func (b *BasicMapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Result, error) {
+func (b *BasicStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Result, error) {
 	var (
 		foundMatches []ch.Result
 		tl           ch.TimeLog
@@ -304,7 +304,7 @@ func (b *BasicMapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) 
 }
 
 // getCurrentHashes must have a read lock before using
-func (b *BasicMapStorage) getCurrentHashes(kind goimagehash.Kind) *[]RuntimeHash2 {
+func (b *BasicStorage) getCurrentHashes(kind goimagehash.Kind) *[]RuntimeHash2 {
 	if kind == goimagehash.AHash {
 		return &b.AHashes
 	}
@@ -321,7 +321,7 @@ func (b *BasicMapStorage) getCurrentHashes(kind goimagehash.Kind) *[]RuntimeHash
 // must have a read lock before using
 // return value is index, count
 // if count < 1 then no results were found
-func (b *BasicMapStorage) findHash(hash ch.Hash) (int, int) {
+func (b *BasicStorage) findHash(hash ch.Hash) (int, int) {
 	currentHashes := *b.getCurrentHashes(hash.Kind)
 	index, found := slices.BinarySearchFunc(currentHashes, hash, func(existing RuntimeHash2, target ch.Hash) int {
 		return cmp.Compare(existing.Hash, target.Hash)
@@ -337,7 +337,7 @@ func (b *BasicMapStorage) findHash(hash ch.Hash) (int, int) {
 }
 
 // insertHash must already have a lock
-func (b *BasicMapStorage) insertHash(hash ch.Hash, id ch.ID) bool {
+func (b *BasicStorage) insertHash(hash ch.Hash, id ch.ID) bool {
 	currentHashes := b.getCurrentHashes(hash.Kind)
 	start, count := b.findHash(hash)
 	m := start + count
@@ -358,7 +358,7 @@ func (b *BasicMapStorage) insertHash(hash ch.Hash, id ch.ID) bool {
 	return false
 }
 
-func (b *BasicMapStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
+func (b *BasicStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 	b.hashMutex.Lock()
 	defer b.hashMutex.Unlock()
 
@@ -374,7 +374,7 @@ func (b *BasicMapStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 }
 
 // DecodeHashes must already have a lock
-func (b *BasicMapStorage) DecodeHashes(hashes *ch.SavedHashesV2) (ch.Metrics, error) {
+func (b *BasicStorage) DecodeHashes(hashes *ch.SavedHashesV2) (ch.Metrics, error) {
 	if hashes == nil {
 		return ch.Metrics{}, nil
 	}
@@ -477,7 +477,7 @@ func (b *BasicMapStorage) DecodeHashes(hashes *ch.SavedHashesV2) (ch.Metrics, er
 	return count, nil
 }
 
-func (b *BasicMapStorage) hashCmp(existing, target RuntimeHash2) int {
+func (b *BasicStorage) hashCmp(existing, target RuntimeHash2) int {
 	existingID := b.ids.GetID(existing.ID).CHID()
 	return cmp.Or(
 		cmp.Compare(existing.Hash, target.Hash),
@@ -499,7 +499,7 @@ func appendHashes(kind goimagehash.Kind, rhashes []RuntimeHash2, ids IDMap, save
 }
 
 // EncodeHashes should already have a lock
-func (b *BasicMapStorage) EncodeHashes() (*ch.SavedHashesV2, error) {
+func (b *BasicStorage) EncodeHashes() (*ch.SavedHashesV2, error) {
 	savedHashes := ch.SavedHashesV2{
 		Hashes: make([]ch.SavedHashV2, 0, len(b.AHashes)+len(b.DHashes)+len(b.PHashes)),
 	}
@@ -522,13 +522,13 @@ func (b *BasicMapStorage) EncodeHashes() (*ch.SavedHashesV2, error) {
 	return &savedHashes, nil
 }
 
-func (b *BasicMapStorage) AssociateIDs(newids []ch.NewIDs) error {
+func (b *BasicStorage) AssociateIDs(newids []ch.NewIDs) error {
 	b.hashMutex.RLock()
 	defer b.hashMutex.RUnlock()
 	return b.ids.AssociateIDs(newids)
 }
 
-func (b *BasicMapStorage) GetIDs(id ch.ID) ch.IDList {
+func (b *BasicStorage) GetIDs(id ch.ID) ch.IDList {
 	b.hashMutex.RLock()
 	defer b.hashMutex.RUnlock()
 	rid, ok := b.ids.FindID(id)
@@ -538,8 +538,8 @@ func (b *BasicMapStorage) GetIDs(id ch.ID) ch.IDList {
 	return ch.ToIDList(b.ids.GetAllIDs(rid))
 }
 
-func NewBasicMapStorage() (ch.HashStorage, error) {
-	storage := &BasicMapStorage{
+func NewBasicStorage() (ch.HashStorage, error) {
+	storage := &BasicStorage{
 		hashMutex: &sync.RWMutex{},
 		ids: IDMap{
 			ids: []ID{},
