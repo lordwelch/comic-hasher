@@ -168,12 +168,12 @@ func (v *VPTree) AssociateIDs(newIDs []ch.NewIDs) error {
 	return errors.New("Not Implemented")
 }
 
-func (v *VPTree) GetIDs(id ch.ID) ch.IDList {
+func (v *VPTree) GetIDs(id ch.ID) []ch.ID {
 	ids, found := v.ids[id]
 	if !found {
 		return nil
 	}
-	return ch.ToIDList(*ids)
+	return *ids
 }
 
 func NewVPStorage() (ch.HashStorage, error) {

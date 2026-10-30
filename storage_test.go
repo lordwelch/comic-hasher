@@ -195,8 +195,8 @@ func GetMatchesMultipleHashes(t *testing.T, hs ch.HashStorage) {
 
 func GetIDs(t *testing.T, hs ch.HashStorage) {
 	results := hs.GetIDs(ch.ID{Domain: ch.NewSource("example.org"), ID: "sample4.jpg"})
-	expected := ch.IDList{
-		ch.Source("example.org"): []string{"sample4.jpg"},
+	expected := []ch.ID{
+		{Domain: ch.NewSource("example.org"), ID: "sample4.jpg"},
 	}
 	if diff := cmp.Diff(expected, results, cmpOpts...); diff != "" {
 		t.Errorf("GetIDs() mismatch (-want +got):\n%s", diff)

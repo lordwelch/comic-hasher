@@ -150,10 +150,6 @@ func NewSource[E string | Source](s E) *Source {
 	return sp.(*Source)
 }
 
-// IDList is a map of domain to ID eg IDs["comicvine.gamespot.com"] = []string{"1235"}
-// Maps are extremely expensive in go for small maps this should only be used to return info to a user or as a map containing all IDs for a source
-type IDList map[Source][]string
-
 var b = make([]byte, len(ComicVine))
 
 func (id *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
@@ -219,14 +215,6 @@ func (id *ID) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func ToIDList(ids []ID) IDList {
-	idlist := IDList{}
-	for _, id := range ids {
-		idlist[*id.Domain] = Insert(idlist[*id.Domain], id.ID)
-	}
-	return idlist
-}
-
 func InsertIDp(ids []*ID, id *ID) []*ID {
 	index, itemFound := slices.BinarySearchFunc(ids, id, func(existing, target *ID) int {
 		return cmp.Or(
@@ -264,7 +252,7 @@ type HashStorage interface {
 	DecodeHashes(hashes *SavedHashesV2) (Metrics, error)
 	EncodeHashes() (*SavedHashesV2, error)
 	AssociateIDs(newIDs []NewIDs) error
-	GetIDs(id ID) IDList
+	GetIDs(id ID) []ID
 	RLock()
 	RUnlock()
 }

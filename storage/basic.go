@@ -528,14 +528,14 @@ func (b *BasicStorage) AssociateIDs(newids []ch.NewIDs) error {
 	return b.ids.AssociateIDs(newids)
 }
 
-func (b *BasicStorage) GetIDs(id ch.ID) ch.IDList {
+func (b *BasicStorage) GetIDs(id ch.ID) []ch.ID {
 	b.hashMutex.RLock()
 	defer b.hashMutex.RUnlock()
 	rid, ok := b.ids.FindID(id)
 	if !ok {
-		return ch.IDList{}
+		return nil
 	}
-	return ch.ToIDList(b.ids.GetAllIDs(rid))
+	return b.ids.GetAllIDs(rid)
 }
 
 func NewBasicStorage() (ch.HashStorage, error) {

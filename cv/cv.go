@@ -133,7 +133,7 @@ type CVDownloader struct {
 	notFound       chan failedDownload
 	chdb           ch.CHDB
 	bufPool        *sync.Pool
-	getID          func(id ch.ID) ch.IDList
+	getID          func(id ch.ID) []ch.ID
 	onlyHashNewIDs bool
 }
 
@@ -561,7 +561,7 @@ func NewCVDownloader(
 	version string,
 	bufPool *sync.Pool,
 	onlyHashNewIDs bool,
-	getID func(id ch.ID) ch.IDList,
+	getID func(id ch.ID) []ch.ID,
 	chdb ch.CHDB,
 	basePath, APIKey string,
 	imageTypes Images,
