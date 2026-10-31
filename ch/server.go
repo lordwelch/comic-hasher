@@ -430,16 +430,10 @@ func (s *Server) associateIDs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logger.Log(log.Standard, "Attempting to associate %s:%s to %s:%s", domain, id, newDomain, newID)
-	err := s.Storage.AssociateIDs([]NewIDs{{
-		OldID: ID{
-			Domain: &domain,
-			ID:     id,
-		},
-		NewID: ID{
-			Domain: &newDomain,
-			ID:     newID,
-		},
-	}})
+	err := s.Storage.AssociateIDs(
+		ID{Domain: &domain, ID: id},
+		ID{Domain: &newDomain, ID: newID},
+	)
 
 	if err == nil {
 		writeJSON(w, http.StatusOK, result{Msg: "New ID added"})
