@@ -522,10 +522,10 @@ func (b *BasicStorage) EncodeHashes() (*ch.SavedHashesV2, error) {
 	return &savedHashes, nil
 }
 
-func (b *BasicStorage) AssociateIDs(newids []ch.NewIDs) error {
-	b.hashMutex.RLock()
-	defer b.hashMutex.RUnlock()
-	return b.ids.AssociateIDs(newids)
+func (b *BasicStorage) AssociateIDs(OldID, NewID ch.ID) error {
+	b.hashMutex.Lock()
+	defer b.hashMutex.Unlock()
+	return b.ids.AssociateIDs(OldID, NewID)
 }
 
 func (b *BasicStorage) GetIDs(id ch.ID) []ch.ID {

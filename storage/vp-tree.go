@@ -164,8 +164,8 @@ func (v *VPTree) EncodeHashes() (*ch.SavedHashesV2, error) {
 	return &ch.SavedHashesV2{}, errors.New("Not Implemented")
 }
 
-func (v *VPTree) AssociateIDs(newIDs []ch.NewIDs) error {
-	return errors.New("Not Implemented")
+func (v *VPTree) AssociateIDs(OldID, NewID ch.ID) error {
+	return errors.New("not implemented")
 }
 
 func (v *VPTree) GetIDs(id ch.ID) []ch.ID {

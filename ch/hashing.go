@@ -241,17 +241,12 @@ func InsertID(ids []ID, id ID) []ID {
 	return slices.Insert(ids, index, id)
 }
 
-type NewIDs struct {
-	OldID ID
-	NewID ID
-}
-
 type HashStorage interface {
 	GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error)
 	MapHashes(ImageHash) Metrics
 	DecodeHashes(hashes *SavedHashesV2) (Metrics, error)
 	EncodeHashes() (*SavedHashesV2, error)
-	AssociateIDs(newIDs []NewIDs) error
+	AssociateIDs(OldID, NewID ID) error
 	GetIDs(id ID) []ID
 	RLock()
 	RUnlock()

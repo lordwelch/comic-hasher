@@ -386,7 +386,7 @@ func (s *sqliteStorage) EncodeHashes() (*ch.SavedHashesV2, error) {
 	return &hashes, nil
 }
 
-func (s *sqliteStorage) AssociateIDs(newIDs []ch.NewIDs) error {
+func (s *sqliteStorage) AssociateIDs(OldID, NewID ch.ID) error {
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		panic(err)
