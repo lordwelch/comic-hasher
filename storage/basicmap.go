@@ -116,8 +116,8 @@ func (b *basicMapStorage) atleast(kind goimagehash.Kind, maxDistance int, search
 					Hash: storedHash.Hash,
 					Kind: kind,
 				},
-				ID: *storedHash.ID,
-				Distance: distance,
+				ID:            *storedHash.ID,
+				Distance:      distance,
 				EquivalentIDs: nil})
 		}
 	}
@@ -153,7 +153,7 @@ func (b *basicMapStorage) exactMatches(hashes []ch.Hash) []ch.Result {
 			mappedIds[index] = true
 
 			foundMatches = append(foundMatches, ch.Result{
-				Hash:     ch.Hash{Hash:storedHash.Hash, Kind: hash.Kind},
+				Hash:     ch.Hash{Hash: storedHash.Hash, Kind: hash.Kind},
 				ID:       *storedHash.ID,
 				Distance: 0,
 			})
@@ -375,7 +375,7 @@ func hashCmp(existing, target RuntimeHash) int {
 		existing.ID.Compare(*target.ID),
 	)
 }
-func appendHashes(kind goimagehash.Kind,rhashes []RuntimeHash, savedHashes *ch.SavedHashes) {
+func appendHashes(kind goimagehash.Kind, rhashes []RuntimeHash, savedHashes *ch.SavedHashes) {
 	var rhash RuntimeHash
 	for _, rhash = range rhashes {
 		savedHashes.Hashes = append(savedHashes.Hashes, ch.SavedHash{
@@ -388,14 +388,15 @@ func appendHashes(kind goimagehash.Kind,rhashes []RuntimeHash, savedHashes *ch.S
 	}
 
 }
+
 // EncodeHashes should already have a lock
 func (b *basicMapStorage) EncodeHashes() (*ch.SavedHashes, error) {
 	savedHashes := ch.SavedHashes{
 		Hashes: make([]ch.SavedHash, 0, len(b.aHashes)+len(b.dHashes)+len(b.pHashes)),
 	}
-	appendHashes(goimagehash.AHash, b.aHashes,&savedHashes)
-	appendHashes(goimagehash.DHash, b.dHashes,&savedHashes)
-	appendHashes(goimagehash.PHash, b.pHashes,&savedHashes)
+	appendHashes(goimagehash.AHash, b.aHashes, &savedHashes)
+	appendHashes(goimagehash.DHash, b.dHashes, &savedHashes)
+	appendHashes(goimagehash.PHash, b.pHashes, &savedHashes)
 
 	// Only keep groups len>1 as they are mapped in SavedHashes.Hashes
 	for _, ids := range b.ids.ids {

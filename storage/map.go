@@ -83,7 +83,7 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 		for _, tmatch = range realMatches {
 			for _, storedHash = range currentHashes[tmatch.index : tmatch.index+tmatch.count] {
 				foundMatches = append(foundMatches, ch.Result{
-					Hash:          ch.Hash{Hash:storedHash.Hash, Kind:searchHash.Kind},
+					Hash:          ch.Hash{Hash: storedHash.Hash, Kind: searchHash.Kind},
 					ID:            *storedHash.ID,
 					Distance:      tmatch.match.Distance,
 					EquivalentIDs: m.ids.GetIDs(storedHash.ID),
