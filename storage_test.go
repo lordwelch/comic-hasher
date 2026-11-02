@@ -2,10 +2,8 @@ package main_test
 
 import (
 	"bytes"
-	"compress/gzip"
 	"crypto"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	gzip "github.com/klauspost/pgzip"
 
 	gcmp "cmp"
 
@@ -25,6 +25,9 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
+// func init() { log.LogLevels[log.ALL] = -99 }
+
+// Keep in-line with savedHashes_test.go
 var cmpOpts = []cmp.Option{
 	cmpopts.EquateEmpty(),
 	cmpopts.SortSlices(func(a ch.Result, b ch.Result) int {
@@ -75,10 +78,11 @@ func SeedHashes(hs ch.HashStorage) {
 	hashes = append(hashes, sample3SavedHashes...)
 	hashes = append(hashes, sample4SavedHashes...)
 	hashes = append(hashes, exampleSavedHashes...)
-	hs.DecodeHashes(&ch.SavedHashesV2{
-		Version: 2,
-		Hashes:  hashes,
-	})
+	savedHashes, err := ch.NewSavedHashesV3(&ch.SavedHashesV2{Hashes: hashes})
+	if err != nil {
+		panic(err)
+	}
+	hs.DecodeHashes(savedHashes)
 }
 
 func GetMatchesBasic(t *testing.T, hs ch.HashStorage) {
@@ -206,7 +210,7 @@ func GetIDs(t *testing.T, hs ch.HashStorage) {
 }
 
 func TestBasicStorage(t *testing.T) {
-	hs, err := storage.NewBasicMapStorage()
+	hs, err := storage.NewBasicStorage()
 	if err != nil {
 		t.Fatal("Failed to create basic storage:", err)
 	}
@@ -274,13 +278,13 @@ func (mux *fakeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestHashServer(t *testing.T) {
-	hs, err := storage.NewBasicMapStorage()
+	hs, err := storage.NewBasicStorage()
 	if err != nil {
 		t.Fatal("Failed to create basic storage:", err)
 	}
 	SeedHashes(hs)
 
-	HashServer := ch.NewHashServer(filepath.Join(t.TempDir(), "hashes.gz"), ch.Msgpack, true)
+	HashServer := ch.NewHashServer(filepath.Join(t.TempDir(), "hashes.gz"), true)
 	err = HashServer.WriteHashes(hs)
 	if err != nil {
 		t.Fatal("failed to write hashes:", err)
@@ -306,7 +310,7 @@ func TestHashServer(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to read response:", err)
 	}
-	_, err = ch.DecodeHashes(ch.Msgpack, decompressedHashes)
+	_, err = ch.DecodeHashesV3(bytes.NewReader(decompressedHashes))
 	if err != nil {
 		t.Fatal("failed to validate hashes:", err)
 	}
@@ -336,8 +340,71 @@ func TestHashServer(t *testing.T) {
 	}
 }
 
-func SeedEmbeddedHashes(hs ch.HashStorage) {
-	var err error
+func TestLoadEmbeddedHashes(t *testing.T) {
+	hs, err := storage.NewBasicStorage()
+	if err != nil {
+		t.Fatal("failed to create basic map storage:", err)
+	}
+	SeedEmbeddedHashes(hs)
+}
+
+func TestDecodeHashesV3(t *testing.T) {
+	var all []ch.SavedHashV2
+	all = append(all, sample1SavedHashes...)
+	all = append(all, sample2SavedHashes...)
+	all = append(all, sample3SavedHashes...)
+	all = append(all, sample4SavedHashes...)
+	all = append(all, exampleSavedHashes...)
+
+	want, err := ch.NewSavedHashesV3(&ch.SavedHashesV2{Hashes: all})
+	if err != nil {
+		t.Fatal("failed to build saved hashes:", err)
+	}
+
+	var buf bytes.Buffer
+	if err := ch.EncodeHashesV3(want, &buf); err != nil {
+		t.Fatal("failed to encode hashes:", err)
+	}
+
+	got, err := ch.DecodeHashesV3(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal("failed to decode hashes:", err)
+	}
+	if diff := cmp.Diff(want, got, cmpOpts...); diff != "" {
+		t.Errorf("DecodeHashesV3() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func BenchmarkLoadEmbeddedHashes(b *testing.B) {
+	hs, err := storage.NewBasicStorage()
+	if err != nil {
+		b.Fatal("failed to create basic map storage:", err)
+	}
+	for b.Loop() {
+		SeedEmbeddedHashes(hs)
+	}
+}
+
+func BenchmarkDecodeHashes(b *testing.B) {
+	hashes := unzipEmbedded()
+	hs, err := storage.NewBasicStorage()
+	if err != nil {
+		b.Fatal("failed to create basic map storage:", err)
+	}
+	for b.Loop() {
+		decodeHashes(hs, hashes)
+	}
+}
+
+func decodeHashes(hs ch.HashStorage, hashes []byte) {
+	loadedHashes, err := ch.DecodeHashesV3(bytes.NewReader(hashes))
+	if err != nil {
+		panic(err)
+	}
+	hs.DecodeHashes(loadedHashes)
+}
+
+func unzipEmbedded() []byte {
 	hashes := ch.Hashes
 	if gr, err := gzip.NewReader(bytes.NewReader(ch.Hashes)); err == nil {
 		hashes, err = io.ReadAll(gr)
@@ -346,19 +413,11 @@ func SeedEmbeddedHashes(hs ch.HashStorage) {
 		}
 		gr.Close()
 	}
+	return hashes
+}
 
-	var (
-		format       ch.Format
-		loadedHashes *ch.SavedHashesV2
-	)
-
-	for _, format = range []ch.Format{ch.Msgpack, ch.JSON} {
-		if loadedHashes, err = ch.DecodeHashes(format, hashes); errors.Is(err, ch.ErrDecodeFail) {
-			continue
-		}
-		break
-	}
-	hs.DecodeHashes(loadedHashes)
+func SeedEmbeddedHashes(hs ch.HashStorage) {
+	decodeHashes(hs, unzipEmbedded())
 }
 
 func BenchmarkStorageSmall(fuck *testing.B) {
@@ -368,7 +427,7 @@ func BenchmarkStorageSmall(fuck *testing.B) {
 		{Hash: 0xf95ac0669da8b4a9, Kind: goimagehash.PHash},
 	}
 
-	hs, err := storage.NewBasicMapStorage()
+	hs, err := storage.NewBasicStorage()
 	if err != nil {
 		fuck.Fatal("Failed to create Basic storage:", err)
 	}
@@ -427,7 +486,7 @@ func BenchmarkStorageLarge(b *testing.B) {
 		{Hash: 0x95274a996be4349e, Kind: goimagehash.PHash},
 	}
 
-	hs, err := storage.NewBasicMapStorage()
+	hs, err := storage.NewBasicStorage()
 	if err != nil {
 		b.Fatal("Failed to create Basic storage:", err)
 	}
