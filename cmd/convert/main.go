@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
@@ -26,6 +27,7 @@ func main() {
 	}
 	if err := run(*inPath, *outPath); err != nil {
 		log.Println(log.Fatal, "Failed to convert hashes:", err)
+		time.Sleep(11 * time.Millisecond) // for logging to complete
 		os.Exit(1)
 	}
 }

@@ -103,6 +103,7 @@ func main() {
 	if opts.cv.enabled {
 		if opts.cv.APIKey == "" {
 			log.Println(log.Fatal, "No ComicVine API Key provided")
+			time.Sleep(11 * time.Millisecond) // for logging to complete
 			os.Exit(1)
 		}
 	}
@@ -111,6 +112,7 @@ func main() {
 	log.Println(log.Standard, pretty.Sprint(opts))
 
 	startServer(opts)
+	time.Sleep(11 * time.Millisecond) // for logging to complete
 }
 
 func signalHandler(s *ch.Server, signalQueue <-chan os.Signal) {
@@ -187,6 +189,7 @@ func loadHashes(opts Opts) *ch.SavedHashesV3 {
 	}
 	if err != nil {
 		log.Println(log.Fatal, "Failed to decode hashes:", err)
+		time.Sleep(11 * time.Millisecond) // for logging to complete
 		os.Exit(1)
 	}
 	loadedHashes.LogHashInfo(log.Verbose, "")
@@ -312,6 +315,7 @@ func startServer(opts Opts) {
 		f, err := os.Create(opts.cpuprofile)
 		if err != nil {
 			log.Println(log.Fatal, err)
+			time.Sleep(11 * time.Millisecond) // for logging to complete
 			os.Exit(1)
 		}
 		pprof.StartCPUProfile(f)
@@ -439,6 +443,7 @@ func startServer(opts Opts) {
 		f, err := os.Create(opts.memprofile)
 		if err != nil {
 			log.Println(log.Fatal, "could not create memory profile:", err)
+			time.Sleep(11 * time.Millisecond) // for logging to complete
 			os.Exit(1)
 		}
 		defer f.Close() // error handling omitted for example
@@ -510,10 +515,12 @@ func startServer(opts Opts) {
 	hashes, err := server.Storage.EncodeHashes()
 	if err != nil {
 		log.Println(log.Fatal, "Failed to save hashes:", err)
+		time.Sleep(11 * time.Millisecond) // for logging to complete
 		os.Exit(1)
 	}
 	if err = saveHashes(opts, hashes); err != nil {
 		log.Println(log.Fatal, err)
+		time.Sleep(11 * time.Millisecond) // for logging to complete
 		os.Exit(1)
 	}
 }

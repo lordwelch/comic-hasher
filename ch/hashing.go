@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unsafe"
 
@@ -108,11 +109,13 @@ func newSourceMap() *sync.Map {
 	_, ok := m.Load(ComicVine)
 	if !ok {
 		log.Log(log.Fatal, "sync.Map really doesn't work, %#v", ComicVine)
+		time.Sleep(11 * time.Millisecond) // for logging to complete
 		os.Exit(1)
 	}
 	_, ok = m.Load(Source(strings.ToLower(string(ComicVine))))
 	if !ok {
 		log.Println(log.Fatal, "sync.Map doesn't work")
+		time.Sleep(11 * time.Millisecond) // for logging to complete
 		os.Exit(1)
 	}
 	return m
