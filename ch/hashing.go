@@ -261,8 +261,8 @@ type NewIDs struct {
 type HashStorage interface {
 	GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error)
 	MapHashes(ImageHash) Metrics
-	DecodeHashes(hashes *SavedHashes) (Metrics, error)
-	EncodeHashes() (*SavedHashes, error)
+	DecodeHashes(hashes *SavedHashesV2) (Metrics, error)
+	EncodeHashes() (*SavedHashesV2, error)
 	AssociateIDs(newIDs []NewIDs) error
 	GetIDs(id ID) IDList
 	RLock()
