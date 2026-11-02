@@ -141,7 +141,7 @@ func initializeStorage(opts Opts) (ch.HashStorage, error) {
 
 const hashesFilename = "hashes.gz"
 
-func loadHashes(opts Opts) *ch.SavedHashes {
+func loadHashes(opts Opts) *ch.SavedHashesV2 {
 	hashesPath := filepath.Join(opts.path, hashesFilename)
 	var hashes []byte
 
@@ -186,7 +186,7 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 
 	var (
 		format       ch.Format
-		loadedHashes *ch.SavedHashes
+		loadedHashes *ch.SavedHashesV2
 	)
 
 	for _, format = range []ch.Format{ch.Msgpack, ch.JSON} {
@@ -206,7 +206,7 @@ func loadHashes(opts Opts) *ch.SavedHashes {
 	return loadedHashes
 }
 
-func saveHashes(opts Opts, hashes *ch.SavedHashes) error {
+func saveHashes(opts Opts, hashes *ch.SavedHashesV2) error {
 	if opts.loadEmbeddedHashes && !opts.saveEmbeddedHashes {
 		return errors.New("refusing to save embedded hashes")
 	}

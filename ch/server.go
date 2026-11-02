@@ -648,7 +648,7 @@ func (s *Server) Hasher(workerID int) {
 	}
 }
 
-func (s *Server) DecodeHashes(loadedHashes *SavedHashes) {
+func (s *Server) DecodeHashes(loadedHashes *SavedHashesV2) {
 	metrics, err := s.Storage.DecodeHashes(loadedHashes)
 	if err != nil {
 		panic(err)
