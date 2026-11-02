@@ -61,12 +61,12 @@ func (f *Storage) Set(s string) error {
 }
 
 type CVOpts struct {
-	enabled        bool
-	APIKey         string
-	images         cv.Images
-	hashDownloaded bool
+	enabled bool
+	APIKey  string
+	images  cv.Images
 }
 type Opts struct {
+	hashDownloaded     bool
 	cpuprofile         string
 	memprofile         string
 	coverPath          string
@@ -203,7 +203,7 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 
 	fs.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers\n\nIf multiple image types (-cv-images) are selected more than 1 may get through")
 	fs.BoolVar(&opts.keepDownloaded, "keep-downloaded", false, "Keep newly downloaded images.\nWhen set to false does not ever write images to the filesystem\nA crash or exiting during downloading can mean some images need to be re-downloaded")
-	fs.BoolVar(&opts.cv.hashDownloaded, "hash-downloaded", true, "Hash already downloaded images")
+	fs.BoolVar(&opts.hashDownloaded, "hash-downloaded", true, "Hash already downloaded images")
 
 	fs.BoolVar(&opts.cv.enabled, "cv", false, "Enabled automatically downloading covers from ComicVine to add to the database\n(averages 1 api call per hour once cought up)")
 	fs.StringVar(&opts.cv.APIKey, "cv-api-key", "", "API `Key` to use to access the ComicVine API")

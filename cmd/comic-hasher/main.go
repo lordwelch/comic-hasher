@@ -36,6 +36,7 @@ import (
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
 	"gitea.narnian.us/lordwelch/comic-hasher/cv"
+	"gitea.narnian.us/lordwelch/comic-hasher/download"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"gitea.narnian.us/lordwelch/comic-hasher/storage"
 )
@@ -86,6 +87,7 @@ func main() {
 		fmt.Println("comic-hasher version:", opts.version)
 		os.Exit(0)
 	}
+	download.Client = &http.Client{Transport: download.RT("Comic-Hasher/" + opts.version)}
 
 	if opts.debugPort != "" {
 		go func() {
@@ -245,19 +247,18 @@ func saveHashes(opts Opts, hashes *ch.SavedHashes) error {
 	return nil
 }
 
-func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, server *Server) {
+func downloadProcessor(chdb ch.CHDB, opts Opts, finishedDownloads <-chan download.Download, server *Server) {
 	defer func() {
 		log.Println(log.Verbose, "Download Processor completed")
 		close(server.hashingQueue)
 	}()
-	for path := range imagePaths {
-		id := ch.ID{Domain: ch.NewSource(ch.ComicVine), ID: path.IssueID}
-		if opts.onlyHashNewIDs && len(server.storage.GetIDs(id)) > 0 {
+	for dl := range finishedDownloads {
+		if opts.onlyHashNewIDs && len(server.storage.GetIDs(dl.IssueID)) > 0 {
 			log.Println(log.Standard, "Skipping already hashed ID", dl.IssueID)
 			continue
 		}
 
-		if chdb.PathHashed(path.Dest) {
+		if chdb.PathHashed(dl.Dest) {
 			log.Println(log.Standard, "Skipping already hashed ID", dl.IssueID)
 			continue
 		}
@@ -265,34 +266,34 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 			file io.ReadCloser
 			err  error
 		)
-		if path.Image == nil {
-			file, err = os.OpenFile(filepath.Join(opts.path, path.Dest), os.O_RDWR, 0o666)
+		if dl.Image == nil {
+			file, err = os.OpenFile(filepath.Join(opts.path, dl.Dest), os.O_RDWR, 0o666)
 			if err != nil {
 				panic(err)
 			}
 		} else {
-			file = io.NopCloser(path.Image)
+			file = io.NopCloser(dl.Image)
 		}
 		i, format, err := image.Decode(bufio.NewReader(file))
 		file.Close()
-		if path.Image != nil && path.Image.Cap() < 10*1024*1024 {
-			bufPool.Put(path.Image)
+		if dl.Image != nil && dl.Image.Cap() < 10*1024*1024 {
+			bufPool.Put(dl.Image)
 		}
 		if err != nil {
-			if len(path.URL) > 0 {
+			if len(dl.Request.URL.String()) > 0 {
 				log.Println(log.Standard, "Reading image failed, adding to known bad urls:", dl.Request.URL, err)
-				chdb.AddURL(path.URL)
+				chdb.AddURL(dl.Request.URL.String())
 			} else {
 				log.Println(log.Standard, "Reading image failed", dl.Dest, err)
 			}
 			continue // skip this image
 		}
-		chdb.AddPath(path.Dest) // Add to db and remove file if opts.deleteHashedImages is true
+		chdb.AddPath(dl.Dest) // Add to db and remove file if opts.deleteHashedImages is true
 
 		im := ch.Im{
 			Im:      i,
 			Format:  format,
-			ID:      id,
+			ID:      dl.IssueID,
 			NewOnly: opts.onlyHashNewIDs,
 		}
 		server.hashingQueue <- im
@@ -397,19 +398,33 @@ func startServer(opts Opts) {
 	log.Println(log.Verbose, "Init downloaders")
 	dwg := sync.WaitGroup{}
 	dcwg := sync.WaitGroup{}
-	finishedDownloadQueue := make(chan cv.Download, 1)
+	finishedDownloadQueue := make(chan download.Download, 1)
+	// startDownloadQueue := make(chan download.Download, 1)
 	dcwg.Go(func() {
 		downloadProcessor(chdb, opts, finishedDownloadQueue, &server)
 	})
 
 	if opts.cv.enabled {
 		dwg.Go(func() {
-			cvdownloader := cv.NewCVDownloader(server.Context, bufPool, opts.onlyHashNewIDs, server.storage.GetIDs, chdb, filepath.Join(opts.path, cv.WorkDirectory), opts.cv.APIKey, opts.cv.images, opts.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
-			cv.DownloadCovers(cvdownloader)
+			cvdownloader := cv.NewCVDownloader(
+				opts.version,
+				bufPool,
+				opts.onlyHashNewIDs,
+				server.storage.GetIDs,
+				chdb,
+				filepath.Join(opts.path, cv.WorkDirectory),
+				opts.cv.APIKey,
+				opts.cv.images,
+				opts.keepDownloaded,
+				opts.hashDownloaded,
+				finishedDownloadQueue,
+			)
+			// TODO:? allow a way to cancel this context. I'm not sure why
+			cv.DownloadCovers(server.Context, cvdownloader)
 			for {
 				select {
 				case <-time.After(2 * time.Hour):
-					cv.DownloadCovers(cvdownloader)
+					cv.DownloadCovers(server.Context, cvdownloader)
 				case <-server.Context.Done():
 					return
 				}
@@ -471,9 +486,10 @@ func startServer(opts Opts) {
 	}
 
 	log.Println(log.Verbose, "waiting on downloaders")
-	dwg.Wait() // Downloaders send to finishedDownloadQueue which sends to server.hashingQueue
+	dwg.Wait() // Downloaders send to startDownloadQueue -> finishedDownloadQueue -> server.hashingQueue
 
 	log.Println(log.Standard, "waiting on download workers")
+	// close(startDownloadQueue)
 	close(finishedDownloadQueue)
 	dcwg.Wait() // Wait for the download processor to finish
 	for dw := range finishedDownloadQueue {
