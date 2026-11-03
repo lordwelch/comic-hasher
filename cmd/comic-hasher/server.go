@@ -54,7 +54,7 @@ type Server struct {
 	httpServer     *http.Server
 	mux            *CHMux
 	BaseURL        *url.URL
-	hashes         ch.HashStorage
+	storage        ch.HashStorage
 	hashServer     HashServer
 	Context        context.Context
 	cancel         func()
@@ -356,7 +356,7 @@ func (s *Server) associateIDs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logger.Log(log.Standard, "Attempting to associate %s:%s to %s:%s", domain, ID, newDomain, newID)
-	err := s.hashes.AssociateIDs([]ch.NewIDs{{
+	err := s.storage.AssociateIDs([]ch.NewIDs{{
 		OldID: ch.ID{
 			Domain: &domain,
 			ID:     ID,
@@ -471,7 +471,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	defer timer.ObserveDuration()
 
 	s.match_cover_total.Inc()
-	matches, err := s.hashes.GetMatches(hashes, max, exactOnly)
+	matches, err := s.storage.GetMatches(hashes, max, exactOnly)
 	cmpFunc := func(a ch.Result, b ch.Result) int {
 		return cmp.Or(
 			cmp.Compare(a.Hash.Kind, b.Hash.Kind),
@@ -551,7 +551,7 @@ func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 func (s *Server) mapper(workerID int) {
 	defer logger.Println(log.MoreVerbose, "Mapper", workerID, "completed")
 	for hash := range s.mappingQueue {
-		for m, count := range s.hashes.MapHashes(hash).Hashes {
+		for m, count := range s.storage.MapHashes(hash).Hashes {
 			s.hash_count.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
 		}
 	}
@@ -561,7 +561,7 @@ func (s *Server) hasher(workerID int) {
 	defer logger.Println(log.MoreVerbose, "Hasher", workerID, "completed")
 	for image := range s.hashingQueue {
 		start := time.Now()
-		if image.NewOnly && len(s.hashes.GetIDs(image.ID)) > 0 {
+		if image.NewOnly && len(s.storage.GetIDs(image.ID)) > 0 {
 			logger.Log(log.Verbose, "Skipping existing hash with ID: %s found", image.ID)
 			continue
 		}
@@ -589,7 +589,7 @@ func (s *Server) reader(workerID int) {
 			Domain: ch.NewSource(filepath.Base(filepath.Dir(filepath.Dir(path)))),
 			ID:     filepath.Base(filepath.Dir(path)),
 		}
-		if s.onlyHashNewIDs && len(s.hashes.GetIDs(id)) > 0 {
+		if s.onlyHashNewIDs && len(s.storage.GetIDs(id)) > 0 {
 			continue
 		}
 		file, err := os.Open(path)

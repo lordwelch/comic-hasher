@@ -252,7 +252,7 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, imagePaths chan cv.Download, ser
 	}()
 	for path := range imagePaths {
 		id := ch.ID{Domain: ch.NewSource(ch.ComicVine), ID: path.IssueID}
-		if opts.onlyHashNewIDs && len(server.hashes.GetIDs(id)) > 0 {
+		if opts.onlyHashNewIDs && len(server.storage.GetIDs(id)) > 0 {
 			log.Println(log.Standard, "Skipping already hashed ID", dl.IssueID)
 			continue
 		}
@@ -346,8 +346,8 @@ func startServer(opts Opts) {
 	}
 	Notify(server.signalQueue)
 	var err error
-	log.Println(log.Verbose, "Init hashes")
-	server.hashes, err = initializeStorage(opts)
+	log.Println(log.Verbose, "Init storage")
+	server.storage, err = initializeStorage(opts)
 	if err != nil {
 		panic(err)
 	}
@@ -374,7 +374,7 @@ func startServer(opts Opts) {
 	// DecodeHashes would normally need a write lock
 	// nothing else has been started yet so we don't need one
 	loadedHashes := loadHashes(opts)
-	metrics, err := server.hashes.DecodeHashes(loadedHashes)
+	metrics, err := server.storage.DecodeHashes(loadedHashes)
 	if err != nil {
 		panic(err)
 	}
@@ -404,7 +404,7 @@ func startServer(opts Opts) {
 
 	if opts.cv.enabled {
 		dwg.Go(func() {
-			cvdownloader := cv.NewCVDownloader(server.Context, bufPool, opts.onlyHashNewIDs, server.hashes.GetIDs, chdb, filepath.Join(opts.path, cv.WorkDirectory), opts.cv.APIKey, opts.cv.images, opts.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
+			cvdownloader := cv.NewCVDownloader(server.Context, bufPool, opts.onlyHashNewIDs, server.storage.GetIDs, chdb, filepath.Join(opts.path, cv.WorkDirectory), opts.cv.APIKey, opts.cv.images, opts.keepDownloaded, opts.cv.hashDownloaded, finishedDownloadQueue)
 			cv.DownloadCovers(cvdownloader)
 			for {
 				select {
@@ -423,7 +423,7 @@ func startServer(opts Opts) {
 			for {
 				select {
 				case <-time.After(opts.hashSaveInterval):
-					err := server.hashServer.writeHashes(server.hashes)
+					err := server.hashServer.writeHashes(server.storage)
 					if err != nil {
 						log.Log(log.Fatal, "Failed to save the current hashes: %v", err)
 					}
@@ -506,7 +506,7 @@ func startServer(opts Opts) {
 
 	// server.EncodeHashes would normally need a read lock
 	// the server has been stopped so it's not needed here
-	hashes, err := server.hashes.EncodeHashes()
+	hashes, err := server.storage.EncodeHashes()
 	if err != nil {
 		log.Println(log.Fatal, "Failed to save hashes:", err)
 		os.Exit(1)
