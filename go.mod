@@ -10,6 +10,7 @@ require (
 	gitea.narnian.us/lordwelch/goimagehash v0.0.0-20250130004139-e91c39c79e0d
 	github.com/OneOfOne/xxhash v1.2.8
 	github.com/disintegration/imaging v1.6.3-0.20201218193011-d40f48ce0f09
+	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3
 	github.com/google/go-cmp v0.7.0
 	github.com/json-iterator/go v1.1.12
 	github.com/kr/pretty v0.3.1

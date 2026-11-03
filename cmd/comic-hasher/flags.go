@@ -65,6 +65,10 @@ type CVOpts struct {
 	APIKey  string
 	images  cv.Images
 }
+type MetronOpts struct {
+	enabled bool
+	APIKey  string
+}
 type Opts struct {
 	hashDownloaded     bool
 	cpuprofile         string
@@ -85,7 +89,8 @@ type Opts struct {
 
 	logLevels log.Flag
 
-	cv CVOpts
+	cv     CVOpts
+	metron MetronOpts
 }
 
 func isZeroValue(currentFlag *flag.Flag, value string) (ok bool, err error) {
@@ -209,6 +214,9 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 	fs.StringVar(&opts.cv.APIKey, "cv-api-key", "", "API `Key` to use to access the ComicVine API")
 	fs.Var(&opts.cv.images, "cv-images", "Download the selected `image types` from comicvine\n(Original,Thumb,Icon,Medium,Screen,ScreenLarge,Small,Super,Tiny)")
 
+	fs.BoolVar(&opts.metron.enabled, "metron", false, "Enabled automatically downloading covers from metron.cloud to add to the database\n(averages 1 api call per hour once cought up)")
+	fs.StringVar(&opts.metron.APIKey, "metron-api-key", "", "API `Key` to use to access the metron.cloud API")
+
 	fs.StringVar(&opts.cpuprofile, "cpuprofile", "", "Write cpu profile to `file`")
 	fs.StringVar(&opts.memprofile, "memprofile", "", "Write mem profile to `file` after loading hashes")
 	fs.StringVar(&opts.debugPort, "debug-port", "", "`Port` to listen to for debug info")
@@ -220,7 +228,7 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 }
 
 var (
-	groupOrder = []string{"", "file", "hash", "download", "comic vine", "debug"}
+	groupOrder = []string{"", "file", "hash", "download", "comic vine", "metron", "debug"}
 	groups     = map[string]string{
 		"load-embedded-hashes": "file",
 		"save-embedded-hashes": "file",
@@ -232,6 +240,8 @@ var (
 		"hash-downloaded":      "download",
 		"cv":                   "comic vine",
 		"cv-api-key":           "comic vine",
+		"metron":               "metron",
+		"metron-api-key":       "metron",
 		"cv-images":            "comic vine",
 		"cpuprofile":           "debug",
 		"memprofile":           "debug",
