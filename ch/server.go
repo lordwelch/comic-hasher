@@ -124,7 +124,10 @@ func (CHM *CHMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Shutdown() error {
 	s.cancel()
-	return s.HTTPServer.Shutdown(context.TODO())
+	// The server context has just been canceled so it cannot be used to bound a graceful shutdown.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return s.HTTPServer.Shutdown(ctx)
 }
 
 func (s *Server) ListenAndServe() error {
