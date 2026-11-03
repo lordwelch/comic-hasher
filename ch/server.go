@@ -558,26 +558,22 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 	slices.SortFunc(matches, cmpFunc)
 	matches = slices.CompactFunc(matches, func(a, b Result) bool { return cmpFunc(a, b) == 0 })
-	if len(matches) > 0 {
-		var (
-			msg    string
-			status = http.StatusOK
-		)
-		// TODO: Output this even if we don't have matches
-		if err != nil {
-			logger.Println(log.Required, "Internal error:", err)
-			status = http.StatusInternalServerError
-			msg = err.Error()
-		}
-
-		writeJSON(w, status, result{
+	if err != nil {
+		logger.Println(log.Required, "Internal error:", err)
+		msg := err.Error()
+		writeJSON(w, http.StatusInternalServerError, result{
 			Results: matches,
 			Msg:     msg,
 		})
 		return
 	}
-
-	writeJSON(w, http.StatusNotFound, result{Msg: "No hashes found"})
+	if len(matches) == 0 {
+		writeJSON(w, http.StatusNotFound, result{Msg: "No hashes found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, result{
+		Results: matches,
+	})
 }
 
 func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
