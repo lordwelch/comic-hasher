@@ -38,6 +38,7 @@ import (
 	"gitea.narnian.us/lordwelch/comic-hasher/cv"
 	"gitea.narnian.us/lordwelch/comic-hasher/download"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
+	"gitea.narnian.us/lordwelch/comic-hasher/metron"
 	"gitea.narnian.us/lordwelch/comic-hasher/storage"
 )
 
@@ -425,6 +426,33 @@ func startServer(opts Opts) {
 				select {
 				case <-time.After(2 * time.Hour):
 					cv.DownloadCovers(server.Context, cvdownloader)
+				case <-server.Context.Done():
+					return
+				}
+			}
+		})
+	}
+
+	if opts.metron.enabled {
+		// TODO:? allow a way to cancel this context. I'm not sure why
+		dwg.Go(func() {
+			metronDownloader := metron.NewDownloader(
+				opts.version,
+				bufPool,
+				opts.onlyHashNewIDs,
+				server.storage.GetIDs,
+				chdb,
+				filepath.Join(opts.path, metron.WorkDirectory),
+				opts.metron.APIKey,
+				opts.keepDownloaded,
+				opts.hashDownloaded,
+				finishedDownloadQueue,
+			)
+			metron.DownloadCovers(server.Context, metronDownloader)
+			for {
+				select {
+				case <-time.After(1 * time.Hour):
+					metron.DownloadCovers(server.Context, metronDownloader)
 				case <-server.Context.Done():
 					return
 				}

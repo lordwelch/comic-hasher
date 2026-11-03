@@ -45,7 +45,10 @@ const (
 	Shift7
 )
 
-var ComicVine Source = "comicvine.gamespot.com"
+const (
+	ComicVine Source = "comicvine.gamespot.com"
+	Metron    Source = "metron.cloud"
+)
 
 const (
 	SavedHashVersion int = 2
