@@ -105,7 +105,6 @@ type HashServer struct {
 	digests           map[string][]byte
 	digestHeaderCache string
 	reprHeaderCache   string
-	format            Format
 	digesters         map[string]hash.Hash
 	hashesDownloaded  prometheus.Counter
 	gzip              *gzip.Writer
@@ -256,10 +255,6 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	if err != nil {
 		return err
 	}
-	content, err := EncodeHashes(encodedHashes, h.format)
-	if err != nil {
-		return err
-	}
 	tmpFilePath := h.hashes + ".tmp.gz"
 	f, err := os.Create(tmpFilePath)
 	if err != nil {
@@ -270,7 +265,7 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	writer := bufio.NewWriter(h.initDigests(f))
 	h.gzip.Reset(writer)
 	b := bufio.NewWriterSize(h.gzip, 32*1024)
-	_, err = b.Write(content)
+	err = EncodeHashesV3(encodedHashes, b)
 	if err != nil {
 		return fmt.Errorf("failed to encode hashes to temporary file %q, %w", h.hashes+".tmp", err)
 	}
@@ -304,13 +299,12 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	return nil
 }
 
-func NewHashServer(hashes string, format Format, useAllChecksums bool) HashServer {
+func NewHashServer(hashes string, useAllChecksums bool) HashServer {
 	if !filepath.IsAbs(hashes) {
 		panic("NewHashServer needs an absolute path for hashes")
 	}
 	h := HashServer{
 		hashes:          hashes,
-		format:          format,
 		digests:         map[string][]byte{},
 		useAllChecksums: useAllChecksums,
 		gzip:            gzip.NewWriter(io.Discard),
@@ -642,7 +636,7 @@ func (s *Server) Hasher(workerID int) {
 	}
 }
 
-func (s *Server) DecodeHashes(loadedHashes *SavedHashesV2) {
+func (s *Server) DecodeHashes(loadedHashes *SavedHashesV3) {
 	metrics, err := s.Storage.DecodeHashes(loadedHashes)
 	if err != nil {
 		panic(err)

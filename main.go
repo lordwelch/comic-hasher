@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -23,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	gzip "github.com/klauspost/pgzip"
 
 	"github.com/disintegration/imaging"
 	"github.com/kr/pretty"
@@ -66,7 +67,7 @@ func main() {
 		}
 	}
 	opts := Opts{
-		format: ch.Msgpack, storageType: Basic, version: Version,
+		storageType: Basic, version: Version,
 		cv: CVOpts{
 			images: cv.Images{"thumb": {}},
 		},
@@ -141,13 +142,14 @@ func initializeStorage(opts Opts) (ch.HashStorage, error) {
 
 const hashesFilename = "hashes.gz"
 
-func loadHashes(opts Opts) *ch.SavedHashesV2 {
+func loadHashes(opts Opts) *ch.SavedHashesV3 {
 	hashesPath := filepath.Join(opts.path, hashesFilename)
-	var hashes []byte
+	var hashReader io.Reader
 
 	log.Println(log.Verbose, "Looking for saved hashes at", hashesPath)
 	f, err := os.Open(hashesPath)
 	if err == nil {
+		defer f.Close()
 		var r io.ReadCloser = f
 		if gr, err := gzip.NewReader(f); err == nil {
 			r = gr
@@ -156,46 +158,30 @@ func loadHashes(opts Opts) *ch.SavedHashesV2 {
 			_, _ = f.Seek(0, io.SeekStart)
 		}
 		log.Println(log.Standard, "Loading saved hashes from", hashesPath)
-		hashes, err = io.ReadAll(r)
-		_ = r.Close()
-		_ = f.Close()
-		if err != nil {
-			log.Println(log.Fatal, "Failed to load hashes from disk:", err)
-			os.Exit(1)
-		}
+		// We don't read everything here because we want some of these to be separate allocations
+		// And we don't want duplicate allocations
+		hashReader = bufio.NewReader(r)
 	} else {
 		if !errors.Is(err, os.ErrNotExist) {
 			log.Println(log.Standard, "Unable to load saved hashes", err)
 		}
 	}
-	if errors.Is(err, os.ErrNotExist) || len(hashes) < 18 {
+	if errors.Is(err, os.ErrNotExist) || hashReader == nil {
 		log.Println(log.Standard, "No saved hashes to load")
 	}
 
-	if opts.loadEmbeddedHashes && len(ch.Hashes) != 0 && len(hashes) < 18 {
+	if opts.loadEmbeddedHashes && len(ch.Hashes) != 0 && hashReader == nil {
 		log.Println(log.Standard, "Loading embedded hashes")
-		hashes = ch.Hashes
+		hashReader = bytes.NewReader(ch.Hashes)
 		if gr, err := gzip.NewReader(bytes.NewReader(ch.Hashes)); err == nil {
-			hashes, err = io.ReadAll(gr)
-			if err != nil {
-				log.Println(log.Fatal, "Failed to read embedded hashes:", err)
-			}
-			gr.Close()
+			hashReader = gr
+			defer gr.Close()
 		}
 	}
 
-	var (
-		format       ch.Format
-		loadedHashes *ch.SavedHashesV2
-	)
-
-	for _, format = range []ch.Format{ch.Msgpack, ch.JSON} {
-		if loadedHashes, err = ch.DecodeHashes(format, hashes); errors.Is(err, ch.ErrDecodeFail) {
-			continue
-		}
-		break
-	}
-	if errors.Is(err, ch.ErrNoHashes) || errors.Is(err, ch.ErrDecodeFail) {
+	var loadedHashes *ch.SavedHashesV3
+	loadedHashes, err = ch.DecodeHashesV3(hashReader)
+	if errors.Is(err, ch.ErrNoHashes) {
 		log.Println(log.Verbose, "No saved hashes to load")
 		return loadedHashes
 	}
@@ -203,45 +189,62 @@ func loadHashes(opts Opts) *ch.SavedHashesV2 {
 		log.Println(log.Fatal, "Failed to decode hashes:", err)
 		os.Exit(1)
 	}
+	log.Println(log.Verbose, "Hashes loaded   ", log.FormatInt(loadedHashes.AHashCount+loadedHashes.DHashCount+loadedHashes.PHashCount))
+	log.Println(log.Verbose, "IDs loaded      ", log.FormatInt(loadedHashes.IDCount))
+	log.Println(log.Verbose, "ID groups loaded", log.FormatInt(loadedHashes.GroupCount))
+	log.Println(log.Debug, "Hashes are consistent:", loadedHashes.AHashCount == loadedHashes.DHashCount && loadedHashes.AHashCount == loadedHashes.PHashCount)
+	log.Println(log.Debug, "Hashes match IDs:", loadedHashes.AHashCount == loadedHashes.IDCount)
+	log.Println(log.Verbose, "Successfully Loaded V3 hashes")
+
 	return loadedHashes
 }
 
-func saveHashes(opts Opts, hashes *ch.SavedHashesV2) error {
+func saveHashes(opts Opts, hashes *ch.SavedHashesV3) error {
 	if opts.loadEmbeddedHashes && !opts.saveEmbeddedHashes {
 		return errors.New("refusing to save embedded hashes")
 	}
-	if len(hashes.Hashes) < 1 {
+	if len(hashes.AHashes)+len(hashes.DHashes)+len(hashes.PHashes) < 1 {
 		log.Println(log.Standard, "Refusing to write empty hashes")
 		return nil
 	}
 
 	hashesPath := filepath.Join(opts.path, hashesFilename)
+	tmpPath := filepath.Join(opts.path, hashesFilename+".tmp.gz")
 
-	encodedHashes, err := ch.EncodeHashes(hashes, opts.format)
-	if err != nil {
-		return fmt.Errorf("unable to encode hashes as %v: %w", opts.format, err)
-	}
-	f, err := os.Create(hashesPath)
+	f, err := os.Create(tmpPath)
 	if err != nil {
 		return fmt.Errorf("unabled to save hashes: %w", err)
 	}
-
-	gzw := gzip.NewWriter(f)
-
-	if _, err = gzw.Write(encodedHashes); err != nil {
+	defer f.Close()
+	b := bufio.NewWriter(f)
+	gzw := gzip.NewWriter(b)
+	gzb := bufio.NewWriterSize(gzw, 32*1024)
+	err = ch.EncodeHashesV3(hashes, gzb)
+	if err != nil {
+		return fmt.Errorf("unable to encode hashes: %w", err)
+	}
+	if err = gzb.Flush(); err != nil {
 		return fmt.Errorf("failed to write hashes: %w", err)
 	}
 
 	if err = gzw.Close(); err != nil {
 		return fmt.Errorf("failed to write hashes: %w", err)
 	}
-
+	if err = b.Flush(); err != nil {
+		return fmt.Errorf("failed to write hashes: %w", err)
+	}
 	if err = f.Close(); err != nil {
 		return fmt.Errorf("failed to write hashes: %w", err)
 	}
-	log.Println(log.Verbose, "Hashes saved", len(hashes.Hashes))
-	log.Println(log.Verbose, "ID lists saved", len(hashes.IDs))
-	log.Println(log.Verbose, "Successfully Saved V2 hashes")
+	if err = os.Rename(tmpPath, hashesPath); err != nil {
+		return fmt.Errorf("failed to update existing file: %w", err)
+	}
+	log.Println(log.Verbose, "Hashes saved", log.FormatInt(hashes.AHashCount+hashes.DHashCount+hashes.PHashCount))
+	log.Println(log.Verbose, "IDs saved", log.FormatInt(hashes.IDCount))
+	log.Println(log.Verbose, "ID groups saved", log.FormatInt(hashes.GroupCount))
+	log.Println(log.Debug, "Hashes are consistent:", hashes.AHashCount == hashes.DHashCount && hashes.AHashCount == hashes.PHashCount)
+	log.Println(log.Debug, "Hashes match IDs:", hashes.AHashCount == hashes.IDCount)
+	log.Println(log.Verbose, "Successfully Saved V3 hashes")
 	return nil
 }
 
@@ -345,7 +348,7 @@ func startServer(opts Opts) {
 	server.DecodeHashes(loadedHashes)
 	log.Println(log.Standard, "Loaded hashes")
 	// This is loaded here so that the log doesn't hang for a few seconds before the first line
-	server.HashServer = ch.NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format, opts.useAllChecksums)
+	server.HashServer = ch.NewHashServer(filepath.Join(opts.path, hashesFilename), opts.useAllChecksums)
 	loadedHashes = nil //nolint:ineffassign
 
 	_ = os.MkdirAll(opts.path, 0o755)
@@ -381,7 +384,6 @@ func startServer(opts Opts) {
 				opts.hashDownloaded,
 				finishedDownloadQueue,
 			)
-			// TODO:? allow a way to cancel this context. I'm not sure why
 			cv.DownloadCovers(server.Context, cvdownloader)
 			for {
 				select {
@@ -395,7 +397,6 @@ func startServer(opts Opts) {
 	}
 
 	if opts.metron.enabled {
-		// TODO:? allow a way to cancel this context. I'm not sure why
 		dwg.Go(func() {
 			metronDownloader := metron.NewDownloader(
 				opts.version,
