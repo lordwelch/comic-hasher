@@ -154,7 +154,7 @@ func (s *sqliteStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([
 		for _, hash := range hashes {
 			idlist, err := s.findExactHashes(nil, hash)
 			if err != nil {
-				return foundMatches, err
+				return foundMatches, fmt.Errorf("failed to find exact matches: %w", err)
 			}
 			for id, equivalentIDs := range idlist {
 				foundMatches = append(foundMatches, ch.Result{
@@ -177,7 +177,7 @@ func (s *sqliteStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([
 	for _, hash := range hashes {
 		results, err := s.findPartialHashes(tl, nil, max, hash)
 		if err != nil {
-			return foundMatches, err
+			return foundMatches, fmt.Errorf("failed to find partial matches: %w", err)
 		}
 		tl.LogTime(fmt.Sprintf("Search partial %v", hash.Kind))
 
@@ -270,7 +270,7 @@ func (s *sqliteStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 }
 
 func (s *sqliteStorage) DecodeHashes(hashes *ch.SavedHashes) (ch.Metrics, error) {
-	return ch.Metrics{}, nil
+	// return ch.Metrics{}, nil
 	err := s.dropIndexes()
 	if err != nil {
 		return ch.Metrics{}, err
@@ -468,24 +468,24 @@ func (s *sqliteStorage) PrepareStatements() error {
 		return fmt.Errorf("failed to prepare database statements: %w", err)
 	}
 	s.hashExactMatchStatement, err = s.db.Prepare(`
-		select QIDs.domain, QIDs.stringid, IDs.domain, IDs.stringid from IDs
+		select EIDs.domain, EIDs.stringid, IDs.domain, IDs.stringid from IDs
 		join IDsToEquivalantIDs as IEIDs on IDs.id=IEIDs.idid
 		join (
-			select QEIDs.id as id from EquivalentIDs as QEIDs
-			join IDsToEquivalantIDs as QIEIDs on QEIDs.id=QIEIDs.equivalentid
-			join IDs as QIDs on QIDs.id=QIEIDs.idid
-			join Hashes on Hashes.id=QIDs.id
+			select QEIDs.id as id, QueryIDs.domain as domain, QueryIDs.stringid as stringid from EquivalentIDs as QEIDs
+			join IDsToEquivalantIDs as idGlue on QEIDs.id=idGlue.equivalentid
+			join IDs as QueryIDs on QueryIDs.id=idGlue.idid
+			join Hashes on Hashes.id=QueryIDs.id
 			where (Hashes.kind=? AND Hashes.hash=?)
 		) as EIDs on EIDs.id=IEIDs.equivalentid;
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to prepare database statements: %w", err)
+		return fmt.Errorf("failed to prepare database statement: %v %w", "hashExactMatchStatement", err)
 	}
 	s.hashPartialMatchStatement, err = s.db.Prepare(`
-		select QIDs.domain, QIDs.stringid, EIDs.hash, IDs.domain, IDs.stringid from IDs
+		select EIDs.domain, EIDs.stringid, EIDs.hash, IDs.domain, IDs.stringid from IDs
 		join IDsToEquivalantIDs as IEIDs on IDs.id=IEIDs.idid
 		join (
-			select Hashes.hash as hash, QEIDs.id as id from EquivalentIDs as QEIDs
+			select QIDs.domain as domain, QIDs.stringid, Hashes.hash as hash, QEIDs.id as id from EquivalentIDs as QEIDs
 			join IDsToEquivalantIDs as QIEIDs on QEIDs.id=QIEIDs.equivalentid
 			join IDs as QIDs on QIDs.id=QIEIDs.idid
 			join Hashes on Hashes.id=QIDs.id
@@ -493,13 +493,13 @@ func (s *sqliteStorage) PrepareStatements() error {
 		) as EIDs on EIDs.id=IEIDs.equivalentid;
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to prepare database statements: %w", err)
+		return fmt.Errorf("failed to prepare database statements: hashPartialMatchStatement %w", err)
 	}
 	s.idMatchStatement, err = s.db.Prepare(`
 		select IDs.domain, IDs.stringid from IDs
 		join IDsToEquivalantIDs as IEIDs on IDs.id=IEIDs.idid
 		join (
-			select EIDs.* from EquivalentIDs as EIDs
+			select EIDs.id, QIDs.domain as domain, QIDs.stringid as stringid from EquivalentIDs as EIDs
 			join IDsToEquivalantIDs as QIEIDs on EIDs.id=QIEIDs.equivalentid
 			join IDs as QIDs on QIDs.id=QIEIDs.idid
 			where (QIDs.domain=? AND QIDs.stringid=?)
