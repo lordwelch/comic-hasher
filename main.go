@@ -27,8 +27,6 @@ import (
 	"github.com/disintegration/imaging"
 	"github.com/kr/pretty"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/vp8"
 	_ "golang.org/x/image/vp8l"
@@ -114,16 +112,15 @@ func main() {
 	startServer(opts)
 }
 
-func signalHandler(s *ch.Server) {
+func signalHandler(s *ch.Server, signalQueue <-chan os.Signal) {
 	select {
-	case sig := <-s.SignalQueue:
+	case sig := <-signalQueue:
 		log.Log(log.Verbose, "Signal: %v\n", sig)
-		s.Cancel()
 	case <-s.Context.Done():
 		log.Log(log.Standard, "Recieved quit: Attempting to shutdown gracefully")
 	}
-	err := s.HttpServer.Shutdown(context.TODO())
-	log.Println(log.Fatal, "Err:", err)
+	err := s.Shutdown()
+	log.Println(log.Fatal, "Shutting down server Err:", err)
 }
 
 func initializeStorage(opts Opts) (ch.HashStorage, error) {
@@ -323,39 +320,15 @@ func startServer(opts Opts) {
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
 	}
-
-	mux := &ch.CHMux{opts.version, &http.ServeMux{}}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	server := ch.Server{
-		Context:      ctx,
-		Cancel:       cancel,
-		SignalQueue:  make(chan os.Signal, 1),
-		ReaderQueue:  make(chan string, 1),
-		HashingQueue: make(chan ch.Im, 1),
-		MappingQueue: make(chan ch.ImageHash, 1),
-		Mux:          mux,
-		HttpServer: &http.Server{
-			Addr:           opts.addr,
-			Handler:        mux,
-			ReadTimeout:    10 * time.Second,
-			WriteTimeout:   10 * time.Second,
-			MaxHeaderBytes: 1 << 20,
-		},
-		OnlyHashNewIDs: opts.onlyHashNewIDs,
-		Version:        opts.version,
-		Reg:            prometheus.NewRegistry(),
-	}
-	Notify(server.SignalQueue)
+	server := ch.NewServer(context.Background(), opts.version, opts.addr, opts.onlyHashNewIDs)
+	signalQueue := make(chan os.Signal, 1)
+	Notify(signalQueue)
 	var err error
 	log.Println(log.Verbose, "Init storage")
 	server.Storage, err = initializeStorage(opts)
 	if err != nil {
 		panic(err)
 	}
-
-	log.Println(log.Verbose, "Init handlers")
-	server.SetupAppHandlers()
 
 	log.Println(log.Verbose, "Init 10 readers")
 	rwg := sync.WaitGroup{}
@@ -376,16 +349,10 @@ func startServer(opts Opts) {
 	// DecodeHashes would normally need a write lock
 	// nothing else has been started yet so we don't need one
 	loadedHashes := loadHashes(opts)
-	metrics, err := server.Storage.DecodeHashes(loadedHashes)
-	if err != nil {
-		panic(err)
-	}
-	// This is loaded here so that the log doesn't hang for a few seconds before the first line
-	server.HashServer = ch.NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format)
-	for m, count := range metrics.Hashes {
-		server.Hash_count.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
-	}
+	server.DecodeHashes(loadedHashes)
 	log.Println(log.Standard, "Loaded hashes")
+	// This is loaded here so that the log doesn't hang for a few seconds before the first line
+	server.HashServer = ch.NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format, opts.useAllChecksums)
 	loadedHashes = nil //nolint:ineffassign
 
 	// TODO: this may cause issues if listen below fails and there are images being hashed
@@ -402,7 +369,7 @@ func startServer(opts Opts) {
 	finishedDownloadQueue := make(chan download.Download, 1)
 	// startDownloadQueue := make(chan download.Download, 1)
 	dcwg.Go(func() {
-		downloadProcessor(chdb, opts, finishedDownloadQueue, &server)
+		downloadProcessor(chdb, opts, finishedDownloadQueue, server)
 	})
 
 	if opts.cv.enabled {
@@ -477,7 +444,7 @@ func startServer(opts Opts) {
 		})
 	}
 
-	go signalHandler(&server)
+	go signalHandler(&server, signalQueue)
 	if opts.memprofile != "" {
 		f, err := os.Create(opts.memprofile)
 		if err != nil {
@@ -499,11 +466,10 @@ func startServer(opts Opts) {
 
 	}
 
-	log.Println(log.Required, "Listening on ", server.HttpServer.Addr)
-	err = server.HttpServer.ListenAndServe()
+	log.Println(log.Required, "Listening on ", server.HTTPServer.Addr)
+	err = server.ListenAndServe()
 	if err != nil {
 		log.Println(log.Fatal, err)
-		server.Cancel()
 	}
 	log.Println(log.Required, "Shutting down comic-hasher")
 	close(server.ReaderQueue)
@@ -514,7 +480,7 @@ func startServer(opts Opts) {
 	}
 
 	log.Println(log.Verbose, "waiting on downloaders")
-	dwg.Wait() // Downloaders send to startDownloadQueue -> finishedDownloadQueue -> server.HashingQueue
+	dwg.Wait() // Downloaders send to startDownloadQueue -> finishedDownloadQueue -> server.hashingQueue
 
 	log.Println(log.Standard, "waiting on download workers")
 	// close(startDownloadQueue)
@@ -524,7 +490,7 @@ func startServer(opts Opts) {
 		log.Println(log.Verbose, "Skipping download", dw.IssueID)
 	}
 
-	// close(server.HashingQueue) // Closed by downloadProcessor
+	// close(server.hashingQueue) // Closed by downloadProcessor
 	log.Println(log.Standard, "waiting on hashers")
 	hwg.Wait()
 	for dw := range server.HashingQueue {
@@ -540,9 +506,9 @@ func startServer(opts Opts) {
 	log.Println(log.Standard, "waiting on hash encoder")
 	hashEncoders.Wait()
 	log.Println(log.Required, "If you press Ctrl+C after this point the saved hashes will be corrupted")
-	signal.Stop(server.SignalQueue)
-	close(server.SignalQueue)
-	for dw := range server.SignalQueue {
+	signal.Stop(signalQueue)
+	close(signalQueue)
+	for dw := range signalQueue {
 		log.Println(log.Verbose, "Skipping", dw)
 	}
 

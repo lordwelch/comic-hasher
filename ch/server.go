@@ -3,7 +3,6 @@ package ch
 import (
 	"bufio"
 	"cmp"
-	"compress/gzip"
 	"context"
 	"crypto"
 	"encoding/base64"
@@ -17,6 +16,7 @@ import (
 	"image"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	gzip "github.com/klauspost/pgzip"
 
 	"github.com/OneOfOne/xxhash"
 	"github.com/twmb/murmur3"
@@ -50,25 +52,51 @@ import (
 var logger = log.NewLogger("server")
 
 type Server struct {
-	HttpServer     *http.Server
+	HTTPServer     *http.Server
 	Mux            *CHMux
 	BaseURL        *url.URL
 	Storage        HashStorage
 	HashServer     HashServer
 	Context        context.Context
-	Cancel         func()
-	SignalQueue    chan os.Signal
+	cancel         func()
 	ReaderQueue    chan string
 	HashingQueue   chan Im
 	MappingQueue   chan ImageHash
 	OnlyHashNewIDs bool
 	Version        string
 
-	Reg                   *prometheus.Registry
-	match_cover_total     prometheus.Counter
-	match_cover_duration  *prometheus.HistogramVec
-	Hash_count            *prometheus.CounterVec
-	last_request_duration prometheus.Gauge
+	reg                 *prometheus.Registry
+	matchCoverTotal     prometheus.Counter
+	matchCoverDuration  *prometheus.HistogramVec
+	hashCount           *prometheus.CounterVec
+	lastRequestDuration prometheus.Gauge
+}
+
+func NewServer(ctx context.Context, Version string, addr string, onlyHashNewIDs bool) *Server {
+	mux := &CHMux{Version: Version, ServeMux: &http.ServeMux{}}
+	ctx, cancel := context.WithCancel(ctx)
+
+	s := &Server{
+		Context:      ctx,
+		cancel:       cancel,
+		ReaderQueue:  make(chan string, 1),
+		HashingQueue: make(chan Im, 1),
+		MappingQueue: make(chan ImageHash, 1),
+		Mux:          mux,
+		HTTPServer: &http.Server{
+			Addr:           addr,
+			Handler:        mux,
+			ReadTimeout:    10 * time.Second,
+			WriteTimeout:   10 * time.Second,
+			MaxHeaderBytes: 1 << 20,
+		},
+		OnlyHashNewIDs: onlyHashNewIDs,
+		Version:        Version,
+		reg:            prometheus.NewRegistry(),
+	}
+
+	s.setupAppHandlers()
+	return s
 }
 
 type HashServer struct {
@@ -76,9 +104,12 @@ type HashServer struct {
 	mut               sync.RWMutex
 	digests           map[string][]byte
 	digestHeaderCache string
+	reprHeaderCache   string
 	format            Format
 	digesters         map[string]hash.Hash
-	hashes_downloaded prometheus.Counter
+	hashesDownloaded  prometheus.Counter
+	gzip              *gzip.Writer
+	useAllChecksums   bool
 }
 
 type CHMux struct {
@@ -91,45 +122,60 @@ func (CHM *CHMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	CHM.ServeMux.ServeHTTP(w, r)
 }
 
+func (s *Server) Shutdown() error {
+	s.cancel()
+	return s.HTTPServer.Shutdown(context.TODO())
+}
+
+func (s *Server) ListenAndServe() error {
+	err := s.HTTPServer.ListenAndServe()
+	if err != nil {
+		s.cancel()
+		return err
+	}
+
+	return nil
+}
+
 func (s *Server) authenticated(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return strings.TrimSpace("lordwelch"), true
 }
 
-func (s *Server) SetupAppHandlers() {
+func (s *Server) setupAppHandlers() {
 	s.Mux.HandleFunc("/add_cover", s.addCover)
 	s.Mux.HandleFunc("/match_cover_hash", s.matchCoverHash)
 	s.Mux.HandleFunc("/associate_ids", s.associateIDs)
-	s.Mux.HandleFunc("/hashes", s.HashServer.downloadHashes)
-	s.Mux.Handle("/metrics", promhttp.HandlerFor(s.Reg, promhttp.HandlerOpts{}))
-	promauto.With(s.Reg)
-	s.match_cover_total = promauto.With(s.Reg).NewCounter(prometheus.CounterOpts{
+	s.Mux.HandleFunc("/hashes", s.HashServer.DownloadHashes)
+	s.Mux.Handle("/metrics", promhttp.HandlerFor(s.reg, promhttp.HandlerOpts{}))
+	promauto.With(s.reg)
+	s.matchCoverTotal = promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
 		Name: "comic_hasher_match_cover_hash",
 		Help: "The total number of processed /match_cover_hash requests",
 	})
 
-	s.HashServer.hashes_downloaded = promauto.With(s.Reg).NewCounter(prometheus.CounterOpts{
+	s.HashServer.hashesDownloaded = promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
 		Name: "comic_hasher_hashes_download",
 		Help: "The total number of times the hash database has been downloaded: /hashes",
 	})
 
-	s.Hash_count = promauto.With(s.Reg).NewCounterVec(prometheus.CounterOpts{
+	s.hashCount = promauto.With(s.reg).NewCounterVec(prometheus.CounterOpts{
 		Name: "comic_hasher_hashes",
 		Help: "The total number of hashes",
 	}, []string{"kind", "source"})
-	s.match_cover_duration = promauto.With(s.Reg).NewHistogramVec(
+	s.matchCoverDuration = promauto.With(s.reg).NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name: "comic_hasher_match_cover_hash_request_seconds",
 			Help: "Summary for the request duration of the /match_cover_hash",
 		},
 		[]string{"hashes"},
 	)
-	s.last_request_duration = promauto.With(s.Reg).NewGauge(
+	s.lastRequestDuration = promauto.With(s.reg).NewGauge(
 		prometheus.GaugeOpts{
 			Name: "comic_hasher_match_cover_hash_last_request_seconds",
 			Help: "The request duration of the last /match_cover_hash request",
 		},
 	)
-	promauto.With(s.Reg).NewGaugeVec(
+	promauto.With(s.reg).NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "app_info",
 			Help: "Current application version.",
@@ -138,10 +184,12 @@ func (s *Server) SetupAppHandlers() {
 	).WithLabelValues(s.Version).Set(1)
 }
 
-func (h *HashServer) downloadHashes(w http.ResponseWriter, r *http.Request) {
+func (h *HashServer) DownloadHashes(w http.ResponseWriter, r *http.Request) {
 	h.mut.RLock()
 	defer h.mut.RUnlock()
-	h.hashes_downloaded.Inc()
+	if h.hashesDownloaded != nil {
+		h.hashesDownloaded.Inc()
+	}
 	if r.Header.Get("Want-Digest") != "" {
 		w.Header().Set("Digest", h.digestHeader())
 	}
@@ -152,8 +200,8 @@ func (h *HashServer) downloadHashes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HashServer) reprDigestHeader() string {
-	if h.digestHeaderCache != "" {
-		return h.digestHeaderCache
+	if h.reprHeaderCache != "" {
+		return h.reprHeaderCache
 	}
 	s := &strings.Builder{}
 	if len(h.digests) == 0 {
@@ -168,10 +216,15 @@ func (h *HashServer) reprDigestHeader() string {
 		s.WriteString(":,")
 	}
 	str := s.String()
-	return str[:len(str)-1]
+	str = str[:len(str)-1]
+	h.reprHeaderCache = str
+	return h.reprHeaderCache
 }
 
 func (h *HashServer) digestHeader() string {
+	if h.digestHeaderCache != "" {
+		return h.digestHeaderCache
+	}
 	s := &strings.Builder{}
 	if len(h.digests) == 0 {
 		return ""
@@ -185,11 +238,15 @@ func (h *HashServer) digestHeader() string {
 		s.WriteString(",")
 	}
 	str := s.String()
-	return str[:len(str)-1]
+	str = str[:len(str)-1]
+	h.digestHeaderCache = str
+	return h.digestHeaderCache
 }
 
 func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	// Encoding hashes requires a lock as it assumes pointers are in use to reduce unnecessary memory usage
+	logger.Println(log.Verbose, "Writing hashes to disk")
+	defer logger.Println(log.Verbose, "Finished writing hashes to disk")
 	hashes.RLock()
 	defer hashes.RUnlock()
 	encodedHashes, err := hashes.EncodeHashes()
@@ -200,54 +257,65 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	if err != nil {
 		return err
 	}
-	tmp_file_path := h.hashes + ".tmp.gz"
-	f, err := os.Create(tmp_file_path)
+	tmpFilePath := h.hashes + ".tmp.gz"
+	f, err := os.Create(tmpFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashes+".tmp", err)
 	}
 
 	defer f.Close() //nolint:errcheck
-	writer := h.initDigests(f)
-	gzw := gzip.NewWriter(writer)
-	_, err = gzw.Write(content)
+	writer := bufio.NewWriter(h.initDigests(f))
+	h.gzip.Reset(writer)
+	b := bufio.NewWriterSize(h.gzip, 32*1024)
+	_, err = b.Write(content)
 	if err != nil {
-		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashes+".tmp", err)
+		return fmt.Errorf("failed to encode hashes to temporary file %q, %w", h.hashes+".tmp", err)
+	}
+	if err = b.Flush(); err != nil {
+		return fmt.Errorf("failed to write hashes: %w", err)
 	}
 
 	// Close gzip so we have a proper stream
-	if err = gzw.Close(); err != nil {
+	if err = h.gzip.Close(); err != nil {
+		return fmt.Errorf("failed to write hashes: %w", err)
+	}
+	if err = writer.Flush(); err != nil {
 		return fmt.Errorf("failed to write hashes: %w", err)
 	}
 
 	h.mut.Lock()
 	defer h.mut.Unlock()
 	h.digestHeaderCache = ""
-	// Explicit close. Windows has issues with operating on open files
-	_ = f.Close()
+	h.reprHeaderCache = ""
+	if err = f.Close(); err != nil {
+		return fmt.Errorf("failed to write hashes: %w", err)
+	}
 	for name, digest := range h.digesters {
 		h.digests[name] = digest.Sum(nil)
 		digest.Reset() // may possibly keep some memory free...
 	}
-	err = os.Rename(tmp_file_path, h.hashes)
+	err = os.Rename(tmpFilePath, h.hashes)
 	if err != nil {
-		return fmt.Errorf("failed to update existing file%w", err)
+		return fmt.Errorf("failed to update existing file: %w", err)
 	}
 	return nil
 }
 
-func NewHashServer(hashes string, format Format) HashServer {
+func NewHashServer(hashes string, format Format, useAllChecksums bool) HashServer {
 	if !filepath.IsAbs(hashes) {
 		panic("NewHashServer needs an absolute path for hashes")
 	}
 	h := HashServer{
-		hashes:  hashes,
-		format:  format,
-		digests: map[string][]byte{},
+		hashes:          hashes,
+		format:          format,
+		digests:         map[string][]byte{},
+		useAllChecksums: useAllChecksums,
+		gzip:            gzip.NewWriter(io.Discard),
 	}
 	f, err := os.Open(hashes)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return h //nolint:govet
+			return h // nolint:govet
 		}
 		panic(fmt.Errorf("unable to open the hashes file %q: %w", hashes, err))
 	}
@@ -262,44 +330,48 @@ func NewHashServer(hashes string, format Format) HashServer {
 		digest.Reset() // may possibly keep some memory free...
 	}
 
-	return h //nolint:govet
+	return h // nolint:govet
 }
 
 func (h *HashServer) initDigests(writer io.Writer) io.Writer {
 	if h.digesters == nil {
 		h.digesters = map[string]hash.Hash{
-			"sha":                       crypto.SHA1.New(),
-			"adler":                     adler32.New(),
-			"crc32c":                    crc32.NewIEEE(),
-			"fnv1-32":                   fnv.New32(),
-			"fnv1a-32":                  fnv.New32a(),
-			"fnv1-64":                   fnv.New64(),
-			"fnv1a-64":                  fnv.New64a(),
-			"fnv1-128":                  fnv.New128(),
-			"fnv1a-128":                 fnv.New128a(),
-			crypto.MD5.String():         crypto.MD5.New(),
-			crypto.SHA1.String():        crypto.SHA1.New(),
-			crypto.SHA224.String():      crypto.SHA224.New(),
-			crypto.SHA256.String():      crypto.SHA256.New(),
-			crypto.SHA384.String():      crypto.SHA384.New(),
-			crypto.SHA512.String():      crypto.SHA512.New(),
-			crypto.SHA3_224.String():    crypto.SHA3_224.New(),
-			crypto.SHA3_256.String():    crypto.SHA3_256.New(),
-			crypto.SHA3_384.String():    crypto.SHA3_384.New(),
-			crypto.SHA3_512.String():    crypto.SHA3_512.New(),
-			crypto.SHA512_224.String():  crypto.SHA512_224.New(),
-			crypto.SHA512_256.String():  crypto.SHA512_256.New(),
-			crypto.BLAKE2s_256.String(): crypto.BLAKE2s_256.New(),
-			crypto.BLAKE2b_256.String(): crypto.BLAKE2b_256.New(),
-			crypto.BLAKE2b_384.String(): crypto.BLAKE2b_384.New(),
-			crypto.BLAKE2b_512.String(): crypto.BLAKE2b_512.New(),
-			"XXH64":                     xxhash.New64(),
-			"XXH32":                     xxhash.New32(),
-			"XXH3":                      xxh3.New(),
-			"XXH128":                    xxh3.New128(),
-			"murmur3-32":                murmur3.New32(),
-			"murmur3-64":                murmur3.New64(),
-			"murmur3-128":               murmur3.New128(),
+			"sha":                  crypto.SHA1.New(),
+			crypto.SHA1.String():   crypto.SHA1.New(),
+			crypto.SHA256.String(): crypto.SHA256.New(),
+			crypto.MD5.String():    crypto.MD5.New(),
+			"XXH3":                 xxh3.New(),
+		}
+		if h.useAllChecksums {
+			maps.Copy(h.digesters, map[string]hash.Hash{
+				"adler":                     adler32.New(),
+				"crc32c":                    crc32.NewIEEE(),
+				"fnv1-32":                   fnv.New32(),
+				"fnv1a-32":                  fnv.New32a(),
+				"fnv1-64":                   fnv.New64(),
+				"fnv1a-64":                  fnv.New64a(),
+				"fnv1-128":                  fnv.New128(),
+				"fnv1a-128":                 fnv.New128a(),
+				crypto.SHA224.String():      crypto.SHA224.New(),
+				crypto.SHA384.String():      crypto.SHA384.New(),
+				crypto.SHA512.String():      crypto.SHA512.New(),
+				crypto.SHA3_224.String():    crypto.SHA3_224.New(),
+				crypto.SHA3_256.String():    crypto.SHA3_256.New(),
+				crypto.SHA3_384.String():    crypto.SHA3_384.New(),
+				crypto.SHA3_512.String():    crypto.SHA3_512.New(),
+				crypto.SHA512_224.String():  crypto.SHA512_224.New(),
+				crypto.SHA512_256.String():  crypto.SHA512_256.New(),
+				crypto.BLAKE2s_256.String(): crypto.BLAKE2s_256.New(),
+				crypto.BLAKE2b_256.String(): crypto.BLAKE2b_256.New(),
+				crypto.BLAKE2b_384.String(): crypto.BLAKE2b_384.New(),
+				crypto.BLAKE2b_512.String(): crypto.BLAKE2b_512.New(),
+				"XXH64":                     xxhash.New64(),
+				"XXH32":                     xxhash.New32(),
+				"XXH128":                    xxh3.New128(),
+				"murmur3-32":                murmur3.New32(),
+				"murmur3-64":                murmur3.New64(),
+				"murmur3-128":               murmur3.New128(),
+			})
 		}
 	}
 	writers := make([]io.Writer, 0, len(h.digesters)+1)
@@ -413,7 +485,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		max       int = 8
 		err       error
 		hashes    []Hash
-		hash_str  string
+		hashStr   string
 	)
 
 	if simple {
@@ -428,7 +500,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 	if ahash > 0 {
 		hashes = append(hashes, Hash{Hash: ahash, Kind: goimagehash.AHash})
-		hash_str += "ahash_"
+		hashStr += "ahash_"
 	}
 	if dhash, err = strconv.ParseUint(dhashStr, 16, 64); err != nil && dhashStr != "" {
 		logger.Log(log.Verbose, "could not parse dhash: %s", dhashStr)
@@ -437,7 +509,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 	if dhash > 0 {
 		hashes = append(hashes, Hash{Hash: dhash, Kind: goimagehash.DHash})
-		hash_str += "dhash_"
+		hashStr += "dhash_"
 	}
 	if phash, err = strconv.ParseUint(phashStr, 16, 64); err != nil && phashStr != "" {
 		logger.Log(log.Verbose, "could not parse phash: %s", phashStr)
@@ -446,7 +518,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 	}
 	if phash > 0 {
 		hashes = append(hashes, Hash{Hash: phash, Kind: goimagehash.PHash})
-		hash_str += "phash_"
+		hashStr += "phash_"
 	}
 	if tmpMax, err := strconv.Atoi(maxStr); err != nil && maxStr != "" {
 		logger.Log(log.Verbose, "Invalid Max: %s", maxStr)
@@ -458,7 +530,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	hash_str = strings.TrimRight(hash_str, "_")
+	hashStr = strings.TrimRight(hashStr, "_")
 
 	if max > 8 {
 		logger.Log(log.Verbose, "Max must be less than 9: %d", max)
@@ -466,12 +538,12 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	timer := prometheus.NewTimer(prometheus.ObserverFunc(func(v float64) {
-		s.match_cover_duration.WithLabelValues(hash_str).Observe(v)
-		s.last_request_duration.Set(v)
+		s.matchCoverDuration.WithLabelValues(hashStr).Observe(v)
+		s.lastRequestDuration.Set(v)
 	}))
 	defer timer.ObserveDuration()
 
-	s.match_cover_total.Inc()
+	s.matchCoverTotal.Inc()
 	matches, err := s.Storage.GetMatches(hashes, max, exactOnly)
 	cmpFunc := func(a Result, b Result) int {
 		return cmp.Or(
@@ -482,7 +554,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	slices.SortFunc(matches, cmpFunc)
-	matches = slices.CompactFunc(matches, func(a Result, b Result) bool { return cmpFunc(a, b) == 0 })
+	matches = slices.CompactFunc(matches, func(a, b Result) bool { return cmpFunc(a, b) == 0 })
 	if len(matches) > 0 {
 		var (
 			msg    string
@@ -553,7 +625,7 @@ func (s *Server) Mapper(workerID int) {
 	defer logger.Println(log.MoreVerbose, "Mapper", workerID, "completed")
 	for hash := range s.MappingQueue {
 		for m, count := range s.Storage.MapHashes(hash).Hashes {
-			s.Hash_count.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
+			s.hashCount.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
 		}
 	}
 }
@@ -617,6 +689,16 @@ func (s *Server) Reader(workerID int) {
 	}
 }
 
+func (s *Server) DecodeHashes(loadedHashes *SavedHashes) {
+	metrics, err := s.Storage.DecodeHashes(loadedHashes)
+	if err != nil {
+		panic(err)
+	}
+	for m, count := range metrics.Hashes {
+		s.hashCount.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
+	}
+}
+
 func (s *Server) HashLocalImages(coverPath string) {
 	if coverPath == "" {
 		return
@@ -631,7 +713,7 @@ func (s *Server) HashLocalImages(coverPath string) {
 			select {
 			case <-s.Context.Done():
 				logger.Println(log.Verbose, "Recieved quit")
-				err = s.HttpServer.Shutdown(context.TODO())
+				err = s.HTTPServer.Shutdown(context.TODO())
 				return fmt.Errorf("recieved quit: %w", err)
 			default:
 			}
