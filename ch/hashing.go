@@ -16,8 +16,6 @@ import (
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 
 	"gitea.narnian.us/lordwelch/goimagehash"
-	json "github.com/json-iterator/go"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 //go:embed hashes.gz
@@ -48,10 +46,6 @@ const (
 const (
 	ComicVine Source = "comicvine.gamespot.com"
 	Metron    Source = "metron.cloud"
-)
-
-const (
-	SavedHashVersion int = 2
 )
 
 var sources *sync.Map = newSourceMap()
@@ -141,55 +135,16 @@ func Lower[E string | Source](s E) Source {
 }
 
 func NewSource[E string | Source](s E) *Source {
+	if sp, ok := sources.Load(Source(s)); ok {
+		return sp.(*Source)
+	}
 	s1 := Lower(s)
 	if sp, ok := sources.Load(s1); ok {
 		return sp.(*Source)
 	}
-	s2 := Source(strings.ToLower(Clone(string(s))))
+	s2 := Source(Clone(string(s1)))
 	sp, _ := sources.LoadOrStore(s2, &s2)
 	return sp.(*Source)
-}
-
-var b = make([]byte, len(ComicVine))
-
-func (id *ID) DecodeMsgpack(dec *msgpack.Decoder) error {
-	// b := make([]byte, len(ComicVine))
-	l, err := dec.DecodeMapLen()
-	if err != nil {
-		return err
-	}
-	if l != 2 {
-		return fmt.Errorf("expected two values got: %v", l)
-	}
-	err = dec.Decode(&b)
-	if err != nil {
-		return err
-	}
-	if string(b) != "Domain" {
-		panic("Please don't happen")
-	}
-	err = dec.Decode(&b)
-	if err != nil {
-		return err
-	}
-	// NewSource will make a copy if it is needed
-	id.Domain = NewSource(unsafe.String(&b[0], len(b)))
-
-	err = dec.Decode(&b)
-	if err != nil {
-		return err
-	}
-	if string(b) != "ID" {
-		panic("Please don't happen")
-	}
-	err = dec.Decode(&b)
-	if err != nil {
-		return err
-	}
-
-	id.ID = string(b)
-
-	return nil
 }
 
 func Clone(s string) string {
@@ -201,51 +156,11 @@ func Clone(s string) string {
 	return unsafe.String(&b[0], len(b))
 }
 
-func (id *ID) UnmarshalJSON(b []byte) error {
-	var s struct {
-		Domain, ID string
-	}
-	if err := json.Unmarshal(b, &s); err != nil {
-		return err
-	}
-
-	id.ID = s.ID
-	id.Domain = NewSource(s.Domain)
-
-	return nil
-}
-
-func InsertIDp(ids []*ID, id *ID) []*ID {
-	index, itemFound := slices.BinarySearchFunc(ids, id, func(existing, target *ID) int {
-		return cmp.Or(
-			cmp.Compare(*existing.Domain, *target.Domain),
-			cmp.Compare(existing.ID, target.ID),
-		)
-	})
-	if itemFound {
-		return ids
-	}
-	return slices.Insert(ids, index, id)
-}
-
-func InsertID(ids []ID, id ID) []ID {
-	index, itemFound := slices.BinarySearchFunc(ids, id, func(existing, target ID) int {
-		return cmp.Or(
-			cmp.Compare(*existing.Domain, *target.Domain),
-			cmp.Compare(existing.ID, target.ID),
-		)
-	})
-	if itemFound {
-		return ids
-	}
-	return slices.Insert(ids, index, id)
-}
-
 type HashStorage interface {
 	GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error)
 	MapHashes(ImageHash) Metrics
-	DecodeHashes(hashes *SavedHashesV2) (Metrics, error)
-	EncodeHashes() (*SavedHashesV2, error)
+	DecodeHashes(hashes *SavedHashesV3) (Metrics, error)
+	EncodeHashes() (*SavedHashesV3, error)
 	AssociateIDs(OldID, NewID ID) error
 	GetIDs(id ID) []ID
 	RLock()
