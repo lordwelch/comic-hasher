@@ -643,49 +643,9 @@ func (s *Server) Hasher(workerID int) {
 			continue
 		}
 
-		select {
-		// TODO: Check channel pipelines
-		case s.MappingQueue <- hash:
-		default:
-		}
-
 		elapsed := time.Since(start)
 		logger.Log(log.Verbose, "Hashing took %v: id: %v", elapsed, hash.ID)
-	}
-}
-
-func (s *Server) Reader(workerID int) {
-	defer logger.Println(log.Verbose2, "Reader", workerID, "completed")
-	for path := range s.ReaderQueue {
-
-		id := ID{
-			Domain: NewSource(filepath.Base(filepath.Dir(filepath.Dir(path)))),
-			ID:     filepath.Base(filepath.Dir(path)),
-		}
-		if s.OnlyHashNewIDs && len(s.Storage.GetIDs(id)) > 0 {
-			continue
-		}
-		file, err := os.Open(path)
-		if err != nil {
-			logger.Log(log.Standard, "Failed to open image %q: %v", path, err)
-			continue
-		}
-		i, format, err := image.Decode(bufio.NewReader(file))
-		file.Close()
-		if err != nil {
-			continue // skip this image
-		}
-
-		im := Im{
-			Im:      i,
-			Format:  format,
-			ID:      id,
-			NewOnly: s.OnlyHashNewIDs,
-		}
-		select {
-		case s.HashingQueue <- im:
-		default:
-		}
+		s.MappingQueue <- hash
 	}
 }
 
@@ -703,28 +663,51 @@ func (s *Server) HashLocalImages(coverPath string) {
 	if coverPath == "" {
 		return
 	}
-	go func() {
-		logger.Println(log.Standard, "Hashing covers at ", coverPath)
-		start := time.Now()
-		err := filepath.WalkDir(coverPath, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			select {
-			case <-s.Context.Done():
-				logger.Println(log.Verbose, "Recieved quit")
-				err = s.HTTPServer.Shutdown(context.TODO())
-				return fmt.Errorf("recieved quit: %w", err)
-			default:
-			}
-			if d.IsDir() {
-				return nil
-			}
-
-			s.ReaderQueue <- path
+	logger.Println(log.Standard, "Hashing covers at ", coverPath)
+	start := time.Now()
+	err := filepath.WalkDir(coverPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		select {
+		case <-s.Context.Done():
+			return fmt.Errorf("recieved quit: %w", err)
+		default:
+		}
+		if d.IsDir() {
 			return nil
-		})
-		elapsed := time.Since(start)
-		logger.Println(log.Standard, "Err:", err, "local hashing took", elapsed)
-	}()
+		}
+
+		id := ID{
+			Domain: NewSource(filepath.Base(filepath.Dir(filepath.Dir(path)))),
+			ID:     filepath.Base(filepath.Dir(path)),
+		}
+		if s.OnlyHashNewIDs && len(s.Storage.GetIDs(id)) > 0 {
+			return nil
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			logger.Log(log.Standard, "Failed to open image %q: %v", path, err)
+			return nil
+		}
+		i, format, err := image.Decode(bufio.NewReader(file))
+		file.Close()
+		if err != nil {
+			return nil // skip this image
+		}
+
+		im := Im{
+			Im:      i,
+			Format:  format,
+			ID:      id,
+			NewOnly: s.OnlyHashNewIDs,
+		}
+		select {
+		case s.HashingQueue <- im:
+		default:
+		}
+		return nil
+	})
+	elapsed := time.Since(start)
+	logger.Println(log.Standard, "Err:", err, "local hashing took", elapsed)
 }

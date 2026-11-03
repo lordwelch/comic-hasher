@@ -248,7 +248,6 @@ func saveHashes(opts Opts, hashes *ch.SavedHashes) error {
 func downloadProcessor(chdb ch.CHDB, opts Opts, finishedDownloads <-chan download.Download, server *ch.Server) {
 	defer func() {
 		log.Println(log.Verbose, "Download Processor completed")
-		close(server.HashingQueue)
 	}()
 	for dl := range finishedDownloads {
 		if opts.onlyHashNewIDs && len(server.Storage.GetIDs(dl.IssueID)) > 0 {
@@ -330,12 +329,6 @@ func startServer(opts Opts) {
 		panic(err)
 	}
 
-	log.Println(log.Verbose, "Init 10 readers")
-	rwg := sync.WaitGroup{}
-	for i := range 10 {
-		rwg.Go(func() { server.Reader(i) })
-	}
-
 	log.Println(log.Verbose, "Init 10 hashers")
 	hwg := sync.WaitGroup{}
 	for i := range 10 {
@@ -355,8 +348,6 @@ func startServer(opts Opts) {
 	server.HashServer = ch.NewHashServer(filepath.Join(opts.path, hashesFilename), opts.format, opts.useAllChecksums)
 	loadedHashes = nil //nolint:ineffassign
 
-	// TODO: this may cause issues if listen below fails and there are images being hashed
-	server.HashLocalImages(opts.coverPath)
 	_ = os.MkdirAll(opts.path, 0o755)
 	chdb, err := ch.OpenCHDBBolt(opts.path, opts.deleteHashedImages)
 	if err != nil {
@@ -370,6 +361,9 @@ func startServer(opts Opts) {
 	// startDownloadQueue := make(chan download.Download, 1)
 	dcwg.Go(func() {
 		downloadProcessor(chdb, opts, finishedDownloadQueue, server)
+	})
+	dcwg.Go(func() {
+		server.HashLocalImages(opts.coverPath)
 	})
 
 	if opts.cv.enabled {
@@ -444,7 +438,7 @@ func startServer(opts Opts) {
 		})
 	}
 
-	go signalHandler(&server, signalQueue)
+	go signalHandler(server, signalQueue)
 	if opts.memprofile != "" {
 		f, err := os.Create(opts.memprofile)
 		if err != nil {
@@ -463,7 +457,6 @@ func startServer(opts Opts) {
 		if err := pprof.Lookup("heap").WriteTo(f, 0); err != nil {
 			log.Println(log.Fatal, "could not write memory profile:", err)
 		}
-
 	}
 
 	log.Println(log.Required, "Listening on ", server.HTTPServer.Addr)
@@ -472,38 +465,35 @@ func startServer(opts Opts) {
 		log.Println(log.Fatal, err)
 	}
 	log.Println(log.Required, "Shutting down comic-hasher")
-	close(server.ReaderQueue)
-	log.Println(log.Standard, "waiting on readers")
-	rwg.Wait()
-	for dw := range server.ReaderQueue {
-		log.Println(log.Verbose, "Skipping read", dw)
-	}
 
 	log.Println(log.Verbose, "waiting on downloaders")
-	dwg.Wait() // Downloaders send to startDownloadQueue -> finishedDownloadQueue -> server.hashingQueue
+	dwg.Wait() // Downloaders send to finishedDownloadQueue -> server.hashingQueue
 
 	log.Println(log.Standard, "waiting on download workers")
-	// close(startDownloadQueue)
+	// Downloaders are done which means that we can close finishedDownloadQueue
 	close(finishedDownloadQueue)
-	dcwg.Wait() // Wait for the download processor to finish
+	dcwg.Wait() // Wait for all hashing queue producers to finish.
+	close(server.HashingQueue)
+	// This should never happen but we drain anyway
 	for dw := range finishedDownloadQueue {
 		log.Println(log.Verbose, "Skipping download", dw.IssueID)
 	}
 
-	// close(server.hashingQueue) // Closed by downloadProcessor
 	log.Println(log.Standard, "waiting on hashers")
 	hwg.Wait()
-	for dw := range server.HashingQueue {
+	for dw := range server.HashingQueue { // Closed by downloadProcessor. This should never happen as hwg.Wait() should only return after all hashing is complete
 		log.Println(log.Verbose, "Skipping hashing", dw.ID)
 	}
 
 	close(server.MappingQueue)
-	log.Println(log.Standard, "waiting on mapper")
+	log.Println(log.Standard, "waiting on mappers")
 	mwg.Wait()
+	// This should never happen but we drain anyway
 	for dw := range server.MappingQueue {
 		log.Println(log.Verbose, "Skipping mapping", dw.ID)
 	}
-	log.Println(log.Standard, "waiting on hash encoder")
+	log.Println(log.Standard, "waiting on hash encoder server")
+	// Go doesn't really have a way to cancel IO operations so we have to wait for this no matter what
 	hashEncoders.Wait()
 	log.Println(log.Required, "If you press Ctrl+C after this point the saved hashes will be corrupted")
 	signal.Stop(signalQueue)
