@@ -270,7 +270,7 @@ func TestHashServer(t *testing.T) {
 	}
 	SeedHashes(hs)
 
-	HashServer := ch.NewHashServer(filepath.Join(t.TempDir(), "hashes.gz"), ch.Msgpack)
+	HashServer := ch.NewHashServer(filepath.Join(t.TempDir(), "hashes.gz"), ch.Msgpack, true)
 	req := httptest.NewRequest("GET", "/", nil)
 	err = HashServer.WriteHashes(hs)
 	if err != nil {
