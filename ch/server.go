@@ -196,7 +196,7 @@ func (h *HashServer) DownloadHashes(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Digest", h.digestHeader())
 	}
 	w.Header().Set("Repr-Digest", h.reprDigestHeader())
-	w.Header().Set("Content-Type", "application/x-image-hash-db+"+h.format.String())
+	w.Header().Set("Content-Type", "application/x-image-hash-db+gzip")
 	w.Header().Set("Content-Disposition", `"attachment; filename="hashes.gz"`)
 	http.ServeFile(w, r, h.hashes)
 }
