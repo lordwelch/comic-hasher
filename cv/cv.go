@@ -102,14 +102,11 @@ type Issue struct {
 }
 
 type CVResult struct {
-	// Error                string  `json:"error"`
-	// Limit                int     `json:"limit"`
 	Offset               int     `json:"offset"`
 	NumberOfPageResults  int     `json:"number_of_page_results"`
 	NumberOfTotalResults int     `json:"number_of_total_results"`
 	StatusCode           int     `json:"status_code"`
 	Results              []Issue `json:"results"`
-	// Version              string  `json:"version"`
 }
 
 const (
@@ -141,12 +138,11 @@ type CVDownloader struct {
 }
 
 var (
-	ErrQuit         = errors.New("quit")
-	ErrInvalidPage  = errors.New("invalid ComicVine page")
-	ErrInvalidIndex = errors.New("invalid page index")
+	ErrQuit         = errors.New("quit")                   // Context has been canceled
+	ErrInvalidPage  = errors.New("invalid ComicVine page") // This page did not decode as valid json
+	ErrMissingPage  = errors.New("page missing")           // This page hasn't been downloaded yet
+	ErrUpdateNeeded = errors.New("update needed")          // We deleted this page because we want to download it again
 	ErrDownloadFail = errors.New("download failed")
-	ErrMissingPage  = errors.New("page missing")
-	ErrUpdateNeeded = errors.New("update needed")
 )
 
 func (c *CVDownloader) loadIssues(filename string) (*CVResult, error) {
@@ -189,7 +185,7 @@ func (c *CVDownloader) findDownloadedPage(offset int) int {
 	return -1
 }
 
-func (c *CVDownloader) getDownloadedIssues(offset int, update bool) (*CVResult, error) {
+func (c *CVDownloader) getCachedPage(offset int, update bool) (*CVResult, error) {
 	index := c.findDownloadedPage(offset)
 	if index < 0 {
 		return nil, ErrMissingPage
@@ -205,9 +201,10 @@ func (c *CVDownloader) getDownloadedIssues(offset int, update bool) (*CVResult, 
 	c.totalResults = max(c.totalResults, issue.NumberOfTotalResults)
 
 	if update && (len(issue.Results) == 0 || issue.Results[0].IssueNumber == "") {
+		// TODO: this may not update everything as this probably just downloads the first couple of pages every time a new comic is added to comicvine
 		_ = os.Remove(filepath.Join(JSONPath, c.fileList[index]))
 		c.fileList = slices.Delete(c.fileList, index, index+1)
-		return nil, fmt.Errorf("deleting page %d to update records from cv", offset)
+		return nil, fmt.Errorf("%w: deleting page %d to update records from cv", ErrUpdateNeeded, offset)
 	}
 
 	if c.totalResults-offset <= 100 {
@@ -265,23 +262,20 @@ func (c *CVDownloader) downloadIssues() (int, error) {
 		}
 		logger.Log(log.MoreVerbose, "Checking page offset %d/%d", offset, c.totalResults)
 		// Only update 9 existing pages at a time, assume that covers/issue ids are still accurate
-		issue, err := c.getDownloadedIssues(offset, updated < 60)
+		issue, err := c.getCachedPage(offset, updated < 60)
 		if err == nil && issue != nil {
 
 			prev = -1
 			failCount = 0
 			select {
+			case c.cvIssueQueue <- issue:
 			case <-c.Context.Done(): // allows us to return immediately even during a timeout
 				return offset - 100, ErrQuit
-			case c.cvIssueQueue <- issue:
 			}
 			continue
 		}
-		if errors.Is(err, ErrInvalidIndex) {
-			return offset - 100, err
-		}
 		if err != nil && !errors.Is(err, ErrMissingPage) {
-			logger.Println(log.Required, err) // TODO: WTF is this error???
+			logger.Println(log.Required, err)
 		}
 
 		logger.Println(log.Verbose, "Starting download at offset", offset)
