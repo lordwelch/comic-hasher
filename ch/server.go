@@ -69,6 +69,9 @@ type Server struct {
 	matchCoverTotal     prometheus.Counter
 	matchCoverDuration  *prometheus.HistogramVec
 	hashCount           *prometheus.CounterVec
+	idCount             prometheus.Counter
+	consistentIDs       prometheus.Gauge
+	consistentHashes    prometheus.Gauge
 	lastRequestDuration prometheus.Gauge
 }
 
@@ -153,6 +156,18 @@ func (s *Server) setupAppHandlers() {
 	s.matchCoverTotal = promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
 		Name: "comic_hasher_match_cover_hash",
 		Help: "The total number of processed /match_cover_hash requests",
+	})
+	s.idCount = promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
+		Name: "comic_hasher_ids",
+		Help: "The total number of IDs",
+	})
+	s.consistentIDs = promauto.With(s.reg).NewGauge(prometheus.GaugeOpts{
+		Name: "comic_hasher_consistent_ids",
+		Help: "If the number of IDs is the same as the number of A Hashes",
+	})
+	s.consistentHashes = promauto.With(s.reg).NewGauge(prometheus.GaugeOpts{
+		Name: "comic_hasher_consistent_hashes",
+		Help: "If the number of hashes is the same for each kind of hash",
 	})
 
 	s.HashServer.hashesDownloaded = promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
@@ -610,10 +625,24 @@ func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Mapper(workerID int) {
 	defer logger.Println(log.MoreVerbose, "Mapper", workerID, "completed")
+	var metrics Metrics
 	for hash := range s.MappingQueue {
-		for m, count := range s.Storage.MapHashes(hash).Hashes {
+		metrics = s.Storage.MapHashes(hash)
+		for m, count := range metrics.Hashes {
 			s.hashCount.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
 		}
+		var IDsConsistent float64 = 1
+		var HashesConsistent float64 = 1
+		if !metrics.IDsConsistent {
+			IDsConsistent = 0
+		}
+		if !metrics.HashesConsistent {
+			HashesConsistent = 0
+		}
+		s.consistentHashes.Set(HashesConsistent)
+		s.consistentIDs.Set(IDsConsistent)
+
+		s.idCount.Add(float64(metrics.IDCount))
 	}
 }
 
@@ -644,6 +673,18 @@ func (s *Server) DecodeHashes(loadedHashes *SavedHashesV3) {
 	for m, count := range metrics.Hashes {
 		s.hashCount.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
 	}
+	var IDsConsistent float64 = 1
+	var HashesConsistent float64 = 1
+	if !metrics.IDsConsistent {
+		IDsConsistent = 0
+	}
+	if !metrics.HashesConsistent {
+		HashesConsistent = 0
+	}
+	s.consistentHashes.Set(HashesConsistent)
+	s.consistentIDs.Set(IDsConsistent)
+
+	s.idCount.Add(float64(metrics.IDCount))
 }
 
 func (s *Server) HashLocalImages(coverPath string) {

@@ -131,9 +131,12 @@ func (b *BasicStorage) findHash(hash ch.Hash) (int, int) {
 func (b *BasicStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 	b.hashMutex.Lock()
 	defer b.hashMutex.Unlock()
-
+	idCount := b.hashes.IDCount
 	count := ch.Metrics{
-		Hashes: make(map[ch.Metric]int, 3),
+		Hashes:           make(map[ch.Metric]int, 3),
+		HashesConsistent: b.hashes.AHashCount == b.hashes.DHashCount && b.hashes.AHashCount == b.hashes.PHashCount,
+		IDsConsistent:    b.hashes.AHashCount == b.hashes.IDCount,
+		IDCount:          int(b.hashes.IDCount - idCount),
 	}
 	for _, ih := range hash.Hashes {
 		if b.hashes.InsertHash(ih, hash.ID) {

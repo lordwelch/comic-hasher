@@ -44,7 +44,10 @@ type Metric struct {
 }
 
 type Metrics struct {
-	Hashes map[Metric]int
+	Hashes           map[Metric]int
+	IDsConsistent    bool
+	HashesConsistent bool
+	IDCount          int
 }
 
 type SavedHashesV2 struct {
@@ -706,7 +709,10 @@ func (s *SavedHashesV3) AssociateIDs(OldID, NewID ID) error {
 func (s *SavedHashesV3) Metrics() Metrics {
 	nSources := len(s.Sources)
 	count := Metrics{
-		Hashes: make(map[Metric]int, 3*nSources),
+		Hashes:           make(map[Metric]int, 3*nSources),
+		HashesConsistent: s.AHashCount == s.DHashCount && s.AHashCount == s.PHashCount,
+		IDsConsistent:    s.AHashCount == s.IDCount,
+		IDCount:          int(s.IDCount),
 	}
 	if nSources == 1 {
 		source := (*Source)(&s.Sources[0])
@@ -716,7 +722,7 @@ func (s *SavedHashesV3) Metrics() Metrics {
 		return count
 	}
 
-	// Compact ID→Source table: much smaller than s.IDs, so the random lookups stay in cache
+	// smaller than s.IDs
 	src := make([]uint32, len(s.IDs))
 	for i := range s.IDs {
 		src[i] = uint32(s.IDs[i].Source)
@@ -743,6 +749,7 @@ func (s *SavedHashesV3) Metrics() Metrics {
 		count.Hashes[Metric{Source: source, Kind: goimagehash.DHash}] = dCounts[i]
 		count.Hashes[Metric{Source: source, Kind: goimagehash.PHash}] = pCounts[i]
 	}
+
 	return count
 }
 

@@ -25,8 +25,8 @@ type VPTree struct {
 }
 
 // VPTree is not editable
-func (s *VPTree) RLock()   {}
-func (s *VPTree) RUnlock() {}
+func (v *VPTree) RLock()   {}
+func (v *VPTree) RUnlock() {}
 
 type VPHash struct {
 	Hash          ch.Hash
@@ -161,6 +161,10 @@ func (v *VPTree) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) {
 	v.aHashes = nil
 	v.dHashes = nil
 	v.pHashes = nil
+	m.IDCount = int(v.hashes.IDCount)
+	m.HashesConsistent = len(v.aHashes) == len(v.dHashes) && len(v.aHashes) == len(v.pHashes)
+	m.IDsConsistent = len(v.aHashes) == int(v.hashes.IDCount)
+
 	return m, nil
 }
 
