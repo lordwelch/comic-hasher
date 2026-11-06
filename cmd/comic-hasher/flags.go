@@ -13,6 +13,7 @@ import (
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
 	"gitea.narnian.us/lordwelch/comic-hasher/cv"
+	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -82,6 +83,8 @@ type Opts struct {
 	addr               string
 	debugPort          string
 
+	logLevels log.Flag
+
 	cv CVOpts
 }
 
@@ -122,12 +125,9 @@ func Usage(f *flag.FlagSet) {
 			b.WriteString(" ")
 			b.WriteString(name)
 		}
-		if _, err := strconv.ParseBool(fmt.Sprintf("%v", currentFlag.Value)); err == nil && !slices.ContainsFunc([]string{"v", "version", "help", "h"},
-			func(v string) bool {
-				return string(ch.Lower(currentFlag.Name)) == v
-			},
-		) {
-			fmt.Fprintf(&b, " true|false")
+		_, err := strconv.ParseBool(fmt.Sprintf("%v", currentFlag.Value))
+		if err == nil && !slices.Contains([]string{"v", "version", "help", "h"}, strings.ToLower(currentFlag.Name)) {
+			b.WriteString(" true|false")
 		}
 		// Boolean flags of one ASCII letter are so common we
 		// treat them specially, putting their usage on the same line.
@@ -214,6 +214,7 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 	fs.StringVar(&opts.debugPort, "debug-port", "", "`Port` to listen to for debug info")
 	showVersion := fs.Bool("version", false, "Show version and quit")
 	fs.BoolVar(showVersion, "V", false, "")
+	fs.Var(&opts.logLevels, "log-level", "Change logging level. e.g. -log-level=debug,downloads:standard\nsets everything to debug and then changes just downloads to Standard\n\nAvailable Loggers: "+strings.Join([]string(log.AvailableLoggers()), ", ")+"\nAvailable Aliases: "+strings.Join(log.Aliases(), ", ")+"\nLevels: "+strings.Join(log.AvailableLevels(), ", "))
 
 	return showVersion, fs
 }
@@ -235,5 +236,6 @@ var (
 		"cpuprofile":           "debug",
 		"memprofile":           "debug",
 		"debug-port":           "debug",
+		"log-level":            "debug",
 	}
 )

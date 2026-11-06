@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,7 +22,10 @@ import (
 	"time"
 
 	ch "gitea.narnian.us/lordwelch/comic-hasher"
+	"gitea.narnian.us/lordwelch/comic-hasher/log"
 )
+
+var logger = log.NewLogger("comicvine", "downloads")
 
 type Images map[string]struct{}
 
@@ -221,7 +223,7 @@ func (c *CVDownloader) getDownloadedIssues(offset int, update bool) (*CVResult, 
 			err = fmt.Errorf("wrong index: expected %d got %d", len(c.fileList), index)
 			return nil, err
 		}
-		log.Println("Deleting the last page to detect new comics on next run")
+		logger.Println(log.Verbose, "Deleting the last page to detect new comics on next run")
 		_ = os.Remove(filepath.Join(JSONPath, c.fileList[index]))
 		c.fileList = slices.Delete(c.fileList, index, index+1)
 	}
@@ -233,7 +235,8 @@ func (c *CVDownloader) getDownloadedIssues(offset int, update bool) (*CVResult, 
 func (c *CVDownloader) updateIssues() (int, error) {
 	baseURL, err := url.Parse("https://comicvine.gamespot.com/api/issues/?sort=date_added,id:asc&format=json&field_list=id,issue_number,image,volume")
 	if err != nil {
-		log.Fatal(err)
+		logger.Println(log.Fatal, err)
+		return -1, err
 	}
 
 	JSONPath := filepath.Join(c.basePath, jsonDirectory)
@@ -246,16 +249,16 @@ func (c *CVDownloader) updateIssues() (int, error) {
 	offset := 0
 	retry := func(url string, err error) bool {
 		if errors.Is(err, context.Canceled) {
-			log.Println("Server closed")
+			logger.Println(log.MoreVerbose, "Server closed")
 			return false
 		}
-		log.Printf("Failed to download %#v at offset %v: %v Attempt #%d", url, offset, err, failCount+1)
+		logger.Log(log.Standard, "Failed to download %#v at offset %v: %v Attempt #%d", url, offset, err, failCount+1)
 		if prev == offset {
 			sleepTime := time.Second * 36
 			if failCount > 2 {
 				sleepTime = time.Minute * 10
 			}
-			log.Println("This page failed to download, lets wait for", sleepTime, "and hope it works")
+			logger.Println(log.Standard, "This page failed to download, lets wait for", sleepTime, "and hope it works")
 			select {
 			case <-c.Context.Done(): // allows us to return immediately even during a timeout
 				return false
@@ -272,6 +275,7 @@ func (c *CVDownloader) updateIssues() (int, error) {
 		if c.hasQuit() {
 			return offset - 100, ErrQuit
 		}
+		logger.Log(log.MoreVerbose, "Checking page offset %d/%d", offset, c.totalResults)
 		// Only update 9 existing pages at a time, assume that covers/issue ids are still accurate
 		issue, err := c.getDownloadedIssues(offset, updated < 60)
 		if err == nil && issue != nil {
@@ -289,10 +293,10 @@ func (c *CVDownloader) updateIssues() (int, error) {
 			return offset - 100, err
 		}
 		if err != nil && !errors.Is(err, ErrMissingPage) {
-			log.Println(err)
+			logger.Println(log.Required, err) // TODO: WTF is this error???
 		}
 
-		log.Println("Starting download at offset", offset)
+		logger.Println(log.Verbose, "Starting download at offset", offset)
 		issue = &CVResult{}
 		URI := (*baseURL)
 		query = baseURL.Query()
@@ -327,7 +331,8 @@ func (c *CVDownloader) updateIssues() (int, error) {
 
 		file, err := os.Create(filepath.Join(JSONPath, "cv-"+strconv.Itoa(offset)+".json"))
 		if err != nil {
-			log.Fatal(err)
+			logger.Println(log.Fatal, err)
+			return -1, err
 		}
 		body := io.TeeReader(resp.Body, file)
 		err = json.NewDecoder(bufio.NewReader(body)).Decode(issue)
@@ -350,7 +355,7 @@ func (c *CVDownloader) updateIssues() (int, error) {
 		updated += 1
 		c.downloadQueue <- issue
 		c.insertIssuePage(offset)
-		log.Printf("Downloaded %s/cv-%v.json", JSONPath, offset)
+		logger.Log(log.Standard, "Downloaded %s/cv-%v.json", JSONPath, offset)
 	}
 	return offset, nil
 }
@@ -460,13 +465,13 @@ func (c *CVDownloader) startDownloader() {
 func (c *CVDownloader) handleNotFound() {
 	for failedDownload := range c.notFound {
 		c.chdb.AddURL(failedDownload.url)
-		log.Printf("Not found: volumeID: %d issueID: %d Offset: %d URL: %s\n", failedDownload.volumeID, failedDownload.issueID, failedDownload.offset, failedDownload.url)
+		logger.Log(log.Verbose, "Not found: volumeID: %d issueID: %d Offset: %d URL: %s\n", failedDownload.volumeID, failedDownload.issueID, failedDownload.offset, failedDownload.url)
 	}
 }
 
 func (c *CVDownloader) downloadImages() {
 	defer func() {
-		log.Println("Waiting for final images to complete download")
+		logger.Println(log.Standard, "Waiting for final images to complete download")
 		c.imageWG.Wait()
 	}()
 	go c.startDownloader()
@@ -486,7 +491,7 @@ func (c *CVDownloader) processDownloadQueue(list *CVResult, added *int) {
 		}
 		if *added > 200 {
 			// On a clean single image type run each page would have 100 downloads of a single cover type but stuff happens so we only wait once we have sent 200 to the queue
-			log.Println("waiting for", *added, "downloads at offset", list.Offset)
+			logger.Println(log.Verbose, "waiting for", *added, "downloads at offset", list.Offset)
 			beforeWait := time.Now()
 			c.imageWG.Wait()
 			waited := time.Since(beforeWait)
@@ -494,7 +499,7 @@ func (c *CVDownloader) processDownloadQueue(list *CVResult, added *int) {
 			// If we had to wait for the arbitrarily picked time of 7.4 seconds it means we had a backed up queue (slow hashing can also cause it to wait longer), lets wait to give the CV servers a break
 			if waited > time.Duration(7.4*float64(time.Second)) {
 				t := 10 * time.Second
-				log.Println("Waiting for", t, "at offset", list.Offset, "had to wait for", waited)
+				logger.Println(log.Verbose, "Waiting for", t, "at offset", list.Offset, "had to wait for", waited)
 				time.Sleep(t) // TODO: why don't we allow canceling early here?
 			} else {
 				// Things are too fast we can't depend CV being slow to manage our download speed
@@ -515,7 +520,7 @@ func (c *CVDownloader) downloadImage(list *CVResult, issue Issue, image Image, a
 		return
 	}
 	if c.chdb.CheckURL(image.url) {
-		log.Printf("Skipping known bad url %s", image.url)
+		logger.Log(log.Verbose, "Skipping known bad url %s", image.url)
 		return
 	}
 	if strings.HasSuffix(image.url, "6373148-blank.png") {
@@ -558,12 +563,13 @@ func (c *CVDownloader) downloadImage(list *CVResult, issue Issue, image Image, a
 		if !c.SendExistingImages {
 			return
 		}
+		logger.Log(log.Standard, "Sending Existing image %v/%v %v", issue.Volume.ID, issue.ID, imagePath)
 		_, err = os.Stat(filepath.Join(c.basePath, imagePath))
 		if err != nil {
+			logger.Log(log.Standard, "Failed to read existing image %q: %v", imagePath, err)
 			return // assume it's already been hashed and deleted
 		}
 		// We don't add to the count of added as these should be processed immediately
-		log.Printf("Sending Existing image %v/%v %v\n", issue.Volume.ID, issue.ID, imagePath)
 		c.imageWG.Add(1)
 		c.imageDownloads <- download{
 			url:      image.url,
@@ -681,10 +687,10 @@ func DownloadCovers(c *CVDownloader) {
 	f, _ := os.Create(filepath.Join(ImagePath, ".keep"))
 	_ = f.Close()
 	if !c.KeepDownloadedImages {
-		log.Println("Cleaning directories")
+		logger.Println(log.Verbose, "Cleaning directories")
 		c.cleanDirs()
 	}
-	log.Println("Reading json")
+	logger.Println(log.Verbose, "Reading json")
 	var d *os.File
 	d, err = os.Open(JSONPath)
 	if err != nil {
@@ -706,24 +712,24 @@ func DownloadCovers(c *CVDownloader) {
 	if len(c.fileList) > 0 {
 		c.totalResults = getOffset(c.fileList[len(c.fileList)-1])
 	}
-	log.Println("Number of pages", len(c.fileList), "Expected Pages:", c.totalResults/100)
-	log.Println("Updating issues now")
+	logger.Println(log.Verbose, "Number of pages", len(c.fileList), "Expected Pages:", c.totalResults/100)
+	logger.Println(log.Standard, "Updating issues now")
 
 	dwg := sync.WaitGroup{}
 	dwg.Go(c.downloadImages)
 
 	offset, err := c.updateIssues()
 	if err != nil {
-		log.Printf("Failed to download CV Covers: %s", err)
+		logger.Log(log.Fatal, "Failed to download CV Covers: %s", err)
 	}
 	issueCount := len(c.fileList) * 100
 
-	log.Println("Number of issues", issueCount, " expected:", c.totalResults)
+	logger.Println(log.Standard, "Number of issues", issueCount, " expected:", c.totalResults)
 
 	close(c.downloadQueue) // sends only happen in c.updateIssues which has already been called
 	// We don't drain here as we want to process them
 
-	log.Println("Waiting for downloaders")
+	logger.Println(log.Standard, "Waiting for downloaders")
 	dwg.Wait()
 	close(c.imageDownloads)
 	for dw := range c.imageDownloads {
@@ -731,14 +737,14 @@ func DownloadCovers(c *CVDownloader) {
 	}
 	close(c.notFound)
 	for dw := range c.notFound {
-		fmt.Println("Skipping not found", dw.issueID)
+		log.Println(log.MoreVerbose, "Skipping not found", dw.issueID)
 	}
 
 	// We drain this at the end because we need to wait for the images to download
 	for dw := range c.downloadQueue {
-		fmt.Println("Skipping page download", dw.Offset)
+		log.Println(log.MoreVerbose, "Skipping page download", dw.Offset)
 	}
 
-	log.Println("Completed downloading images")
-	log.Println("Last offset", offset)
+	logger.Println(log.Standard, "Completed downloading images")
+	logger.Println(log.MoreVerbose, "Last offset", offset)
 }
