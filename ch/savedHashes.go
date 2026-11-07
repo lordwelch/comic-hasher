@@ -23,10 +23,10 @@ const (
 	Magic                            = "CHBF"
 	CurrentSavedHashesVersion        = 3
 	NoIDGroup                 uint32 = math.MaxUint32
-	MaxIDLength                      = int(unsafe.Sizeof(SavedIDV3{}.ID))
+	MaxIDLength                      = int(unsafe.Sizeof(IDV3{}.ID))
 	savedHashesV3HeaderSize          = int(unsafe.Sizeof(V3Header{}))
-	savedHashV3Size                  = int(unsafe.Sizeof(SavedHashV3{})) // Hash uint64 + ID uint32 + 4 padding bytes
-	savedIDV3Size                    = int(unsafe.Sizeof(SavedIDV3{}))   // Source byte + ID [32]byte + 3 padding bytes + Group uint32
+	savedHashV3Size                  = int(unsafe.Sizeof(HashV3{})) // Hash uint64 + ID uint32 + 4 padding bytes
+	savedIDV3Size                    = int(unsafe.Sizeof(IDV3{}))   // Source byte + ID [32]byte + 3 padding bytes + Group uint32
 )
 
 var (
@@ -78,10 +78,10 @@ type V3Header struct {
 type SavedHashesV3 struct {
 	V3Header
 	Sources  []string
-	AHashes  []SavedHashV3
-	DHashes  []SavedHashV3
-	PHashes  []SavedHashV3
-	IDs      []SavedIDV3
+	AHashes  []HashV3
+	DHashes  []HashV3
+	PHashes  []HashV3
+	IDs      []IDV3
 	IDIndex  []uint32
 	IDGroups [][]uint32 // This is a list of indexes into IDs. There can only be one id for a given source in a single group
 
@@ -108,7 +108,7 @@ type SavedHashesV3 struct {
 	// Total                                 : 105 MB
 }
 
-type SavedIDV3 struct {
+type IDV3 struct {
 	ID     [24]byte // ID is a string but for this use we need it to be sized. All known ID's are numbers so we have a maximum 32 digit number
 	Pad    [2]byte
 	IDLen  byte
@@ -118,17 +118,17 @@ type SavedIDV3 struct {
 	// Technically Group will be mostly unused which will also waste ~4 MB but that will actually go down over time
 }
 
-func (s *SavedIDV3) IDString() string {
+func (s *IDV3) IDString() string {
 	return unsafe.String(&s.ID[0], int(s.IDLen))
 }
 
-type SavedHashV3 struct {
+type HashV3 struct {
 	Hash uint64
 	ID   uint32 // index into IDs Go upgrades this value to a 8 byte aligned value no matter what due to the uint64 above. Note that IDIndex and IDGroups are where the space savings happens
 	Pad  [4]byte
 }
 
-func (h SavedHashV3) Compare(o SavedHashV3) int {
+func (h HashV3) Compare(o HashV3) int {
 	if h.Hash != o.Hash {
 		if h.Hash < o.Hash {
 			return -1
@@ -186,8 +186,8 @@ func UnsafeCString(b []byte, length ...int) string {
 
 // Compact must not be called during operation
 func (s *SavedHashesV3) Compact() {
-	cmpSort := func(a, b SavedHashV3) int { return a.Compare(b) }
-	cmpCompact := func(a, b SavedHashV3) bool { return a.Compare(b) == 0 }
+	cmpSort := func(a, b HashV3) int { return a.Compare(b) }
+	cmpCompact := func(a, b HashV3) bool { return a.Compare(b) == 0 }
 	slices.SortFunc(s.AHashes, cmpSort)
 	slices.SortFunc(s.DHashes, cmpSort)
 	slices.SortFunc(s.PHashes, cmpSort)
@@ -260,7 +260,7 @@ func (s *SavedHashesV3) SortIDs() {
 	}
 
 	// remap references to IDs
-	for _, hashes := range [][]SavedHashV3{s.AHashes, s.DHashes, s.PHashes} {
+	for _, hashes := range [][]HashV3{s.AHashes, s.DHashes, s.PHashes} {
 		for i := range hashes {
 			hashes[i].ID = remap[hashes[i].ID]
 		}
@@ -313,7 +313,7 @@ func (s *SavedHashesV3) InsertIDNoSort(id ID) (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
-	target := SavedIDV3{
+	target := IDV3{
 		Source: byte(slices.Index(s.Sources, string(*id.Domain))),
 		Group:  NoIDGroup,
 		IDLen:  byte(len(id.ID)),
@@ -374,7 +374,7 @@ func (s *SavedHashesV3) GetAllIDs(index uint32) []ID {
 }
 
 // HashesForKind returns the sorted hash records for kind.
-func (s *SavedHashesV3) HashesForKind(kind goimagehash.Kind) *[]SavedHashV3 {
+func (s *SavedHashesV3) HashesForKind(kind goimagehash.Kind) *[]HashV3 {
 	switch kind {
 	case goimagehash.AHash:
 		return &s.AHashes
@@ -389,8 +389,8 @@ func (s *SavedHashesV3) HashesForKind(kind goimagehash.Kind) *[]SavedHashV3 {
 
 func (s *SavedHashesV3) findHash(kind goimagehash.Kind, hash uint64, id uint32) (int, bool) {
 	hashes := s.HashesForKind(kind)
-	target := SavedHashV3{Hash: hash, ID: id}
-	index, found := slices.BinarySearchFunc(*hashes, target, func(a, b SavedHashV3) int {
+	target := HashV3{Hash: hash, ID: id}
+	index, found := slices.BinarySearchFunc(*hashes, target, func(a, b HashV3) int {
 		return a.Compare(b)
 	})
 	return index, found
@@ -399,8 +399,8 @@ func (s *SavedHashesV3) findHash(kind goimagehash.Kind, hash uint64, id uint32) 
 // insertHashRecord inserts a hash record without looking up the ID.
 func (s *SavedHashesV3) insertHashRecord(hash Hash, id uint32) bool {
 	hashes := s.HashesForKind(hash.Kind)
-	target := SavedHashV3{Hash: hash.Hash, ID: id}
-	index, found := slices.BinarySearchFunc(*hashes, target, func(a, b SavedHashV3) int {
+	target := HashV3{Hash: hash.Hash, ID: id}
+	index, found := slices.BinarySearchFunc(*hashes, target, func(a, b HashV3) int {
 		return a.Compare(b)
 	})
 	if found {
@@ -567,7 +567,7 @@ func (s *SavedHashesV3) Metrics() Metrics {
 // Sort restores the ordering required by the V3 format in place.
 func (s *SavedHashesV3) Sort() {
 	s.SortIndex()
-	sortHashes := func(a, b SavedHashV3) int { return a.Compare(b) }
+	sortHashes := func(a, b HashV3) int { return a.Compare(b) }
 	if !slices.IsSortedFunc(s.AHashes, sortHashes) {
 		slices.SortFunc(s.AHashes, sortHashes)
 	}
@@ -591,7 +591,7 @@ func NewSavedHashesV3(hashes *SavedHashesV2) (*SavedHashesV3, error) {
 	b := &SavedHashesV3{
 		Magic:   [4]byte([]byte(Magic)),
 		Version: 3,
-		IDs:     make([]SavedIDV3, 0, len(hashes.Hashes)/3),
+		IDs:     make([]IDV3, 0, len(hashes.Hashes)/3),
 	}
 
 	slices.SortFunc(hashes.Hashes, func(existing, target SavedHashV2) int {
@@ -617,9 +617,9 @@ func NewSavedHashesV3(hashes *SavedHashesV2) (*SavedHashesV3, error) {
 		}
 	}
 
-	b.AHashes = make([]SavedHashV3, 0, aHashCount)
-	b.DHashes = make([]SavedHashV3, 0, dHashCount)
-	b.PHashes = make([]SavedHashV3, 0, pHashCount)
+	b.AHashes = make([]HashV3, 0, aHashCount)
+	b.DHashes = make([]HashV3, 0, dHashCount)
+	b.PHashes = make([]HashV3, 0, pHashCount)
 	var hash SavedHashV2
 	for _, hash = range hashes.Hashes {
 		// InsertIDNoSort is an append with extra checks it's fast enough for this purpose
@@ -630,17 +630,17 @@ func NewSavedHashesV3(hashes *SavedHashesV2) (*SavedHashesV3, error) {
 		}
 		switch hash.Hash.Kind {
 		case goimagehash.AHash:
-			b.AHashes = append(b.AHashes, SavedHashV3{
+			b.AHashes = append(b.AHashes, HashV3{
 				Hash: hash.Hash.Hash,
 				ID:   id,
 			})
 		case goimagehash.DHash:
-			b.DHashes = append(b.DHashes, SavedHashV3{
+			b.DHashes = append(b.DHashes, HashV3{
 				Hash: hash.Hash.Hash,
 				ID:   id,
 			})
 		case goimagehash.PHash:
-			b.PHashes = append(b.PHashes, SavedHashV3{
+			b.PHashes = append(b.PHashes, HashV3{
 				Hash: hash.Hash.Hash,
 				ID:   id,
 			})
@@ -681,7 +681,7 @@ func NewSavedHashesV3(hashes *SavedHashesV2) (*SavedHashesV3, error) {
 	return b, nil
 }
 
-func writeSavedHashV3(w io.Writer, src []SavedHashV3) error {
+func writeSavedHashV3(w io.Writer, src []HashV3) error {
 	var rec [savedHashV3Size]byte
 	for i := range src {
 		binary.LittleEndian.PutUint64(rec[:], src[i].Hash)
@@ -693,7 +693,7 @@ func writeSavedHashV3(w io.Writer, src []SavedHashV3) error {
 	return nil
 }
 
-func writeSavedIDsV3(w io.Writer, src []SavedIDV3) error {
+func writeSavedIDsV3(w io.Writer, src []IDV3) error {
 	var rec [savedIDV3Size]byte
 	for i := range src {
 		copy(rec[0:24], src[i].ID[:])
@@ -821,7 +821,7 @@ func (r *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func readSavedHashesV3(r io.Reader, dst []SavedHashV3) error {
+func readHashesV3(r io.Reader, dst []HashV3) error {
 	// Even though this is "safe" we re-use the allocated array so we don't waste time copying
 	// This should never cause a problem
 	if len(dst) == 0 {
@@ -836,7 +836,7 @@ func readSavedHashesV3(r io.Reader, dst []SavedHashV3) error {
 	for i := range dst {
 		// So we are using the slice of SavedHashV3 as the buffer so normally we would need to do some math
 		// to get the appropriate byte offset but the struct includes all padding so we can just iterate on the typed
-		// slice and get it's offset from a pointer to the current item
+		// slice and get use the current item as the []byte we need
 		rec = unsafe.Slice((*byte)(unsafe.Pointer(&dst[i])), savedHashV3Size)
 		dst[i].Hash = binary.LittleEndian.Uint64(rec[:8])
 		dst[i].ID = binary.LittleEndian.Uint32(rec[8:12])
@@ -845,7 +845,7 @@ func readSavedHashesV3(r io.Reader, dst []SavedHashV3) error {
 	return nil
 }
 
-func readSavedIDsV3(r io.Reader, dst []SavedIDV3) error {
+func readIDsV3(r io.Reader, dst []IDV3) error {
 	// Even though this is "safe" we re-use the allocated array so we don't waste time copying
 	// This should never cause a problem
 	var rec []byte
@@ -857,7 +857,7 @@ func readSavedIDsV3(r io.Reader, dst []SavedIDV3) error {
 	for i := range dst {
 		// We are using the slice of SavedIDV3 as the buffer so normally we would need to do some math
 		// to get the appropriate byte offset but the struct includes all padding so we can just iterate on the typed
-		// slice and get it's offset from a pointer to the current item
+		// slice and get use the current item as the []byte we need
 		rec = unsafe.Slice((*byte)(unsafe.Pointer(&dst[i])), savedIDV3Size)
 		copy(dst[i].ID[:], rec[0:24])
 		copy(dst[i].Pad[:], rec[24:26])
@@ -877,8 +877,6 @@ func readSavedGroup(group []uint32) {
 	}
 }
 
-var SafeOnly = false
-
 // DecodeHashesV3 reads the V3 binary format. r should be buffered.
 func DecodeHashesV3(r io.Reader) (*SavedHashesV3, error) {
 	if r == nil {
@@ -890,7 +888,7 @@ func DecodeHashesV3(r io.Reader) (*SavedHashesV3, error) {
 
 	err = binary.Read(cr, binary.LittleEndian, &hashes.V3Header)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read header: %w", err)
 	}
 	if string(hashes.Magic[:]) != Magic {
 		return nil, fmt.Errorf("%w: not a CHBF file", ErrDecodeFail)
@@ -936,41 +934,41 @@ func DecodeHashesV3(r io.Reader) (*SavedHashesV3, error) {
 	}
 
 	// Allocate an extra 10% so we don't immediately copy the entire list of hashes
-	hashes.AHashes = make([]SavedHashV3, hashes.AHashCount, int(float64(hashes.AHashCount)*1.1))
-	hashes.DHashes = make([]SavedHashV3, hashes.DHashCount, int(float64(hashes.DHashCount)*1.1))
-	hashes.PHashes = make([]SavedHashV3, hashes.PHashCount, int(float64(hashes.PHashCount)*1.1))
+	hashes.AHashes = make([]HashV3, hashes.AHashCount, int(float64(hashes.AHashCount)*1.1))
+	hashes.DHashes = make([]HashV3, hashes.DHashCount, int(float64(hashes.DHashCount)*1.1))
+	hashes.PHashes = make([]HashV3, hashes.PHashCount, int(float64(hashes.PHashCount)*1.1))
 
-	if err = readSavedHashesV3(tr, hashes.AHashes); err != nil {
+	if err = readHashesV3(tr, hashes.AHashes); err != nil {
 		return nil, truncated(err)
 	}
 	if err = checkSum("average hashes"); err != nil {
 		return nil, err
 	}
-	totalExpectedSize += len(hashes.AHashes)*savedHashV3Size + 16
+	totalExpectedSize += int(hashes.AHashCount)*savedHashV3Size + 16
 
-	if err = readSavedHashesV3(tr, hashes.DHashes); err != nil {
+	if err = readHashesV3(tr, hashes.DHashes); err != nil {
 		return nil, truncated(err)
 	}
 	if err = checkSum("difference hashes"); err != nil {
 		return nil, err
 	}
-	totalExpectedSize += len(hashes.DHashes)*savedHashV3Size + 16
+	totalExpectedSize += int(hashes.DHashCount)*savedHashV3Size + 16
 
-	if err = readSavedHashesV3(tr, hashes.PHashes); err != nil {
+	if err = readHashesV3(tr, hashes.PHashes); err != nil {
 		return nil, truncated(err)
 	}
 	if err = checkSum("perceptual hashes"); err != nil {
 		return nil, err
 	}
-	totalExpectedSize += len(hashes.PHashes)*savedHashV3Size + 16
+	totalExpectedSize += int(hashes.PHashCount)*savedHashV3Size + 16
 
-	hashes.IDs = make([]SavedIDV3, hashes.IDCount, int(float64(hashes.IDCount)*1.1))
+	hashes.IDs = make([]IDV3, hashes.IDCount, int(float64(hashes.IDCount)*1.1))
 	hashes.IDIndex = make([]uint32, hashes.IDCount, int(float64(hashes.IDCount)*1.1))
 	for i := range hashes.IDCount {
 		hashes.IDIndex[i] = i
 	}
 	idsSize := len(hashes.IDs)*savedIDV3Size + 16
-	if err = readSavedIDsV3(tr, hashes.IDs); err != nil {
+	if err = readIDsV3(tr, hashes.IDs); err != nil {
 		return nil, truncated(err)
 	}
 	if err = checkSum("IDs"); err != nil {

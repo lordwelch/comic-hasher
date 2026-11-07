@@ -40,7 +40,7 @@ func TestDecodeHashesV3Truncated(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Drop an arbitrary amount of bytes off the end.
-	truncated := buf.Bytes()[:buf.Len()-int(unsafe.Sizeof(SavedHashV3{}))]
+	truncated := buf.Bytes()[:buf.Len()-int(unsafe.Sizeof(HashV3{}))]
 
 	wantTruncatedErr := fmt.Errorf("%w: truncated saved hashes: read %d bytes: %w", ErrDecodeFail, len(truncated), io.EOF)
 	_, err = DecodeHashesV3(bytes.NewReader(truncated))
@@ -76,9 +76,9 @@ func TestSavedHashesV3RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantA := []SavedHashV3{{Hash: 1, ID: 0}, {Hash: 1, ID: 2}}
-	wantD := []SavedHashV3{{Hash: 2, ID: 0}}
-	wantP := []SavedHashV3{{Hash: 3, ID: 0}, {Hash: 4, ID: 1}}
+	wantA := []HashV3{{Hash: 1, ID: 0}, {Hash: 1, ID: 2}}
+	wantD := []HashV3{{Hash: 2, ID: 0}}
+	wantP := []HashV3{{Hash: 3, ID: 0}, {Hash: 4, ID: 1}}
 	if diff := cmp.Diff(wantA, hashes.AHashes, cmpOpts...); diff != "" {
 		t.Errorf("failed to preprae test: converted A hashes mismatch (-want +got):\n%s", diff)
 	}
@@ -138,7 +138,7 @@ func TestSavedHashesV3RoundTrip(t *testing.T) {
 	if !loaded.InsertHash(newHash, cvID) {
 		t.Fatal("expected a new hash to be inserted")
 	}
-	if diff := cmp.Diff([]SavedHashV3{{Hash: 2, ID: 0}, {Hash: 5, ID: 0}}, loaded.DHashes, cmpOpts...); diff != "" {
+	if diff := cmp.Diff([]HashV3{{Hash: 2, ID: 0}, {Hash: 5, ID: 0}}, loaded.DHashes, cmpOpts...); diff != "" {
 		t.Fatalf("expected 2 D hashes, (-want +got):\n%s", diff)
 	}
 
@@ -214,10 +214,10 @@ func TestSavedHashesV3InsertHashUsesExistingID(t *testing.T) {
 	if !hashes.InsertHash(Hash{Kind: goimagehash.DHash, Hash: 42}, cvID) {
 		t.Fatal("expected inserting a DHash with the same ID to be accepted")
 	}
-	if diff := cmp.Diff([]SavedHashV3{{Hash: 42, ID: 0}}, hashes.AHashes, cmpOpts...); diff != "" {
+	if diff := cmp.Diff([]HashV3{{Hash: 42, ID: 0}}, hashes.AHashes, cmpOpts...); diff != "" {
 		t.Fatalf("expected 1 A hash, (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff([]SavedHashV3{{Hash: 42, ID: 0}}, hashes.DHashes, cmpOpts...); diff != "" {
+	if diff := cmp.Diff([]HashV3{{Hash: 42, ID: 0}}, hashes.DHashes, cmpOpts...); diff != "" {
 		t.Fatalf("expected 1 D hash, (-want +got):\n%s", diff)
 	}
 
@@ -226,7 +226,7 @@ func TestSavedHashesV3InsertHashUsesExistingID(t *testing.T) {
 	if !hashes.InsertHash(Hash{Kind: goimagehash.AHash, Hash: 42}, otherID) {
 		t.Fatal("expected the hash for a new ID to be inserted")
 	}
-	if diff := cmp.Diff([]SavedHashV3{{Hash: 42, ID: 0}, {Hash: 42, ID: 1}}, hashes.AHashes, cmpOpts...); diff != "" {
+	if diff := cmp.Diff([]HashV3{{Hash: 42, ID: 0}, {Hash: 42, ID: 1}}, hashes.AHashes, cmpOpts...); diff != "" {
 		t.Fatalf("expected 2 A hashes, (-want +got):\n%s", diff)
 	}
 	rid, found := hashes.FindID(otherID)

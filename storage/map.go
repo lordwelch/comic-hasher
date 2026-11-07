@@ -78,7 +78,7 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 			})
 		}
 		var tmatch t
-		var storedHash ch.SavedHashV3
+		var storedHash ch.HashV3
 		for _, tmatch = range realMatches {
 			for _, storedHash = range currentHashes[tmatch.index : tmatch.index+tmatch.count] {
 				foundMatches = append(foundMatches, ch.Result{
@@ -95,7 +95,7 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 }
 
 // getCurrentHashes must have a read lock before using
-func (m *MapStorage) getCurrentHashes(kind goimagehash.Kind) ([]ch.SavedHashV3, [8]map[uint8][]uint64) {
+func (m *MapStorage) getCurrentHashes(kind goimagehash.Kind) ([]ch.HashV3, [8]map[uint8][]uint64) {
 	if kind == goimagehash.AHash {
 		return *m.hashes.HashesForKind(kind), m.partialAHash
 	}
@@ -169,7 +169,7 @@ func newPartialHash() [8]map[uint8][]uint64 {
 	}
 }
 
-func mapPartialHashes(hashes []ch.SavedHashV3, partialHashMap [8]map[uint8][]uint64) {
+func mapPartialHashes(hashes []ch.HashV3, partialHashMap [8]map[uint8][]uint64) {
 	for _, savedHash := range hashes {
 		for i, partialHash := range ch.SplitHash(savedHash.Hash) {
 			partialHashMap[i][partialHash] = append(partialHashMap[i][partialHash], savedHash.Hash)

@@ -105,7 +105,7 @@ func (b *BasicStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]
 // if count < 1 then no results were found
 func (b *BasicStorage) findHash(hash ch.Hash) (int, int) {
 	currentHashes := *b.hashes.HashesForKind(hash.Kind)
-	index, found := slices.BinarySearchFunc(currentHashes, hash.Hash, func(existing ch.SavedHashV3, target uint64) int {
+	index, found := slices.BinarySearchFunc(currentHashes, hash.Hash, func(existing ch.HashV3, target uint64) int {
 		if existing.Hash != target {
 			if existing.Hash < target {
 				return -1
