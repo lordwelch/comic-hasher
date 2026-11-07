@@ -194,7 +194,10 @@ func Insert[S ~[]E, E cmp.Ordered](slice S, item E) S {
 
 func HashImage(i Im) ImageHash {
 	if i.Format == "webp" {
-		i.Im = goimagehash.FancyUpscale(i.Im.(*image.YCbCr))
+		webp, ok := i.Im.(*image.YCbCr)
+		if ok {
+			i.Im = goimagehash.FancyUpscale(webp)
+		}
 	}
 
 	var err error
