@@ -172,27 +172,31 @@ func loadHashes(opts Opts) *ch.SavedHashesV3 {
 		log.Println(log.Standard, "No saved hashes to load")
 	}
 
+	var loadedHashes *ch.SavedHashesV3 = nil
 	if opts.loadEmbeddedHashes && len(ch.Hashes) != 0 && hashReader == nil {
 		log.Println(log.Standard, "Loading embedded hashes")
-		hashReader = bytes.NewReader(ch.Hashes)
-		if gr, err := gzip.NewReader(bytes.NewReader(ch.Hashes)); err == nil {
-			hashReader = gr
-			defer gr.Close()
+		loadedHashes, err = ch.LoadEmbeddedHashes(!opts.saveEmbeddedHashes)
+		if err != nil {
+			loadedHashes = nil
 		}
 	}
 
-	var loadedHashes *ch.SavedHashesV3
-	loadedHashes, err = ch.DecodeHashesV3(hashReader)
-	if errors.Is(err, ch.ErrNoHashes) {
-		log.Println(log.Verbose, "No saved hashes to load")
-		return loadedHashes
+	if loadedHashes == nil {
+		loadedHashes, err = ch.DecodeHashesV3(hashReader)
+		if errors.Is(err, ch.ErrNoHashes) {
+			log.Println(log.Verbose, "No saved hashes to load")
+			return loadedHashes
+		}
 	}
+
 	if err != nil {
 		log.Println(log.Fatal, "Failed to decode hashes:", err)
 		time.Sleep(11 * time.Millisecond) // for logging to complete
 		os.Exit(1)
 	}
+
 	loadedHashes.LogHashInfo(log.Verbose, "")
+	loadedHashes.Sort()
 
 	return loadedHashes
 }

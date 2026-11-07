@@ -3,6 +3,7 @@ package ch
 import (
 	"bytes"
 	"cmp"
+	"compress/gzip"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -1185,4 +1186,99 @@ func DecodeHashesV3(r io.Reader) (*SavedHashesV3, error) {
 	}
 	hashes.Sort()
 	return &hashes, nil
+}
+
+func InPlaceLoadHashes() (hashes *SavedHashesV3, err error) {
+	hashes = &SavedHashesV3{}
+	h := xxh3.New()
+
+	defer func() {
+		err = fmt.Errorf("failed load hashes in-place: %v", recover())
+		hashes = nil
+	}()
+
+	sum := func(name string, b []byte, expectedHash [16]byte) {
+		h.Write(b)
+
+		if sum := h.Sum128().Bytes(); sum != expectedHash {
+			panic(fmt.Errorf("%s failed validation. Refusing to load hashes: %#x != %#x", name, sum, expectedHash))
+		}
+		h.Reset()
+	}
+	log.Println(log.Standard, "Loading embedded hashes")
+	hashes.V3Header = *(*V3Header)(unsafe.Pointer(&Hashes[0]))
+	for i := range hashes.V3Header.Sources {
+		if hashes.V3Header.Sources[i][0] == 0 {
+			break
+		}
+		hashes.Sources = append(hashes.Sources, UnsafeCString(hashes.V3Header.Sources[i][:]))
+	}
+
+	ahashesStart := unsafe.Sizeof(V3Header{})
+	ahashesByteSize := unsafe.Sizeof(HashV3{}) * uintptr(hashes.AHashCount)
+	ahashesEnd := ahashesStart + ahashesByteSize
+
+	dhashesStart := ahashesEnd + 16
+	dhashesByteSize := unsafe.Sizeof(HashV3{}) * uintptr(hashes.DHashCount)
+	dhashesEnd := dhashesStart + dhashesByteSize
+
+	phashesStart := dhashesEnd + 16
+	phashesByteSize := unsafe.Sizeof(HashV3{}) * uintptr(hashes.PHashCount)
+	phashesEnd := phashesStart + phashesByteSize
+
+	idsStart := phashesEnd + 16
+	idsByteSize := unsafe.Sizeof(IDV3{}) * uintptr(hashes.IDCount)
+	idsEnd := idsStart + idsByteSize
+
+	groupsStart := idsEnd + 16
+	groupsByteSize := uintptr(hashes.GroupBytes)
+	groupsEnd := groupsStart + groupsByteSize
+
+	ahashesBytes := Hashes[ahashesStart:ahashesEnd]
+	hashes.AHashes = unsafe.Slice((*HashV3)(unsafe.Pointer(&ahashesBytes[0])), int(hashes.AHashCount))
+	sum("average hashes", ahashesBytes, [16]byte(Hashes[ahashesEnd:ahashesEnd+16]))
+
+	dhashesBytes := Hashes[dhashesStart:dhashesEnd]
+	hashes.DHashes = unsafe.Slice((*HashV3)(unsafe.Pointer(&dhashesBytes[0])), int(hashes.DHashCount))
+	sum("difference hashes", dhashesBytes, [16]byte(Hashes[dhashesEnd:dhashesEnd+16]))
+
+	phashesBytes := Hashes[phashesStart:phashesEnd]
+	hashes.PHashes = unsafe.Slice((*HashV3)(unsafe.Pointer(&phashesBytes[0])), int(hashes.PHashCount))
+	sum("perception hashes", phashesBytes, [16]byte(Hashes[phashesEnd:phashesEnd+16]))
+
+	idsBytes := Hashes[idsStart:idsEnd]
+	hashes.IDs = unsafe.Slice((*IDV3)(unsafe.Pointer(&idsBytes[0])), int(hashes.IDCount))
+	sum("IDs hashes", idsBytes, [16]byte(Hashes[idsEnd:idsEnd+16]))
+
+	groupsBytes := Hashes[groupsStart:groupsEnd]
+	sum("ID Groups hashes", groupsBytes, [16]byte(Hashes[groupsEnd:groupsEnd+16]))
+	hashes.IDGroups = make([][]uint32, hashes.GroupCount)
+
+	groupIDX := 0
+	memberCount := 0
+	for i := range hashes.IDGroups {
+		memberCount = int(Hashes[groupIDX])
+		if memberCount == 0 {
+			memberCount = 256
+		}
+		hashes.IDGroups[i] = unsafe.Slice((*uint32)(unsafe.Pointer(&groupsBytes[groupIDX+1])), memberCount)
+		groupIDX += 1 + int(unsafe.Sizeof(uint32(0)))*memberCount
+	}
+	return nil, err
+}
+
+func LoadEmbeddedHashes(inPlace bool) (*SavedHashesV3, error) {
+	if inPlace {
+		hashes, err := InPlaceLoadHashes()
+		if err == nil {
+			return hashes, nil
+		}
+	}
+	var hashReader io.Reader
+	hashReader = bytes.NewReader(Hashes)
+	if gr, err := gzip.NewReader(bytes.NewReader(Hashes)); err == nil {
+		hashReader = gr
+		defer gr.Close()
+	}
+	return DecodeHashesV3(hashReader)
 }
