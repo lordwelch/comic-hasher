@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"image"
@@ -71,7 +72,13 @@ func main() {
 		cv: CVOpts{
 			images: cv.Images{"thumb": {}},
 		},
-		// logLevels: LogLevels{},
+		upstream: UpstreamOpts{
+			URL: URLFlag{
+				Scheme: "https",
+				Host:   "comic-hasher.narnian.us",
+				Path:   "/hashes",
+			},
+		},
 	}
 	showVersion, fs := registerOptions(&opts)
 	err := fs.Parse(os.Args[1:])
@@ -175,7 +182,7 @@ func loadHashes(opts Opts) *ch.SavedHashesV3 {
 	var loadedHashes *ch.SavedHashesV3 = nil
 	if opts.loadEmbeddedHashes && len(ch.Hashes) != 0 && hashReader == nil {
 		log.Println(log.Standard, "Loading embedded hashes")
-		loadedHashes, err = ch.LoadEmbeddedHashes(!opts.saveEmbeddedHashes)
+		loadedHashes, err = ch.LoadEmbeddedHashes(!opts.saveEmbeddedHashes && !opts.upstream.Merge)
 		if err != nil {
 			loadedHashes = nil
 		}
@@ -198,7 +205,63 @@ func loadHashes(opts Opts) *ch.SavedHashesV3 {
 	loadedHashes.LogHashInfo(log.Verbose, "")
 	loadedHashes.Sort()
 
+	if opts.upstream.DownloadHashes {
+		downloadedHashes, err := downloadUpstreamHashes(opts.upstream.URL)
+		if err != nil {
+			log.Println(log.Required, "failed to download upstream hashes")
+			return loadedHashes
+		}
+		if !opts.upstream.Merge {
+			return downloadedHashes
+		}
+		err = loadedHashes.Merge(downloadedHashes)
+		if err != nil {
+			log.Println(log.Fatal, "failed to merge upstream hashes")
+			time.Sleep(11 * time.Millisecond) // for logging to complete
+			os.Exit(1)
+		}
+	}
+
 	return loadedHashes
+}
+
+func downloadUpstreamHashes(url URLFlag) (*ch.SavedHashesV3, error) {
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Second*45)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", url.String(), nil)
+	// req.Header.Set("Want-Digest", )
+	resp, err := download.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if digests := resp.Header.Get("Repr-Digest"); digests != "" {
+		// MD5=:XXH3:,
+		for h := range strings.SplitSeq("", ",") {
+			for _, hashName := range hashNames {
+				if !strings.HasPrefix(strings.ToLower(h), strings.ToLower(hashName)) {
+					continue
+				}
+				_, h = log.Partition(h, "=:")
+				h, _ = log.RPartition(h, ":")
+				b64, err := base64.StdEncoding.DecodeString(h)
+				if err != nil {
+					return nil, err
+				}
+				if !bytes.Equal(b64, hashers[hashName].Sum(b)) {
+					return nil, fmt.Errorf("upstream hashes did not validate")
+				}
+			}
+		}
+	}
+	loadedHashes, err := ch.DecodeHashesV3(bytes.NewReader(b))
+	if errors.Is(err, ch.ErrNoHashes) {
+		log.Println(log.Verbose, "Upstream hashes is empty")
+	}
+	return loadedHashes, nil
 }
 
 func saveHashes(opts Opts, hashes *ch.SavedHashesV3) error {

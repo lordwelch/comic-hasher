@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -46,6 +47,22 @@ var storageValues = map[string]Storage{
 	"vptree":   VPTree,
 }
 
+type URLFlag url.URL
+
+func (f URLFlag) String() string {
+	u := url.URL(f)
+	return u.String()
+}
+
+func (f *URLFlag) Set(s string) error {
+	u, err := url.Parse(s)
+	if err != nil {
+		return err
+	}
+	*f = URLFlag(*u)
+	return nil
+}
+
 func (f Storage) String() string {
 	if name, known := storageNames[f]; known {
 		return name
@@ -71,6 +88,13 @@ type MetronOpts struct {
 	enabled bool
 	APIKey  string
 }
+
+type UpstreamOpts struct {
+	DownloadHashes bool
+	URL            URLFlag
+	Merge          bool
+}
+
 type Opts struct {
 	hashDownloaded     bool
 	cpuprofile         string
@@ -88,6 +112,7 @@ type Opts struct {
 	addr               string
 	debugPort          string
 	useAllChecksums    bool
+	upstream           UpstreamOpts
 
 	logLevels log.Flag
 
@@ -225,28 +250,34 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 	showVersion := fs.Bool("version", false, "Show version and quit")
 	fs.BoolVar(showVersion, "V", false, "")
 	fs.Var(&opts.logLevels, "log-level", "Change logging level. e.g. -log-level=debug,downloads:standard\nsets everything to debug and then changes just downloads to Standard\n\nAvailable Loggers: "+strings.Join([]string(log.AvailableLoggers()), ", ")+"\nAvailable Aliases: "+strings.Join(log.Aliases(), ", ")+"\nLevels: "+strings.Join(log.AvailableLevels(), ", "))
+	fs.BoolVar(&opts.upstream.DownloadHashes, "upstream-download-hashes", len(ch.Hashes) == 0, "URL to download hashes from on startup")
+	fs.BoolVar(&opts.upstream.Merge, "upstream-merge", len(ch.Hashes) == 0, "Merge downloaded hashes with existing hashes")
+	fs.Var(&opts.upstream.URL, "upstream-url", "URL to download hashes from on startup")
 
 	return showVersion, fs
 }
 
 var (
-	groupOrder = []string{"", "file", "hash", "download", "comic vine", "metron", "debug"}
+	groupOrder = []string{"", "file", "upstream", "hash", "download", "comic vine", "metron", "debug"}
 	groups     = map[string]string{
-		"load-embedded-hashes": "file",
-		"save-embedded-hashes": "file",
-		"storage-type":         "hash",
-		"only-hash-new-ids":    "hash",
-		"hash-save-interval":   "hash",
-		"keep-downloaded":      "download",
-		"hash-downloaded":      "download",
-		"cv":                   "comic vine",
-		"cv-api-key":           "comic vine",
-		"metron":               "metron",
-		"metron-api-key":       "metron",
-		"cv-images":            "comic vine",
-		"cpuprofile":           "debug",
-		"memprofile":           "debug",
-		"debug-port":           "debug",
-		"log-level":            "debug",
+		"upstream-download-hashes": "upstream",
+		"upstream-merge":           "upstream",
+		"upstream-url":             "upstream",
+		"load-embedded-hashes":     "file",
+		"save-embedded-hashes":     "file",
+		"storage-type":             "hash",
+		"only-hash-new-ids":        "hash",
+		"hash-save-interval":       "hash",
+		"keep-downloaded":          "download",
+		"hash-downloaded":          "download",
+		"cv":                       "comic vine",
+		"cv-api-key":               "comic vine",
+		"cv-images":                "comic vine",
+		"metron":                   "metron",
+		"metron-api-key":           "metron",
+		"cpuprofile":               "debug",
+		"memprofile":               "debug",
+		"debug-port":               "debug",
+		"log-level":                "debug",
 	}
 )

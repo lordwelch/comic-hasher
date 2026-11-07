@@ -930,7 +930,7 @@ func EncodeHashesV3(hashes *SavedHashesV3, w io.Writer) error {
 
 	var (
 		sum [16]byte
-		h   = xxh3.New()
+		h   = xxh3.New128()
 		hw  = io.MultiWriter(w, h)
 	)
 	writeSum := func() error {
