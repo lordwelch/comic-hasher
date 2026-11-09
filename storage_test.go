@@ -3,9 +3,16 @@ package main_test
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	gcmp "cmp"
@@ -258,6 +265,77 @@ func TestSqliteStorage(t *testing.T) {
 	t.Run("GetIDs", func(t *testing.T) { GetIDs(t, hs) })
 }
 
+type fakeMux struct {
+	ch.HashServer
+}
+
+func (mux *fakeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	mux.DownloadHashes(w, r)
+}
+
+func TestHashServer(t *testing.T) {
+	hs, err := storage.NewBasicMapStorage()
+	if err != nil {
+		t.Fatal("Failed to create basic storage:", err)
+	}
+	SeedHashes(hs)
+
+	HashServer := ch.NewHashServer(filepath.Join(t.TempDir(), "hashes.gz"), ch.Msgpack)
+	err = HashServer.WriteHashes(hs)
+	if err != nil {
+		t.Fatal("failed to write hashes:", err)
+	}
+	mux := fakeMux{HashServer}
+	server := httptest.NewTestServer(t, &mux)
+	client := server.Client()
+
+	req, _ := http.NewRequest("GET", "https://example.org/hashes", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("failed to download hashes: %v", err)
+	}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to download hashes: %v", err)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(b))
+	if err != nil {
+		t.Fatal("HashServer did not send a gzipped response:", err)
+	}
+	decompressedHashes, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatal("Failed to read response:", err)
+	}
+	_, err = ch.DecodeHashes(ch.Msgpack, decompressedHashes)
+	if err != nil {
+		t.Fatal("failed to validate hashes:", err)
+	}
+	var (
+		md5        []byte
+		requestMD5 []byte
+	)
+	for digest := range strings.SplitSeq(resp.Header.Get("Repr-Digest"), ",") {
+		kind, digestContent := log.Partition(digest, "=:")
+		if kind != "MD5" {
+			continue
+		}
+		requestMD5, err = base64.StdEncoding.DecodeString(digestContent[:len(digestContent)-1])
+		if err != nil {
+			t.Fatalf("failed to decode md5 digest: %v", err)
+		}
+		md := crypto.MD5.New()
+		md.Write(b)
+		md5 = md.Sum(nil)
+	}
+	expected := "d0abe3e29bed1c0b8cbfd291a2557caf"
+	if diff := cmp.Diff(expected, fmt.Sprintf("%x", md5), cmpOpts...); diff != "" {
+		t.Errorf("GetMatches() mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(expected, fmt.Sprintf("%x", requestMD5), cmpOpts...); diff != "" {
+		t.Errorf("calculated hash did not match the returned data (-want +got):\n%s", diff)
+	}
+}
+
 func SeedEmbeddedHashes(hs ch.HashStorage) {
 	var err error
 	hashes := ch.Hashes
@@ -283,47 +361,120 @@ func SeedEmbeddedHashes(hs ch.HashStorage) {
 	hs.DecodeHashes(loadedHashes)
 }
 
-func BenchmarkBasicStorage(b *testing.B) {
+func BenchmarkStorageSmall(fuck *testing.B) {
+	Match := []ch.Hash{
+		{Hash: 0xfc788d1d89c1c9cf, Kind: goimagehash.AHash},
+		{Hash: 0x61d91b79330f939a, Kind: goimagehash.DHash},
+		{Hash: 0xf95ac0669da8b4a9, Kind: goimagehash.PHash},
+	}
+
 	hs, err := storage.NewBasicMapStorage()
 	if err != nil {
-		b.Fatal("Failed to create basic storage:", err)
+		fuck.Fatal("Failed to create Basic storage:", err)
 	}
 	SeedEmbeddedHashes(hs)
-	for b.Loop() {
-		hs.GetMatches([]ch.Hash{
-			{Hash: 0x003c7e7e7e7e3c18, Kind: goimagehash.AHash},
-			{Hash: 0x71f0f4d2f0b8f071, Kind: goimagehash.DHash},
-			{Hash: 0x95274a996be4349e, Kind: goimagehash.PHash},
-		}, 8, true)
+	runtime.GC()
+	runtime.GC()
+	m := runtime.MemStats{}
+	runtime.ReadMemStats(&m)
+
+	fuck.Run("Basic Storage", func(b *testing.B) {
+		for b.Loop() {
+			b.ReportMetric(float64(m.HeapAlloc), "bytes")
+			hs.GetMatches(Match, 8, true)
+		}
+	})
+
+	hs, err = storage.NewMapStorage()
+	if err != nil {
+		fuck.Fatal("Failed to create Map storage:", err)
 	}
+	SeedEmbeddedHashes(hs)
+	runtime.GC()
+	runtime.GC()
+	m = runtime.MemStats{}
+	runtime.ReadMemStats(&m)
+
+	fuck.Run("Map Storage", func(b *testing.B) {
+		for b.Loop() {
+			b.ReportMetric(float64(m.HeapAlloc), "bytes")
+			hs.GetMatches(Match, 8, true)
+		}
+	})
+
+	hs, err = storage.NewVPStorage()
+	if err != nil {
+		fuck.Fatal("Failed to create VPS storage:", err)
+	}
+	SeedEmbeddedHashes(hs)
+	runtime.GC()
+	runtime.GC()
+	m = runtime.MemStats{}
+	runtime.ReadMemStats(&m)
+
+	fuck.Run("VPS Storage", func(b *testing.B) {
+		for b.Loop() {
+			b.ReportMetric(float64(m.HeapAlloc), "bytes")
+			hs.GetMatches(Match, 8, true)
+		}
+	})
 }
 
-func BenchmarkMapStorage(b *testing.B) {
-	hs, err := storage.NewMapStorage()
-	if err != nil {
-		b.Fatal("Failed to create basic storage:", err)
+func BenchmarkStorageLarge(b *testing.B) {
+	Match := []ch.Hash{
+		{Hash: 0x003c7e7e7e7e3c18, Kind: goimagehash.AHash},
+		{Hash: 0x71f0f4d2f0b8f071, Kind: goimagehash.DHash},
+		{Hash: 0x95274a996be4349e, Kind: goimagehash.PHash},
 	}
-	SeedEmbeddedHashes(hs)
-	for b.Loop() {
-		hs.GetMatches([]ch.Hash{
-			{Hash: 0x003c7e7e7e7e3c18, Kind: goimagehash.AHash},
-			{Hash: 0x71f0f4d2f0b8f071, Kind: goimagehash.DHash},
-			{Hash: 0x95274a996be4349e, Kind: goimagehash.PHash},
-		}, 8, true)
-	}
-}
 
-func BenchmarkVPSStorage(b *testing.B) {
-	hs, err := storage.NewVPStorage()
+	hs, err := storage.NewBasicMapStorage()
 	if err != nil {
-		b.Fatal("Failed to create basic storage:", err)
+		b.Fatal("Failed to create Basic storage:", err)
 	}
 	SeedEmbeddedHashes(hs)
-	for b.Loop() {
-		hs.GetMatches([]ch.Hash{
-			{Hash: 0x003c7e7e7e7e3c18, Kind: goimagehash.AHash},
-			{Hash: 0x71f0f4d2f0b8f071, Kind: goimagehash.DHash},
-			{Hash: 0x95274a996be4349e, Kind: goimagehash.PHash},
-		}, 8, true)
+	runtime.GC()
+	runtime.GC()
+	m := runtime.MemStats{}
+	runtime.ReadMemStats(&m)
+
+	b.Run("Basic Storage", func(b *testing.B) {
+		for b.Loop() {
+			b.ReportMetric(float64(m.HeapAlloc), "bytes")
+			hs.GetMatches(Match, 8, true)
+		}
+	})
+
+	hs, err = storage.NewMapStorage()
+	if err != nil {
+		b.Fatal("Failed to create Map storage:", err)
 	}
+	SeedEmbeddedHashes(hs)
+	runtime.GC()
+	runtime.GC()
+	m = runtime.MemStats{}
+	runtime.ReadMemStats(&m)
+
+	b.Run("Map Storage", func(b *testing.B) {
+		for b.Loop() {
+			b.ReportMetric(float64(m.HeapAlloc), "bytes")
+			hs.GetMatches(Match, 8, true)
+		}
+	})
+
+	hs, err = storage.NewVPStorage()
+	if err != nil {
+		b.Fatal("Failed to create VPS storage:", err)
+	}
+	SeedEmbeddedHashes(hs)
+	runtime.GC()
+	runtime.GC()
+	m = runtime.MemStats{}
+	runtime.ReadMemStats(&m)
+
+	b.Run("VPS Storage", func(b *testing.B) {
+		for b.Loop() {
+			b.ReportMetric(float64(m.HeapAlloc), "bytes")
+			hs.GetMatches(Match, 8, true)
+		}
+	})
 }
