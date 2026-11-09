@@ -1,8 +1,9 @@
 package ch
 
 import (
-	"fmt"
 	"time"
+
+	"gitea.narnian.us/lordwelch/comic-hasher/log"
 )
 
 type TimeLog struct {
@@ -15,10 +16,10 @@ func (t *TimeLog) ResetTime() {
 	t.last = time.Now()
 }
 
-func (t *TimeLog) LogTime(log string) {
+func (t *TimeLog) LogTime(msg string) {
 	now := time.Now()
 	diff := now.Sub(t.last)
 	t.last = now
 	t.total += diff
-	fmt.Printf("total: %v, %s: %v\n", t.total, log, diff)
+	log.Log(log.Trace, "total: %v, %s: %v\n", t.total, msg, diff)
 }

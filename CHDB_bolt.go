@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"slices"
+
+	"gitea.narnian.us/lordwelch/comic-hasher/log"
 
 	bolt "go.etcd.io/bbolt"
 )
@@ -80,7 +81,7 @@ func truncate(db *bolt.DB) (*bolt.DB, error) {
 
 	path := db.Path()
 	db.Close()
-	log.Println("Creating new CHDB")
+	CHDBLogger.Println(log.Verbose, "Creating new CHDB")
 	err = os.Truncate(path, 0)
 	if err != nil {
 		return nil, err
@@ -126,7 +127,7 @@ func (c CHDBBolt) Dump() (paths []string, badURLs []string) {
 
 func (c CHDBBolt) PathHashed(path string) bool {
 	if filepath.IsAbs(path) {
-		log.Panic("Absolute path given to chdb:", path)
+		panic(fmt.Sprintln("Absolute path given to chdb:", path))
 	}
 
 	tx, err := c.db.Begin(false)
@@ -140,7 +141,7 @@ func (c CHDBBolt) PathHashed(path string) bool {
 		if c.deleteExisting {
 			err = os.Remove(filepath.Join(c.path, path))
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				log.Println("Failed to delete hashed image:", err)
+				CHDBLogger.Println(log.Required, "Failed to delete hashed image:", err)
 			}
 		}
 		return true
@@ -151,7 +152,7 @@ func (c CHDBBolt) PathHashed(path string) bool {
 
 func (c CHDBBolt) PathDownloaded(path string) bool {
 	if filepath.IsAbs(path) {
-		log.Panic("Absolute path given to chdb:", path)
+		panic(fmt.Sprintln("Absolute path given to chdb:", path))
 	}
 
 	tx, err := c.db.Begin(false)
@@ -174,25 +175,25 @@ func (c CHDBBolt) PathDownloaded(path string) bool {
 
 func (c CHDBBolt) AddPath(path string) {
 	if filepath.IsAbs(path) {
-		log.Panic("Absolute path given to chdb:", path)
+		panic(fmt.Sprintln("Absolute path given to chdb:", path))
 	}
 
 	tx, err := c.db.Begin(true)
 	if err != nil {
-		c.db.Logger().Errorf("failed to open transaction: %v", err)
+		CHDBLogger.Log(log.Fatal, "failed to open transaction: %v", err)
 	}
 	defer tx.Rollback()
 	b := tx.Bucket([]byte("paths"))
 
 	err = b.Put([]byte(path), []byte{})
 	if err != nil {
-		log.Println(fmt.Errorf("failed to insert %v (%v) into paths: %w", path, path, err))
+		CHDBLogger.Log(log.Fatal, "failed to insert %v (%v) into paths: %v", path, path, err)
 	}
 	tx.Commit()
 	if c.deleteExisting {
 		err = os.Remove(filepath.Join(c.path, path))
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			log.Println("Failed to delete hashed image:", err)
+			CHDBLogger.Println(log.Required, "Failed to delete hashed image:", err)
 		}
 		_ = RmdirP(filepath.Dir(path))
 	}
@@ -211,14 +212,14 @@ func (c CHDBBolt) CheckURL(url string) bool {
 func (c CHDBBolt) AddURL(url string) {
 	tx, err := c.db.Begin(true)
 	if err != nil {
-		c.db.Logger().Errorf("Failed to open transaction: %v", err)
+		CHDBLogger.Log(log.Fatal, "Failed to open transaction: %v", err)
 	}
 	defer tx.Rollback()
 	b := tx.Bucket([]byte("bad_urls"))
 
 	err = b.Put([]byte(url), []byte{})
 	if err != nil {
-		log.Println(fmt.Errorf("failed to insert %v into bad_urls: %w", url, err))
+		CHDBLogger.Log(log.Fatal, "failed to insert %v into bad_urls: %v", url, err) // TODO: this should probably be fatal
 	}
 	tx.Commit()
 }

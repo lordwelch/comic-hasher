@@ -1,5 +1,7 @@
 package ch
 
+import "gitea.narnian.us/lordwelch/comic-hasher/log"
+
 type CHDB interface {
 	// OpenCHDB(path string, comicvinePath string, deleteExisting bool) (CHDB, error)
 	PathHashed(path string) bool
@@ -9,3 +11,5 @@ type CHDB interface {
 	AddURL(url string)
 	Close() error
 }
+
+var CHDBLogger = log.NewLogger("chdb")
