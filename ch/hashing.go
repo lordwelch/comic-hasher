@@ -19,9 +19,6 @@ import (
 	"gitea.narnian.us/lordwelch/goimagehash"
 )
 
-//go:embed hashes.gz
-var Hashes []byte
-
 const (
 	H0 uint64 = 0b11111111 << (8 * iota)
 	H1
