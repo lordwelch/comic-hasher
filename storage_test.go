@@ -17,6 +17,7 @@ import (
 
 	gcmp "cmp"
 
+	main "gitea.narnian.us/lordwelch/comic-hasher"
 	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"gitea.narnian.us/lordwelch/comic-hasher/storage"
@@ -337,6 +338,39 @@ func TestHashServer(t *testing.T) {
 	}
 	if diff := cmp.Diff(expected, fmt.Sprintf("%x", requestMD5), cmpOpts...); diff != "" {
 		t.Errorf("calculated hash did not match the returned data (-want +got):\n%s", diff)
+	}
+}
+
+func TestDownloadUpstreamHashes(t *testing.T) {
+	hs, err := storage.NewBasicStorage()
+	if err != nil {
+		t.Fatal("Failed to create basic storage:", err)
+	}
+	SeedHashes(hs)
+
+	HashServer := ch.NewHashServer(filepath.Join(t.TempDir(), "hashes.gz"), true)
+	err = HashServer.WriteHashes(hs)
+	if err != nil {
+		t.Fatal("failed to write hashes:", err)
+	}
+	mux := fakeMux{HashServer}
+	server := httptest.NewTestServer(t, &mux)
+	client := server.Client()
+	var upstreamHashes *ch.SavedHashesV3
+
+	upstreamHashes, err = main.DownloadUpstreamHashes(client, main.URLFlag{
+		Scheme: "https",
+		Host:   "comic-hasher.narnian.us",
+		Path:   "/hashes",
+	})
+	if err != nil {
+		t.Fatal("failed to download upstream hashes:", err)
+	}
+	if upstreamHashes == nil {
+		t.Fatal("upstream hashes is nil??")
+	}
+	if upstreamHashes.AHashCount == 0 {
+		t.Fatal("upstream hashes don't appear to be valid\n", upstreamHashes.V3Header)
 	}
 }
 

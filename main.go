@@ -206,7 +206,7 @@ func loadHashes(opts Opts) *ch.SavedHashesV3 {
 	loadedHashes.Sort()
 
 	if opts.upstream.DownloadHashes {
-		downloadedHashes, err := downloadUpstreamHashes(opts.upstream.URL)
+		downloadedHashes, err := DownloadUpstreamHashes(download.Client, opts.upstream.URL)
 		if err != nil {
 			log.Println(log.Required, "failed to download upstream hashes")
 			return loadedHashes
@@ -225,12 +225,11 @@ func loadHashes(opts Opts) *ch.SavedHashesV3 {
 	return loadedHashes
 }
 
-func downloadUpstreamHashes(url URLFlag) (*ch.SavedHashesV3, error) {
+func DownloadUpstreamHashes(client *http.Client, url URLFlag) (*ch.SavedHashesV3, error) {
 	ctx, cancel := context.WithTimeout(context.TODO(), time.Second*45)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "GET", url.String(), nil)
-	// req.Header.Set("Want-Digest", )
-	resp, err := download.Client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -251,13 +250,26 @@ func downloadUpstreamHashes(url URLFlag) (*ch.SavedHashesV3, error) {
 				if err != nil {
 					return nil, err
 				}
-				if !bytes.Equal(b64, hashers[hashName].Sum(b)) {
+				hashers[hashName].Write(b)
+				if !bytes.Equal(b64, hashers[hashName].Sum(nil)) {
 					return nil, fmt.Errorf("upstream hashes did not validate")
 				}
 			}
 		}
 	}
-	loadedHashes, err := ch.DecodeHashesV3(bytes.NewReader(b))
+	var reader io.Reader = bytes.NewReader(b)
+	if [3]byte(b[:3]) == [3]byte{0x1F, 0x8B, 0x8} {
+		gz, err := gzip.NewReader(bytes.NewReader(b))
+		if err != nil {
+			return nil, fmt.Errorf("HashServer did not send a gzipped response: %w", err)
+		}
+		defer gz.Close()
+		reader = gz
+	}
+	loadedHashes, err := ch.DecodeHashesV3(reader)
+	if err != nil {
+		return nil, err
+	}
 	if errors.Is(err, ch.ErrNoHashes) {
 		log.Println(log.Verbose, "Upstream hashes is empty")
 	}
