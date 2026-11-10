@@ -94,6 +94,11 @@ func main() {
 		fmt.Println("comic-hasher version:", opts.version)
 		os.Exit(0)
 	}
+
+	os.Exit(doStuff(opts))
+}
+
+func doStuff(opts Opts) int {
 	download.Client = &http.Client{Transport: download.RT("Comic-Hasher/" + opts.version)}
 
 	if opts.debugPort != "" {
@@ -103,23 +108,25 @@ func main() {
 	}
 	if opts.coverPath != "" {
 		_, err := os.Stat(opts.coverPath)
-		if err != nil {
-			panic(err)
-		}
+		log.Log(log.Fatal, "invalid cover path: %v: %w", opts.coverPath, err)
+		return 1
 	}
 	if opts.cv.enabled {
 		if opts.cv.APIKey == "" {
 			log.Println(log.Fatal, "No ComicVine API Key provided")
-			time.Sleep(11 * time.Millisecond) // for logging to complete
-			os.Exit(1)
+			return 1
 		}
 	}
 
 	opts.path, _ = filepath.Abs(opts.path)
 	log.Println(log.Standard, pretty.Sprint(opts))
 
-	startServer(opts)
-	time.Sleep(11 * time.Millisecond) // for logging to complete
+	err := startServer(opts)
+	if err != nil {
+		log.Log(log.Fatal, "comic-hasher failed: %v", err)
+		return 1
+	}
+	return 0
 }
 
 func signalHandler(s *ch.Server, signalQueue <-chan os.Signal) {
@@ -151,7 +158,7 @@ func initializeStorage(opts Opts) (ch.HashStorage, error) {
 
 const hashesFilename = "hashes.gz"
 
-func loadHashes(opts Opts) *ch.SavedHashesV3 {
+func loadHashes(opts Opts) (*ch.SavedHashesV3, error) {
 	hashesPath := filepath.Join(opts.path, hashesFilename)
 	var hashReader io.Reader
 
@@ -192,14 +199,12 @@ func loadHashes(opts Opts) *ch.SavedHashesV3 {
 		loadedHashes, err = ch.DecodeHashesV3(hashReader)
 		if errors.Is(err, ch.ErrNoHashes) {
 			log.Println(log.Verbose, "No saved hashes to load")
-			return loadedHashes
+			return loadedHashes, nil
 		}
 	}
 
 	if err != nil {
-		log.Println(log.Fatal, "Failed to decode hashes:", err)
-		time.Sleep(11 * time.Millisecond) // for logging to complete
-		os.Exit(1)
+		return nil, fmt.Errorf("failed to decode hashes: %w", err)
 	}
 
 	loadedHashes.LogHashInfo(log.Verbose, "")
@@ -209,20 +214,18 @@ func loadHashes(opts Opts) *ch.SavedHashesV3 {
 		downloadedHashes, err := DownloadUpstreamHashes(download.Client, opts.upstream.URL)
 		if err != nil {
 			log.Println(log.Required, "failed to download upstream hashes")
-			return loadedHashes
+			return loadedHashes, nil
 		}
 		if !opts.upstream.Merge {
-			return downloadedHashes
+			return downloadedHashes, nil
 		}
 		err = loadedHashes.Merge(downloadedHashes)
 		if err != nil {
-			log.Println(log.Fatal, "failed to merge upstream hashes")
-			time.Sleep(11 * time.Millisecond) // for logging to complete
-			os.Exit(1)
+			return nil, fmt.Errorf("failed to merge upstream hashes: %w", err)
 		}
 	}
 
-	return loadedHashes
+	return loadedHashes, nil
 }
 
 func DownloadUpstreamHashes(client *http.Client, url URLFlag) (*ch.SavedHashesV3, error) {
@@ -346,7 +349,8 @@ func downloadProcessor(chdb ch.CHDB, opts Opts, finishedDownloads <-chan downloa
 		if dl.Image == nil {
 			file, err = os.OpenFile(filepath.Join(opts.path, dl.Dest), os.O_RDWR, 0o666)
 			if err != nil {
-				panic(err)
+				log.Println(log.Standard, "Failed to open downloaded file: %v: %w", dl.Dest, err)
+				continue
 			}
 		} else {
 			file = io.NopCloser(dl.Image)
@@ -388,26 +392,25 @@ func bToKb(b uint64) uint64 {
 	return b / 1024 / 1024
 }
 
-func startServer(opts Opts) {
+func startServer(opts Opts) error {
 	imaging.SetMaxProcs(2)
 	if opts.cpuprofile != "" {
 		f, err := os.Create(opts.cpuprofile)
 		if err != nil {
-			log.Println(log.Fatal, err)
-			time.Sleep(11 * time.Millisecond) // for logging to complete
-			os.Exit(1)
+			return fmt.Errorf("unable to create cpuprofile: %w", err)
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
 	}
 	server := ch.NewServer(context.Background(), opts.version, opts.addr, opts.onlyHashNewIDs)
+	log.EnableNonBlocking(server.Context, 30)
 	signalQueue := make(chan os.Signal, 1)
 	Notify(signalQueue)
 	var err error
 	log.Println(log.Verbose, "Init storage")
 	server.Storage, err = initializeStorage(opts)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("failed to initialize storage: %w", err)
 	}
 
 	log.Println(log.Verbose, "Init 10 hashers")
@@ -422,7 +425,10 @@ func startServer(opts Opts) {
 
 	// DecodeHashes would normally need a write lock
 	// nothing else has been started yet so we don't need one
-	loadedHashes := loadHashes(opts)
+	loadedHashes, err := loadHashes(opts)
+	if err != nil {
+		return err
+	}
 	server.DecodeHashes(loadedHashes)
 	log.Println(log.Standard, "Loaded hashes")
 	// This is loaded here so that the log doesn't hang for a few seconds before the first line
@@ -432,7 +438,7 @@ func startServer(opts Opts) {
 	_ = os.MkdirAll(opts.path, 0o755)
 	chdb, err := ch.OpenCHDBBolt(opts.path, opts.deleteHashedImages)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("failed to initialize CHDB: %w", err)
 	}
 
 	log.Println(log.Verbose, "Init downloaders")
@@ -593,13 +599,7 @@ func startServer(opts Opts) {
 	// the server has been stopped so it's not needed here
 	hashes, err := server.Storage.EncodeHashes()
 	if err != nil {
-		log.Println(log.Fatal, "Failed to save hashes:", err)
-		time.Sleep(11 * time.Millisecond) // for logging to complete
-		os.Exit(1)
+		return fmt.Errorf("failed to save hashes: %w", err)
 	}
-	if err = saveHashes(opts, hashes); err != nil {
-		log.Println(log.Fatal, err)
-		time.Sleep(11 * time.Millisecond) // for logging to complete
-		os.Exit(1)
-	}
+	return saveHashes(opts, hashes)
 }
