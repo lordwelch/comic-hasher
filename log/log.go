@@ -401,11 +401,12 @@ func (l Logger) Log(level Level, msg string, args ...any) {
 		msg:    msg,
 		args:   args,
 	}
-	if Diode == nil {
+	d := Diode
+	if d == nil {
 		stdlog.Println(format(LogFormat, record))
 		return
 	}
-	Diode.Set(record)
+	d.Set(record)
 }
 
 // Println is Logger.Log(level, "", args...)
@@ -416,7 +417,7 @@ func (l Logger) Println(level Level, args ...any) {
 // EnableNonBlocking logging please wait for 11 Milliseconds when exiting to ensure all logs are processed
 func EnableNonBlocking(ctx context.Context, queueSize int) {
 	Diode = NewManyToOne(ctx, queueSize, nil)
-	go asyncLog(Diode)
+	go asyncLog()
 }
 
 // NewLogger creates a logger. Any aliases are additional names for the same logger, so two loggers that have the same alias can get their level set through a single name.

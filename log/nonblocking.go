@@ -56,15 +56,17 @@ func drainLog(diode *ManyToOne) {
 	}
 }
 
-func asyncLog(diode *ManyToOne) {
+func asyncLog() {
+	diode := Diode
 	for {
 		record := diode.Next()
-		if record.logger == Logger("") { // Empty logger is not allowed
+		if record.logger == Logger("") { // Empty logger is not allowed, an empty logger is sent on context cancel
 			break
 		}
 		stdlog.Println(format(LogFormat, record))
 		drainLog(diode)
 	}
+	Diode = nil
 	// Context is canceled we need a new poller that isn't canceled to drain the logger
 	drainLog(&ManyToOne{NewPoller(diode.poller.Diode)})
 }
