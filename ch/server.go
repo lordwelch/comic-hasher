@@ -665,10 +665,10 @@ func (s *Server) Hasher(workerID int) {
 	}
 }
 
-func (s *Server) DecodeHashes(loadedHashes *SavedHashesV3) {
+func (s *Server) DecodeHashes(loadedHashes *SavedHashesV3) error {
 	metrics, err := s.Storage.DecodeHashes(loadedHashes)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	for m, count := range metrics.Hashes {
 		s.hashCount.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
@@ -685,6 +685,7 @@ func (s *Server) DecodeHashes(loadedHashes *SavedHashesV3) {
 	s.consistentIDs.Set(IDsConsistent)
 
 	s.idCount.Add(float64(metrics.IDCount))
+	return nil
 }
 
 func (s *Server) HashLocalImages(coverPath string) {
