@@ -252,7 +252,7 @@ func newTestEnv(t *testing.T) *testEnv {
 
 	buffers := &sync.Pool{New: func() any { return new(bytes.Buffer) }}
 	finished := make(chan dl.Download, 1024)
-	d := NewDownloader(
+	d, err := NewDownloader(
 		"test",
 		buffers,
 		false,
@@ -264,6 +264,9 @@ func newTestEnv(t *testing.T) *testEnv {
 		false,
 		finished,
 	)
+	if err != nil {
+		t.Fatalf("failed to open metron db: %v", err)
+	}
 
 	env := &testEnv{srv: srv, d: d, finished: finished, base: base}
 	t.Cleanup(env.closeDBs)
@@ -273,10 +276,6 @@ func newTestEnv(t *testing.T) *testEnv {
 // For inspecting state after DownloadCovers return
 func (e *testEnv) openDBs() error {
 	var err error
-	e.d.DB, err = OpenBolt(filepath.Join(e.base, "metron.bolt"), DBVersion, []string{BucketIssue, BucketMeta})
-	if err != nil {
-		return fmt.Errorf("failed to open metron database: %w", err)
-	}
 	e.d.PageCache, err = OpenBolt(filepath.Join(e.base, "page_cache.bolt"), PageCacheVersion, []string{BucketPageCache, BucketMeta})
 	if err != nil {
 		return fmt.Errorf("failed to open page cache: %w", err)
@@ -288,10 +287,6 @@ func (e *testEnv) closeDBs() {
 	if e.d.PageCache.DB != nil {
 		_ = e.d.PageCache.Close()
 		e.d.PageCache = Bolt{}
-	}
-	if e.d.DB.DB != nil {
-		_ = e.d.DB.Close()
-		e.d.DB = Bolt{}
 	}
 }
 

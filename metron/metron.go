@@ -169,20 +169,23 @@ func (m Bolt) Issue(id int64) Issue {
 	return issue
 }
 
-func (m Bolt) PutIssue(issue Issue) error {
+func (m Bolt) PutIssue(tx *bolt.Tx, issue Issue) error {
 	// The metron api is a list of `Issue` and must be parsed out,
 	// we will never really have access to the original bytes
 	// so we just need to validate that the json marshalling this doesn't break the format
-	return m.DB.Update(func(tx *bolt.Tx) error {
-		if issue == (Issue{}) {
-			return tx.Bucket([]byte(BucketIssue)).Delete(ch.IntToBolt(issue.ID))
-		}
-		content, err := json.Marshal(issue, JSONOpts...)
-		if err != nil {
-			return fmt.Errorf("failed to convert issue to bytes: %w", err)
-		}
-		return tx.Bucket([]byte(BucketIssue)).Put(ch.IntToBolt(issue.ID), content)
-	})
+	if tx == nil {
+		return m.DB.Update(func(tx *bolt.Tx) error {
+			return m.PutIssue(tx, issue)
+		})
+	}
+	if issue == (Issue{}) {
+		return tx.Bucket([]byte(BucketIssue)).Delete(ch.IntToBolt(issue.ID))
+	}
+	content, err := json.Marshal(issue, JSONOpts...)
+	if err != nil {
+		return fmt.Errorf("failed to convert issue to bytes: %w", err)
+	}
+	return tx.Bucket([]byte(BucketIssue)).Put(ch.IntToBolt(issue.ID), content)
 }
 
 func (m Bolt) Date(key Key) time.Time {
@@ -206,26 +209,6 @@ func (m Bolt) PutDate(key Key, startDate time.Time) error {
 			return fmt.Errorf("failed to save start date to database: %w", err)
 		}
 		return tx.Bucket([]byte(BucketMeta)).Put([]byte(key), content)
-	})
-}
-
-func (m Bolt) URL(key Key) url.URL {
-	var value url.URL
-	err := m.DB.View(func(tx *bolt.Tx) error {
-		return value.UnmarshalBinary(tx.Bucket([]byte(BucketMeta)).Get([]byte(key)))
-	})
-	if err != nil {
-		return url.URL{}
-	}
-	return value
-}
-
-func (m Bolt) PutURL(key Key, value url.URL) error {
-	return m.DB.Update(func(tx *bolt.Tx) error {
-		if value == (url.URL{}) {
-			return tx.Bucket([]byte(BucketMeta)).Delete([]byte(key))
-		}
-		return tx.Bucket([]byte(BucketMeta)).Put([]byte(key), []byte(value.String()))
 	})
 }
 
@@ -256,11 +239,11 @@ func NewDownloader(
 	basePath, APIKey string,
 	keepDownloadedImages, sendExistingImages bool,
 	finishDownloadQueue chan<- dl.Download,
-) *Downloader {
+) (*Downloader, error) {
 	if os.Getenv("METRON_KEEP_IMAGES") == "TRUE" {
 		keepDownloadedImages = true
 	}
-	return &Downloader{
+	d := &Downloader{
 		basePath:             basePath,
 		version:              version,
 		Auth:                 Auth(APIKey),
@@ -272,6 +255,14 @@ func NewDownloader(
 		getID:                getID,
 		onlyHashNewIDs:       onlyHashNewIDs,
 	}
+	_ = os.MkdirAll(d.basePath, 0o777)
+	var err error
+	d.DB, err = OpenBolt(filepath.Join(d.basePath, "metron.bolt"), DBVersion, []string{BucketIssue, BucketMeta})
+	if err != nil {
+		logger.Log(log.Fatal, "failed to open metron database: %v", err)
+		return nil, err
+	}
+	return d, nil
 }
 
 func (d *Downloader) cleanDirs() {
@@ -289,6 +280,18 @@ func (d *Downloader) cleanDirs() {
 		}
 		return nil
 	})
+}
+
+func (d *Downloader) GetIssue(id ch.ID) (ch.Issue, error) {
+	idInt, err := strconv.ParseInt(id.ID, 10, 64)
+	if err != nil {
+		return ch.Issue{}, fmt.Errorf("invalid ID: %w", err)
+	}
+	i := d.DB.Issue(idInt)
+	if i.Image.String() == "" {
+		return ch.Issue{}, fmt.Errorf("unable to find issue: %v", id)
+	}
+	return ch.Issue{id, i.Image.String()}, nil
 }
 
 func MustParseURL(rawURI string) *url.URL {
@@ -396,13 +399,15 @@ func (d *Downloader) processIssues() error {
 				return fmt.Errorf("failed to decode json response from %q: %w\n%s", currentURL.String(), err, content)
 			}
 			var issue Issue
-			// This is mainly to keep the data available for later changes to the server it's not used otherwise
-			for _, issue = range resultList.Results {
-				err = d.DB.PutIssue(issue)
-				if err != nil {
-					return fmt.Errorf("failed to save issue %d to disk: %w", issue.ID, err)
+			d.DB.Update(func(tx *bolt.Tx) error {
+				for _, issue = range resultList.Results {
+					err = d.DB.PutIssue(tx, issue)
+					if err != nil {
+						return fmt.Errorf("failed to save issue %d to disk: %w", issue.ID, err)
+					}
 				}
-			}
+				return nil
+			})
 			var imageNextRequestTime time.Time
 			for _, issue = range resultList.Results {
 				err = d.Context.Err()
@@ -497,6 +502,12 @@ func (d *Downloader) processIssues() error {
 	return nil
 }
 
+func (d *Downloader) Close() error {
+	d.DB.Close()
+	d.PageCache.Close()
+	return nil
+}
+
 func GetServerTime(resp *http.Response) time.Time {
 	now := time.Now()
 	serverTime := resp.Header.Get("Date")
@@ -578,16 +589,13 @@ func OpenBolt(path string, version ch.Version, buckets []string) (Bolt, error) {
 }
 
 func DownloadCovers(ctx context.Context, d *Downloader) {
+	if d.DB.DB == nil {
+		panic("DB is nil")
+	}
 	var err error
 	d.Context = log.NewContext(ctx, logger)
 	_ = os.MkdirAll(d.basePath, 0o777)
-	d.DB, err = OpenBolt(filepath.Join(d.basePath, "metron.bolt"), DBVersion, []string{BucketIssue, BucketMeta})
-	if err != nil {
-		logger.Log(log.Fatal, "failed to open metron database: %v", err)
-		return
-	}
-	defer d.DB.Close()
-	err = d.DB.Compact()
+	err = d.DB.CompactQuietly()
 	if err != nil {
 		logger.Println(log.Verbose, "Failed to compact the metron database, this is probably fine:", err)
 	}

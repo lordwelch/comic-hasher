@@ -65,6 +65,7 @@ type Result struct {
 	ID            ID
 	Distance      int
 	EquivalentIDs []ID
+	ImageURL      string `json:"image_url,omitempty"`
 }
 type Im struct {
 	Im      image.Image

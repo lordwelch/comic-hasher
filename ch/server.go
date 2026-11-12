@@ -51,6 +51,11 @@ import (
 
 var logger = log.NewLogger("server")
 
+type Downloader interface {
+	io.Closer
+	GetIssue(ID) (Issue, error)
+}
+
 type Server struct {
 	HTTPServer     *http.Server
 	Mux            *CHMux
@@ -64,6 +69,9 @@ type Server struct {
 	MappingQueue   chan ImageHash
 	OnlyHashNewIDs bool
 	Version        string
+
+	CVDownloader     Downloader
+	MetronDownloader Downloader
 
 	reg                 *prometheus.Registry
 	matchCoverTotal     prometheus.Counter
@@ -112,6 +120,11 @@ type HashServer struct {
 	hashesDownloaded  prometheus.Counter
 	gzip              *gzip.Writer
 	useAllChecksums   bool
+}
+
+type Issue struct {
+	ID  ID
+	URL string
 }
 
 type CHMux struct {
@@ -485,6 +498,7 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		maxStr    = strings.TrimSpace(values.Get("max"))
 		exactOnly = strings.ToLower(strings.TrimSpace(values.Get("exactOnly"))) != "false"
 		simple    = strings.ToLower(strings.TrimSpace(values.Get("simple"))) == "true"
+		images    = strings.ToLower(strings.TrimSpace(values.Get("images"))) == "true"
 		ahash     uint64
 		dhash     uint64
 		phash     uint64
@@ -574,9 +588,32 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, result{Msg: "No hashes found"})
 		return
 	}
+	if images {
+		for i := range matches {
+			matches[i].ImageURL = s.IssueImageURL(matches[i].ID)
+		}
+	}
 	writeJSON(w, http.StatusOK, result{
 		Results: matches,
 	})
+}
+
+func (s *Server) IssueImageURL(id ID) string {
+	switch *id.Domain {
+	case ComicVine:
+		issue, err := s.CVDownloader.GetIssue(id)
+		if err != nil {
+			issue.URL = ""
+		}
+		return issue.URL
+	case Metron:
+		issue, err := s.MetronDownloader.GetIssue(id)
+		if err != nil {
+			issue.URL = ""
+		}
+		return issue.URL
+	}
+	return ""
 }
 
 func (s *Server) addCover(w http.ResponseWriter, r *http.Request) {

@@ -452,27 +452,32 @@ func startServer(opts Opts) error {
 	dcwg.Go(func() {
 		server.HashLocalImages(opts.coverPath)
 	})
-
+	var cvErr error
+	server.CVDownloader, cvErr = cv.NewCVDownloader(
+		opts.version,
+		bufPool,
+		opts.onlyHashNewIDs,
+		server.Storage.GetIDs,
+		chdb,
+		filepath.Join(opts.path, cv.WorkDirectory),
+		opts.cv.APIKey,
+		opts.cv.images,
+		opts.keepDownloaded,
+		opts.hashDownloaded,
+		finishedDownloadQueue,
+	)
 	if opts.cv.enabled {
 		dwg.Go(func() {
-			cvdownloader := cv.NewCVDownloader(
-				opts.version,
-				bufPool,
-				opts.onlyHashNewIDs,
-				server.Storage.GetIDs,
-				chdb,
-				filepath.Join(opts.path, cv.WorkDirectory),
-				opts.cv.APIKey,
-				opts.cv.images,
-				opts.keepDownloaded,
-				opts.hashDownloaded,
-				finishedDownloadQueue,
-			)
-			cv.DownloadCovers(server.Context, cvdownloader)
+			if cvErr != nil {
+				log.Println(log.Required, "Failed to start ComicVine Downloader: %v", cvErr)
+				return
+			}
+			defer server.CVDownloader.Close()
+			cv.DownloadCovers(server.Context, server.CVDownloader.(*cv.Downloader))
 			for {
 				select {
 				case <-time.After(2 * time.Hour):
-					cv.DownloadCovers(server.Context, cvdownloader)
+					cv.DownloadCovers(server.Context, server.CVDownloader.(*cv.Downloader))
 				case <-server.Context.Done():
 					return
 				}
@@ -480,25 +485,31 @@ func startServer(opts Opts) error {
 		})
 	}
 
+	var metronErr error
+	server.MetronDownloader, metronErr = metron.NewDownloader(
+		opts.version,
+		bufPool,
+		opts.onlyHashNewIDs,
+		server.Storage.GetIDs,
+		chdb,
+		filepath.Join(opts.path, metron.WorkDirectory),
+		opts.metron.APIKey,
+		opts.keepDownloaded,
+		opts.hashDownloaded,
+		finishedDownloadQueue,
+	)
 	if opts.metron.enabled {
 		dwg.Go(func() {
-			metronDownloader := metron.NewDownloader(
-				opts.version,
-				bufPool,
-				opts.onlyHashNewIDs,
-				server.Storage.GetIDs,
-				chdb,
-				filepath.Join(opts.path, metron.WorkDirectory),
-				opts.metron.APIKey,
-				opts.keepDownloaded,
-				opts.hashDownloaded,
-				finishedDownloadQueue,
-			)
-			metron.DownloadCovers(server.Context, metronDownloader)
+			if metronErr != nil {
+				log.Println(log.Required, "Failed to start Metron Downloader: %v", metronErr)
+				return
+			}
+			defer server.MetronDownloader.Close()
+			metron.DownloadCovers(server.Context, server.MetronDownloader.(*metron.Downloader))
 			for {
 				select {
 				case <-time.After(1 * time.Hour):
-					metron.DownloadCovers(server.Context, metronDownloader)
+					metron.DownloadCovers(server.Context, server.MetronDownloader.(*metron.Downloader))
 				case <-server.Context.Done():
 					return
 				}
