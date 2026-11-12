@@ -1,7 +1,7 @@
 code.cloudfoundry.org/go-diodes v0.0.0-20260921100641-e75e32521ad8 h1:93bXp9ldsLL+uVgqLiq3T/6B+PPaSDZTWQgD/xi+B+Q=
 code.cloudfoundry.org/go-diodes v0.0.0-20260921100641-e75e32521ad8/go.mod h1:uBbwWHqqp9BOMRA0RxUc6PJXzfe512a3gVP4LVc3vRU=
-gitea.narnian.us/lordwelch/goimagehash v0.0.0-20250130004139-e91c39c79e0d h1:mFnVC/tEHk6woq6FBulwzGcuNdYn+zNhXNBILuetQJs=
-gitea.narnian.us/lordwelch/goimagehash v0.0.0-20250130004139-e91c39c79e0d/go.mod h1:UDwa7njhbB5nzxIjHbT9Mjlve9GYn3wzxAcQax1XRvE=
+gitea.narnian.us/lordwelch/goimagehash v0.0.0-20261112092808-e06ac052a7b8 h1:TdRnb43G1RbJ69RN+Cm8JhzMKddOb6bauQ5juwBJxvE=
+gitea.narnian.us/lordwelch/goimagehash v0.0.0-20261112092808-e06ac052a7b8/go.mod h1:UDwa7njhbB5nzxIjHbT9Mjlve9GYn3wzxAcQax1XRvE=
 github.com/Masterminds/semver/v3 v3.4.0 h1:Zog+i5UMtVoCU8oKka5P7i9q9HgrJeGzI9SA1Xbatp0=
 github.com/Masterminds/semver/v3 v3.4.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/OneOfOne/xxhash v1.2.8 h1:31czK/TI9sNkxIKfaUfGlU47BAxQ0ztGgd9vPyqimf8=
@@ -84,6 +84,8 @@ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qq
 github.com/rogpeppe/go-internal v1.9.0/go.mod h1:WtVeX8xhTBvf0smdhujwtBcq4Qrzq/fJaraNFVN+nFs=
 github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
 github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7so1lCWt35ZSgc=
+github.com/spakin/netpbm v1.3.2 h1:ZAb16Sw/+b4QeO9NokEvejVvbrYdF6DdcYJe0dKONL0=
+github.com/spakin/netpbm v1.3.2/go.mod h1:cVep9uXARFgAu2UU+0c+OE1J+eKmDN2hW0EN+tazkTA=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=

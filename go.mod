@@ -7,7 +7,7 @@ go 1.27.1
 // Storage types
 require (
 	code.cloudfoundry.org/go-diodes v0.0.0-20260921100641-e75e32521ad8
-	gitea.narnian.us/lordwelch/goimagehash v0.0.0-20250130004139-e91c39c79e0d
+	gitea.narnian.us/lordwelch/goimagehash v0.0.0-20261112092808-e06ac052a7b8
 	github.com/OneOfOne/xxhash v1.2.8
 	github.com/disintegration/imaging v1.6.3-0.20201218193011-d40f48ce0f09
 	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3
@@ -18,6 +18,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/ncruces/go-sqlite3 v0.30.5
 	github.com/prometheus/client_golang v1.24.1
+	github.com/spakin/netpbm v1.3.2
 	github.com/twmb/murmur3 v1.1.8
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/zeebo/xxh3 v1.1.0
