@@ -167,6 +167,12 @@ func (b *BasicStorage) AssociateIDs(OldID, NewID ch.ID) error {
 	return b.hashes.AssociateIDs(OldID, NewID)
 }
 
+func (b *BasicStorage) GetHashes(id ch.ID) []ch.Hash {
+	b.hashMutex.RLock()
+	defer b.hashMutex.RUnlock()
+	return b.hashes.GetHashes(id)
+}
+
 func (b *BasicStorage) GetIDs(id ch.ID) []ch.ID {
 	b.hashMutex.RLock()
 	defer b.hashMutex.RUnlock()

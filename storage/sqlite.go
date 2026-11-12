@@ -445,6 +445,26 @@ func (s *sqliteStorage) AssociateIDs(OldID, NewID ch.ID) error {
 	return nil
 }
 
+func (s *sqliteStorage) GetHashes(id ch.ID) []ch.Hash {
+	rows, err := s.db.Query(`SELECT Hashes.kind, Hashes.hash FROM Hashes JOIN IDs ON Hashes.id=IDs.id WHERE IDs.domain=? AND IDs.stringid=?`, id.Domain, id.ID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var results []ch.Hash
+	for rows.Next() {
+		var (
+			kind goimagehash.Kind
+			hash int64
+		)
+		if err := rows.Scan(&kind, &hash); err != nil {
+			return nil
+		}
+		results = append(results, ch.Hash{Hash: uint64(hash), Kind: kind})
+	}
+	return results
+}
+
 func (s *sqliteStorage) GetIDs(id ch.ID) []ch.ID {
 	var ids []ch.ID
 	rows, err := s.idMatchStatement.Query(id.Domain, id.ID)

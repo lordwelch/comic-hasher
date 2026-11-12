@@ -271,3 +271,23 @@ func TestNewSavedHashesV3RespectsSourceLimit(t *testing.T) {
 		t.Fatalf("want: '%v' got: '%v'", ErrTooManySources, err)
 	}
 }
+
+func TestGetHashesByID(t *testing.T) {
+	cvID := ID{Domain: NewSource("comicvine.gamespot.com"), ID: "1"}
+	metronID := ID{Domain: NewSource("metron.cloud"), ID: "2"}
+	hashes := SavedHashesV3{}
+	hashes.InsertHash(Hash{Kind: goimagehash.AHash, Hash: 1}, cvID)
+	hashes.InsertHash(Hash{Kind: goimagehash.DHash, Hash: 2}, cvID)
+	hashes.InsertHash(Hash{Kind: goimagehash.PHash, Hash: 3}, metronID)
+
+	if got := hashes.GetHashes(cvID); len(got) != 2 {
+		t.Fatalf("expected 2 hashes for CV ID, got %d", len(got))
+	}
+	if got := hashes.GetHashes(metronID); len(got) != 1 {
+		t.Fatalf("expected 1 hash for metron ID, got %d", len(got))
+	}
+	unknown := ID{Domain: NewSource("comicvine.gamespot.com"), ID: "999"}
+	if got := hashes.GetHashes(unknown); len(got) != 0 {
+		t.Fatalf("expected no hashes for unknown ID, got %d", len(got))
+	}
+}

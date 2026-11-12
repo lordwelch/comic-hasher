@@ -176,6 +176,13 @@ func (v *VPTree) AssociateIDs(OldID, NewID ch.ID) error {
 	return errors.New("not implemented")
 }
 
+func (v *VPTree) GetHashes(id ch.ID) []ch.Hash {
+	if v.hashes == nil {
+		return nil
+	}
+	return v.hashes.GetHashes(id)
+}
+
 func (v *VPTree) GetIDs(id ch.ID) []ch.ID {
 	if v.hashes == nil {
 		return nil

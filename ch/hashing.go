@@ -163,6 +163,7 @@ type HashStorage interface {
 	EncodeHashes() (*SavedHashesV3, error)
 	AssociateIDs(OldID, NewID ID) error
 	GetIDs(id ID) []ID
+	GetHashes(id ID) []Hash
 	RLock()
 	RUnlock()
 }

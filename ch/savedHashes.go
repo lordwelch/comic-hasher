@@ -469,6 +469,23 @@ func (s *SavedHashesV3) SortIndex() {
 	}
 }
 
+// GetHashes returns every hash stored for id. It returns nil if id is unknown.
+func (s *SavedHashesV3) GetHashes(id ID) []Hash {
+	index, found := s.FindID(id)
+	if !found {
+		return nil
+	}
+	var results []Hash
+	for _, kind := range []goimagehash.Kind{goimagehash.AHash, goimagehash.DHash, goimagehash.PHash} {
+		for _, stored := range *s.HashesForKind(kind) {
+			if stored.ID == index {
+				results = append(results, Hash{Hash: stored.Hash, Kind: kind})
+			}
+		}
+	}
+	return results
+}
+
 func (s *SavedHashesV3) FindID(id ID) (uint32, bool) {
 	index, found := slices.BinarySearchFunc(s.IDIndex, id, func(rid uint32, target ID) int {
 		return cmp.Or(
