@@ -45,6 +45,9 @@ func (db *DB) CompactQuietly() error {
 //
 // If db.readOnly, then Compact2 is a no-op, and we return nil.
 func (db *DB) Compact2(batchSizeBytes int64, logImpact bool) error {
+	if db == nil {
+		return nil
+	}
 	if db.readOnly {
 		return nil
 	}

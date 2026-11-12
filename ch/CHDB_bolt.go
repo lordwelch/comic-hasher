@@ -20,18 +20,14 @@ import (
 type Version string
 
 type Bolt struct {
+	*bolt.DB
 	Path string
-	DB   *bolt.DB
-}
-
-func (b Bolt) Close() error {
-	return b.DB.Close()
 }
 
 // Compact must not be run while the database is actively being used
 func (b *Bolt) Compact() error {
 	var needsCompaction bool
-	b.DB.View(func(tx *bolt.Tx) error {
+	b.View(func(tx *bolt.Tx) error {
 		var s bolt.BucketStats
 		var count int
 		if err := tx.ForEach(func(name []byte, b *bolt.Bucket) error {
@@ -108,7 +104,7 @@ func OpenBolt(path string, version Version, buckets []string) (Bolt, error) {
 	path, _ = filepath.Abs(path)
 	db, err := bolt.Open(path, 0o644, &bolt.Options{FreelistType: bolt.FreelistArrayType, Timeout: time.Second * 5})
 	if err != nil {
-		return Bolt{path, db}, fmt.Errorf("failed to open database: %w", err)
+		return Bolt{db, path}, fmt.Errorf("failed to open database: %w", err)
 	}
 	db, err = BoltTruncate(db, version)
 	if err != nil {
@@ -135,10 +131,10 @@ func OpenBolt(path string, version Version, buckets []string) (Bolt, error) {
 	})
 	if err != nil {
 		db.Close()
-		return Bolt{path, db}, fmt.Errorf("failed to init database: %w", err)
+		return Bolt{db, path}, fmt.Errorf("failed to init database: %w", err)
 	}
 
-	return Bolt{path, db}, nil
+	return Bolt{db, path}, nil
 }
 
 func BoltTruncate(db *bolt.DB, version Version) (*bolt.DB, error) {
@@ -179,7 +175,7 @@ func (c CHDBBolt) Compact() error {
 func (c CHDBBolt) Import(paths []string, badURLs []string) {
 	slices.Sort(paths)
 	slices.Sort(badURLs)
-	c.DB.Update(func(tx *bolt.Tx) error {
+	c.Update(func(tx *bolt.Tx) error {
 		p := tx.Bucket([]byte("paths"))
 		b := tx.Bucket([]byte("bad_urls"))
 
@@ -204,7 +200,7 @@ func (c CHDBBolt) ValidatePath(path string) bool {
 }
 
 func (c CHDBBolt) Dump() (paths []string, badURLs []string) {
-	c.DB.View(func(tx *bolt.Tx) error {
+	c.View(func(tx *bolt.Tx) error {
 		p := tx.Bucket([]byte("paths"))
 		b := tx.Bucket([]byte("bad_urls"))
 		paths = make([]string, 0, p.Inspect().KeyN)
@@ -230,7 +226,7 @@ func (c CHDBBolt) PathHashed(path string) bool {
 		panic(fmt.Sprintln("Invalid path", path))
 	}
 
-	tx, err := c.DB.Begin(false)
+	tx, err := c.Begin(false)
 	if err != nil {
 		return false
 	}
@@ -256,6 +252,10 @@ func IntToBolt[T constraints.Integer](v T) []byte {
 	return b
 }
 
+func BoltToInt(v []byte) uint64 {
+	return binary.BigEndian.Uint64(v)
+}
+
 func (c CHDBBolt) PathDownloaded(path string) bool {
 	if filepath.IsAbs(path) {
 		panic(fmt.Sprintln("Absolute path given to chdb:", path))
@@ -264,7 +264,7 @@ func (c CHDBBolt) PathDownloaded(path string) bool {
 		panic(fmt.Sprintln("Invalid path", path))
 	}
 
-	tx, err := c.DB.Begin(false)
+	tx, err := c.Begin(false)
 	if err != nil {
 		return false
 	}
@@ -289,7 +289,7 @@ func (c CHDBBolt) AddPath(path string) {
 		panic(fmt.Sprintln("Invalid path", path))
 	}
 
-	tx, err := c.DB.Begin(true)
+	tx, err := c.Begin(true)
 	if err != nil {
 		CHDBLogger.Log(log.Fatal, "failed to open transaction: %v", err)
 	}
@@ -311,7 +311,7 @@ func (c CHDBBolt) AddPath(path string) {
 }
 
 func (c CHDBBolt) CheckURL(url string) bool {
-	tx, err := c.DB.Begin(true)
+	tx, err := c.Begin(true)
 	if err != nil {
 		return false
 	}
@@ -321,7 +321,7 @@ func (c CHDBBolt) CheckURL(url string) bool {
 }
 
 func (c CHDBBolt) AddURL(url string) {
-	tx, err := c.DB.Begin(true)
+	tx, err := c.Begin(true)
 	if err != nil {
 		CHDBLogger.Log(log.Fatal, "Failed to open transaction: %v", err)
 	}
@@ -333,10 +333,6 @@ func (c CHDBBolt) AddURL(url string) {
 		CHDBLogger.Log(log.Fatal, "failed to insert %v into bad_urls: %v", url, err) // TODO: this should probably be fatal
 	}
 	tx.Commit()
-}
-
-func (c CHDBBolt) Close() error {
-	return c.DB.Close()
 }
 
 var _ CHDB = CHDBBolt{}
