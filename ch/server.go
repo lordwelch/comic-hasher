@@ -163,6 +163,7 @@ func (s *Server) setupAppHandlers() {
 	s.Mux.HandleFunc("/add_cover", s.addCover)
 	s.Mux.HandleFunc("/match_cover_hash", s.matchCoverHash)
 	s.Mux.HandleFunc("/associate_ids", s.associateIDs)
+	s.Mux.HandleFunc("/get_cover_hash", s.hashesByID)
 	s.Mux.HandleFunc("/hashes", s.HashServer.DownloadHashes)
 	s.Mux.Handle("/metrics", promhttp.HandlerFor(s.reg, promhttp.HandlerOpts{}))
 	promauto.With(s.reg)
@@ -464,12 +465,43 @@ func (s *Server) associateIDs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) hashesByID(w http.ResponseWriter, r *http.Request) {
+	user, authed := s.authenticated(w, r)
+	if !authed || user == "" {
+		http.Error(w, "Invalid Auth", http.StatusForbidden)
+		return
+	}
+	type result struct {
+		Results []Hash `json:"results,omitempty"`
+		Msg     string `json:"msg,omitempty"`
+	}
+	var (
+		values = r.URL.Query()
+		domain = Source(strings.ToLower(strings.TrimSpace(values.Get("domain"))))
+		id     = strings.ToLower(strings.TrimSpace(values.Get("id")))
+	)
+	if domain == "" {
+		writeJSON(w, http.StatusBadRequest, result{Msg: "No domain Provided"})
+		return
+	}
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, result{Msg: "No ID Provided"})
+		return
+	}
+	results := s.Storage.GetHashes(ID{Domain: NewSource(domain), ID: id})
+	if len(results) == 0 {
+		writeJSON(w, http.StatusNotFound, result{Msg: "No hashes found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, result{Results: results})
+}
+
 type result struct {
 	Results []Result `json:"results,omitempty"`
 	Msg     string   `json:"msg,omitempty"`
 }
 
-func writeJSON(w http.ResponseWriter, status int, res result) {
+func writeJSON(w http.ResponseWriter, status int, res any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	var (
