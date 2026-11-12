@@ -47,29 +47,27 @@ func (b *BasicStorage) atleast(kind goimagehash.Kind, maxDistance int, searchHas
 	return matchingHashes
 }
 
-func (b *BasicStorage) exactMatches(hashes []ch.Hash) []ch.Result {
+func (b *BasicStorage) exactMatches(hash ch.Hash) []ch.Result {
 	var foundMatches []ch.Result
-	for _, hash := range hashes {
-		mappedIds := map[uint32]bool{}
+	mappedIds := map[uint32]bool{}
 
-		index, count := b.findHash(hash)
-		if count < 1 {
+	index, count := b.findHash(hash)
+	if count < 1 {
+		return nil
+	}
+	currentHashes := *b.hashes.HashesForKind(hash.Kind)
+	for _, storedHash := range currentHashes[index : index+count] {
+		if mappedIds[storedHash.ID] {
 			continue
 		}
-		currentHashes := *b.hashes.HashesForKind(hash.Kind)
-		for _, storedHash := range currentHashes[index : index+count] {
-			if mappedIds[storedHash.ID] {
-				continue
-			}
-			mappedIds[storedHash.ID] = true
+		mappedIds[storedHash.ID] = true
 
-			foundMatches = append(foundMatches, ch.Result{
-				Hash:          ch.Hash{Hash: storedHash.Hash, Kind: hash.Kind},
-				ID:            b.hashes.IDAt(storedHash.ID),
-				Distance:      0,
-				EquivalentIDs: b.hashes.GetAllIDs(storedHash.ID),
-			})
-		}
+		foundMatches = append(foundMatches, ch.Result{
+			Hash:          ch.Hash{Hash: storedHash.Hash, Kind: hash.Kind},
+			ID:            b.hashes.IDAt(storedHash.ID),
+			Distance:      0,
+			EquivalentIDs: b.hashes.GetAllIDs(storedHash.ID),
+		})
 	}
 	return foundMatches
 }
@@ -77,6 +75,7 @@ func (b *BasicStorage) exactMatches(hashes []ch.Hash) []ch.Result {
 func (b *BasicStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Result, error) {
 	var (
 		foundMatches []ch.Result
+		exactMatches []ch.Result
 		tl           ch.TimeLog
 	)
 	tl.ResetTime()
@@ -84,16 +83,17 @@ func (b *BasicStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]
 	b.hashMutex.RLock()
 	defer b.hashMutex.RUnlock()
 
-	if exactOnly { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
-		foundMatches = b.exactMatches(hashes)
-
-		tl.LogTime("Search Exact")
-		if len(foundMatches) > 0 {
-			return foundMatches, nil
-		}
-	}
-
 	for _, hash := range hashes {
+		if exactOnly { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
+			exactMatches = b.exactMatches(hash)
+
+			tl.LogTime("Search Exact")
+			if len(exactMatches) > 0 {
+				foundMatches = append(foundMatches, exactMatches...)
+				continue
+			}
+		}
+
 		foundMatches = append(foundMatches, b.atleast(hash.Kind, max, hash.Hash)...)
 	}
 	return foundMatches, nil

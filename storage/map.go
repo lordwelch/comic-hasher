@@ -18,6 +18,7 @@ type MapStorage struct {
 func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Result, error) {
 	var (
 		foundMatches []ch.Result
+		exactMatches []ch.Result
 		tl           ch.TimeLog
 	)
 	tl.ResetTime()
@@ -25,17 +26,18 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 	m.hashMutex.RLock()
 	defer m.hashMutex.RUnlock()
 
-	if exactOnly { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
-		foundMatches = m.exactMatches(hashes)
-
-		tl.LogTime("Search Exact")
-		if len(foundMatches) > 0 {
-			return foundMatches, nil
-		}
-	}
-
 	var searchHash ch.Hash
 	for _, searchHash = range hashes {
+		if exactOnly { // exact matches are also found by partial matches. Don't bother with exact matches so we don't have to de-duplicate
+			exactMatches = m.exactMatches(searchHash)
+
+			tl.LogTime("Search Exact")
+			if len(exactMatches) > 0 {
+				foundMatches = append(foundMatches, exactMatches...)
+				continue
+			}
+		}
+
 		currentHashes, currentPartialHashes := m.getCurrentHashes(searchHash.Kind)
 		filteredMatches := []ch.Match{}
 
