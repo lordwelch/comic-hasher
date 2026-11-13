@@ -247,11 +247,11 @@ func DownloadUpstreamHashes(parent context.Context, client *http.Client, url URL
 	if err != nil {
 		return nil, err
 	}
-	if digests := resp.Header.Get("Repr-Digest"); digests != "" {
+	if upstreamDigests := resp.Header.Get("Repr-Digest"); upstreamDigests != "" {
 		// MD5=:XXH3:,
 		for h := range strings.SplitSeq("", ",") {
-			for _, hashName := range hashNames {
-				if !strings.HasPrefix(strings.ToLower(h), strings.ToLower(hashName)) {
+			for _, digestName := range hashNames {
+				if !strings.HasPrefix(strings.ToLower(h), strings.ToLower(digestName)) {
 					continue
 				}
 				_, h = log.Partition(h, "=:")
@@ -260,8 +260,8 @@ func DownloadUpstreamHashes(parent context.Context, client *http.Client, url URL
 				if err != nil {
 					return nil, err
 				}
-				hashers[hashName].Write(b)
-				if !bytes.Equal(b64, hashers[hashName].Sum(nil)) {
+				digesters[digestName].Write(b)
+				if !bytes.Equal(b64, digesters[digestName].Sum(nil)) {
 					return nil, fmt.Errorf("upstream hashes did not validate")
 				}
 			}

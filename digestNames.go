@@ -12,7 +12,7 @@ import (
 	"github.com/zeebo/xxh3"
 )
 
-var hashers = map[string]hash.Hash{
+var digesters = map[string]hash.Hash{
 	"sha":                       crypto.SHA1.New(),
 	crypto.SHA1.String():        crypto.SHA1.New(),
 	crypto.SHA256.String():      crypto.SHA256.New(),
