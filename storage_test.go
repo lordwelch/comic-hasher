@@ -370,8 +370,18 @@ func TestDownloadUpstreamHashes(t *testing.T) {
 	if upstreamHashes == nil {
 		t.Fatal("upstream hashes is nil??")
 	}
-	if upstreamHashes.AHashCount == 0 {
-		t.Fatal("upstream hashes don't appear to be valid\n", upstreamHashes.V3Header)
+	var all []ch.SavedHashV2
+	all = append(all, sample1SavedHashes...)
+	all = append(all, sample2SavedHashes...)
+	all = append(all, sample3SavedHashes...)
+	all = append(all, sample4SavedHashes...)
+	all = append(all, exampleSavedHashes...)
+	want, err := ch.NewSavedHashesV3(&ch.SavedHashesV2{Hashes: all})
+	if err != nil {
+		t.Fatal("failed to build expected hashes:", err)
+	}
+	if diff := cmp.Diff(want, upstreamHashes, cmpOpts...); diff != "" {
+		t.Errorf("DownloadUpstreamHashes() mismatch (-want +got):\n%s", diff)
 	}
 }
 
