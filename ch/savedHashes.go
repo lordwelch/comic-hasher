@@ -231,21 +231,26 @@ func (s *SavedHashesV3) slowMerge(n *SavedHashesV3, _ []byte) error {
 
 func (s *SavedHashesV3) fastMerge(n *SavedHashesV3, sourceMap []byte) error {
 	logger.Println(log.MoreVerbose, "Fast merge")
+	s.LogHashInfo(log.Trace, "fast pre-merge")
 	var i int
 	// None of the sources overlap so inherently none of the IDGroups can overlap
 	s.IDGroups = append(s.IDGroups, n.IDGroups...)
-	// None of the sources overlap so inherently none of the IDs can overlap
-	s.IDs = append(s.IDs, n.IDs...)
 
 	for _, group := range n.IDGroups {
 		for i = range group {
 			group[i] += s.IDCount
 		}
 	}
+	s.LogHashInfo(log.Trace, "fast post-ID Groups")
+	log.Println(log.Trace, "sourceMap:", sourceMap)
 	for i = range n.IDs {
+		log.Log(log.Trace, "Updating source %v to %v", n.IDAt(uint32(i)), sourceMap[n.IDs[i].Source])
 		n.IDs[i].Source = sourceMap[n.IDs[i].Source]
 		n.IDs[i].Group += s.GroupCount
 	}
+	// None of the sources overlap so inherently none of the IDs can overlap
+	s.IDs = append(s.IDs, n.IDs...)
+	s.LogHashInfo(log.Trace, "fast post-IDs")
 
 	for i = range n.AHashes {
 		n.AHashes[i].ID += s.IDCount
@@ -258,6 +263,7 @@ func (s *SavedHashesV3) fastMerge(n *SavedHashesV3, sourceMap []byte) error {
 	for i = range n.PHashes {
 		n.PHashes[i].ID += s.IDCount
 	}
+	s.LogHashInfo(log.Trace, "fast post-hashes")
 	return nil
 }
 
