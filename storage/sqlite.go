@@ -499,6 +499,23 @@ func (s *sqliteStorage) GetIDs(id ch.ID) []ch.ID {
 	return ids
 }
 
+func (s *sqliteStorage) GetDomains() []string {
+	var domains []string
+	rows, err := s.db.Query(`SELECT DISTINCT(domain) from IDs;`)
+	if err != nil || rows.Err() != nil {
+		return nil
+	}
+	for rows.Next() {
+		var domain string
+		err = rows.Scan(&domain)
+		if err != nil {
+			return nil
+		}
+		domains = append(domains, domain)
+	}
+	return domains
+}
+
 func (s *sqliteStorage) PrepareStatements() error {
 	var err error
 	s.insertHash, err = s.db.Prepare(`INSERT INTO Hashes (kind, hash, id) VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET kind=?1`)
@@ -572,6 +589,7 @@ func NewSqliteStorage(db, path string) (ch.HashStorage, error) {
 		panic(err)
 	}
 	sqlite.db = sqlDB
+
 	_, err = sqlite.db.Exec(`
 		PRAGMA foreign_keys=ON;
 		CREATE TABLE IF NOT EXISTS IDs(

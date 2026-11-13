@@ -162,6 +162,7 @@ type HashStorage interface {
 	MapHashes(ImageHash) Metrics
 	DecodeHashes(hashes *SavedHashesV3) (Metrics, error)
 	EncodeHashes() (*SavedHashesV3, error)
+	GetDomains() []string
 	AssociateIDs(OldID, NewID ID) error
 	DisassociateID(id ID)
 	GetIDs(id ID) []ID

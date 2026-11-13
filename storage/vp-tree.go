@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/bits"
+	"slices"
 
 	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	"gitea.narnian.us/lordwelch/goimagehash"
@@ -181,6 +182,10 @@ func (v *VPTree) GetHashes(id ch.ID) []ch.Hash {
 		return nil
 	}
 	return v.hashes.GetHashes(id)
+}
+
+func (v *VPTree) GetDomains() []string {
+	return slices.Clone(v.hashes.Sources)
 }
 
 func (v *VPTree) GetIDs(id ch.ID) []ch.ID {

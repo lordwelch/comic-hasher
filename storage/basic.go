@@ -161,6 +161,10 @@ func (b *BasicStorage) EncodeHashes() (*ch.SavedHashesV3, error) {
 	return b.hashes, nil
 }
 
+func (b *BasicStorage) GetDomains() []string {
+	return slices.Clone(b.hashes.Sources)
+}
+
 func (b *BasicStorage) AssociateIDs(OldID, NewID ch.ID) error {
 	b.hashMutex.Lock()
 	defer b.hashMutex.Unlock()

@@ -162,6 +162,7 @@ func (s *Server) authenticated(w http.ResponseWriter, r *http.Request) (string, 
 }
 
 func (s *Server) setupAppHandlers() {
+	s.Mux.HandleFunc("/domains", s.domains)
 	s.Mux.HandleFunc("/add_cover", s.addCover)
 	s.Mux.HandleFunc("/match_cover_hash", s.matchCoverHash)
 	s.Mux.HandleFunc("/associate_ids", s.associateIDs)
@@ -410,6 +411,14 @@ func (h *HashServer) initDigests(writer io.Writer) io.Writer {
 		writers = append(writers, digest)
 	}
 	return io.MultiWriter(writers...)
+}
+
+func (s *Server) domains(w http.ResponseWriter, r *http.Request) {
+	var domain string
+	for _, domain = range s.Storage.GetDomains() {
+		w.Write([]byte(domain))
+		w.Write([]byte("\n"))
+	}
 }
 
 func (s *Server) associateIDs(w http.ResponseWriter, r *http.Request) {
