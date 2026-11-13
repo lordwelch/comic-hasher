@@ -163,6 +163,7 @@ type HashStorage interface {
 	DecodeHashes(hashes *SavedHashesV3) (Metrics, error)
 	EncodeHashes() (*SavedHashesV3, error)
 	AssociateIDs(OldID, NewID ID) error
+	DisassociateID(id ID)
 	GetIDs(id ID) []ID
 	GetHashes(id ID) []Hash
 	RLock()

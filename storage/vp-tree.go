@@ -194,6 +194,10 @@ func (v *VPTree) GetIDs(id ch.ID) []ch.ID {
 	return v.hashes.GetAllIDs(rid)
 }
 
+func (v *VPTree) DisassociateID(id ch.ID) {
+	// this is read-only
+}
+
 func NewVPStorage() (ch.HashStorage, error) {
 	var err error
 	v := &VPTree{

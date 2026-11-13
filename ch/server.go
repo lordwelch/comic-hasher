@@ -163,7 +163,8 @@ func (s *Server) setupAppHandlers() {
 	s.Mux.HandleFunc("/add_cover", s.addCover)
 	s.Mux.HandleFunc("/match_cover_hash", s.matchCoverHash)
 	s.Mux.HandleFunc("/associate_ids", s.associateIDs)
-	s.Mux.HandleFunc("/get_cover_hash", s.hashesByID)
+	s.Mux.HandleFunc("/disassociate_id", s.disassociateID)
+	s.Mux.HandleFunc("/get_cover_hash", s.getCoverHash)
 	s.Mux.HandleFunc("/hashes", s.HashServer.DownloadHashes)
 	s.Mux.Handle("/metrics", promhttp.HandlerFor(s.reg, promhttp.HandlerOpts{}))
 	promauto.With(s.reg)
@@ -465,7 +466,37 @@ func (s *Server) associateIDs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) hashesByID(w http.ResponseWriter, r *http.Request) {
+func (s *Server) disassociateID(w http.ResponseWriter, r *http.Request) {
+	user, authed := s.authenticated(w, r)
+	if !authed || user == "" {
+		http.Error(w, "Invalid Auth", http.StatusForbidden)
+		return
+	}
+	var (
+		values = r.URL.Query()
+		domain = Source(strings.ToLower(strings.TrimSpace(values.Get("domain"))))
+		id     = strings.ToLower(strings.TrimSpace(values.Get("id")))
+	)
+	if id == "" {
+		msg := "No ID Provided"
+		logger.Println(log.MoreVerbose, msg)
+		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
+		return
+	}
+	if domain == "" {
+		msg := "No domain Provided"
+		logger.Println(log.MoreVerbose, msg)
+		writeJSON(w, http.StatusBadRequest, result{Msg: msg})
+		return
+	}
+	logger.Log(log.Standard, "Disassociating %s:%s from any other groups", domain, id)
+	s.Storage.DisassociateID(
+		ID{Domain: &domain, ID: id},
+	)
+	writeJSON(w, http.StatusNoContent, nil)
+}
+
+func (s *Server) getCoverHash(w http.ResponseWriter, r *http.Request) {
 	user, authed := s.authenticated(w, r)
 	if !authed || user == "" {
 		http.Error(w, "Invalid Auth", http.StatusForbidden)

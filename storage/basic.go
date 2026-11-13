@@ -183,6 +183,12 @@ func (b *BasicStorage) GetIDs(id ch.ID) []ch.ID {
 	return b.hashes.GetAllIDs(rid)
 }
 
+func (b *BasicStorage) DisassociateID(id ch.ID) {
+	b.hashMutex.RLock()
+	defer b.hashMutex.RUnlock()
+	b.hashes.DisassociateID(id)
+}
+
 func NewBasicStorage() (ch.HashStorage, error) {
 	storage := &BasicStorage{
 		hashMutex: &sync.RWMutex{},

@@ -639,6 +639,18 @@ func (s *SavedHashesV3) InsertHash(hash Hash, id ID) bool {
 	return s.insertHashRecord(hash, rid)
 }
 
+func (s *SavedHashesV3) DisassociateID(id ID) {
+	index, found := s.FindID(id)
+	if !found || s.IDs[index].Group == NoIDGroup {
+		return
+	}
+	group := s.IDGroups[s.IDs[index].Group]
+	i := slices.Index(group, index)
+	group = slices.Delete(group, i, i+1)
+	s.IDGroups[s.IDs[index].Group] = group
+	s.IDs[index].Group = NoIDGroup
+}
+
 func (s *SavedHashesV3) AssociateIDs(OldID, NewID ID) error {
 	if *NewID.Domain == *OldID.Domain {
 		return fmt.Errorf("cannot associate two IDs in the same source")

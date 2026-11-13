@@ -445,6 +445,23 @@ func (s *sqliteStorage) AssociateIDs(OldID, NewID ch.ID) error {
 	return nil
 }
 
+func (s *sqliteStorage) DisassociateID(id ch.ID) {
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		panic(err)
+	}
+	_, err = tx.Exec(`DELETE FROM IDsToEquivalantIDs WHERE idid = (SELECT id FROM IDs WHERE domain = ? AND stringid = ?);`, id.Domain, id.ID)
+	if err != nil {
+		log.Println(log.Verbose, "unable to remove ID from group:", err)
+		return
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		panic(err)
+	}
+}
+
 func (s *sqliteStorage) GetHashes(id ch.ID) []ch.Hash {
 	rows, err := s.db.Query(`SELECT Hashes.kind, Hashes.hash FROM Hashes JOIN IDs ON Hashes.id=IDs.id WHERE IDs.domain=? AND IDs.stringid=?`, id.Domain, id.ID)
 	if err != nil {
