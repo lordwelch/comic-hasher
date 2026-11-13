@@ -671,6 +671,7 @@ func (s *Server) IssueImageURL(id ID) string {
 		return issue.URL
 	case Metron:
 		issue, err := s.MetronDownloader.GetIssue(id)
+		log.Println(log.Trace, "Metron issue url", id, issue, err)
 		if err != nil {
 			issue.URL = ""
 		}

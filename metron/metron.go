@@ -158,7 +158,7 @@ type Bolt struct {
 
 func (m Bolt) Issue(id int64) Issue {
 	var issue Issue
-	err := m.DB.View(func(tx *bolt.Tx) error {
+	err := m.View(func(tx *bolt.Tx) error {
 		return json.Unmarshal(tx.Bucket([]byte(BucketIssue)).Get(ch.IntToBolt(id)), &issue, JSONOpts...)
 	})
 	if err != nil {
@@ -174,7 +174,7 @@ func (m Bolt) PutIssue(tx *bolt.Tx, issue Issue) error {
 	// we will never really have access to the original bytes
 	// so we just need to validate that the json marshalling this doesn't break the format
 	if tx == nil {
-		return m.DB.Update(func(tx *bolt.Tx) error {
+		return m.Update(func(tx *bolt.Tx) error {
 			return m.PutIssue(tx, issue)
 		})
 	}
@@ -190,7 +190,7 @@ func (m Bolt) PutIssue(tx *bolt.Tx, issue Issue) error {
 
 func (m Bolt) Date(key Key) time.Time {
 	var startDate time.Time
-	err := m.DB.View(func(tx *bolt.Tx) error {
+	err := m.View(func(tx *bolt.Tx) error {
 		return startDate.UnmarshalBinary(tx.Bucket([]byte(BucketMeta)).Get([]byte(key)))
 	})
 	if err != nil {
@@ -200,7 +200,7 @@ func (m Bolt) Date(key Key) time.Time {
 }
 
 func (m Bolt) PutDate(key Key, startDate time.Time) error {
-	return m.DB.Update(func(tx *bolt.Tx) error {
+	return m.Update(func(tx *bolt.Tx) error {
 		if startDate.IsZero() {
 			tx.Bucket([]byte(BucketMeta)).Delete([]byte(key))
 		}
@@ -214,7 +214,7 @@ func (m Bolt) PutDate(key Key, startDate time.Time) error {
 
 func (m Bolt) Get(bucket, key string) []byte {
 	buf := make([]byte, 0, 16)
-	err := m.DB.View(func(tx *bolt.Tx) error {
+	err := m.View(func(tx *bolt.Tx) error {
 		buf = append(buf, tx.Bucket([]byte(bucket)).Get([]byte(key))...)
 		return nil
 	})
@@ -225,7 +225,7 @@ func (m Bolt) Get(bucket, key string) []byte {
 }
 
 func (m Bolt) Put(bucket, key string, value []byte) error {
-	return m.DB.Update(func(tx *bolt.Tx) error {
+	return m.Update(func(tx *bolt.Tx) error {
 		return tx.Bucket([]byte(bucket)).Put([]byte(key), value)
 	})
 }
@@ -288,6 +288,7 @@ func (d *Downloader) GetIssue(id ch.ID) (ch.Issue, error) {
 		return ch.Issue{}, fmt.Errorf("invalid ID: %w", err)
 	}
 	i := d.DB.Issue(idInt)
+	log.Println(log.Trace, "metron GetIssue", i)
 	if i.Image.String() == "" {
 		return ch.Issue{}, fmt.Errorf("unable to find issue: %v", id)
 	}
