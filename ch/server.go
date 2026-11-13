@@ -95,11 +95,13 @@ func NewServer(ctx context.Context, Version string, addr string, onlyHashNewIDs 
 		MappingQueue: make(chan ImageHash, 1),
 		Mux:          mux,
 		HTTPServer: &http.Server{
-			Addr:           addr,
-			Handler:        mux,
-			ReadTimeout:    10 * time.Second,
-			WriteTimeout:   10 * time.Second,
-			MaxHeaderBytes: 1 << 20,
+			Addr:              addr,
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second, // maximum upload is 5MB image
+			IdleTimeout:       5 * time.Minute,
+			WriteTimeout:      5 * time.Minute, // if you are downloading slower than 1 megabit per second we timeout
+			MaxHeaderBytes:    512 * 1024,
 		},
 		OnlyHashNewIDs: onlyHashNewIDs,
 		Version:        Version,
