@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data: https: blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="static-version" content="{{version}}">
+  <title>Comic Cover Hash Lookup</title>
+  <link rel="stylesheet" href="style.css?v={{version}}">
+</head>
+<body>
+  <h1>Comic Cover Hash Lookup</h1>
+  <div id="cont">
+    <div id="head">
+
+      <p id="status"></p>
+      <div class="options">
+        <label>Include A Hash <input type="checkbox" id="include-ahash"/></label>
+        <label>Max distance <input type="number" id="max-dist" min="0" max="8" value="8"/></label>
+        <label><input type="checkbox" id="exact-only" checked/> Exact only</label>
+        <input type="hidden" id="domains-input" name="domains" value=""/>
+        <button id="domains-button" class="form-control combobox-toggle" type="button"
+          data-bs-toggle="combobox"
+          data-bs-name="domains"
+          data-bs-placeholder="Select Domains..."
+          data-bs-multiple="true">
+          <span class="combobox-value combobox-placeholder">&nbsp;</span>
+          <svg class="combobox-caret" role="presentation" width="10" height="16" viewBox="0 0 10 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M0.46967 5.46967C0.762563 5.17678 1.23744 5.17678 1.53033 5.46967L5 8.93934L8.46967 5.46967C8.76256 5.17678 9.23744 5.17678 9.53033 5.46967C9.82322 5.76256 9.82322 6.23744 9.53033 6.53033L5.53033 10.5303C5.23744 10.8232 4.76256 10.8232 4.46967 10.5303L0.46967 6.53033C0.176777 6.23744 0.176777 5.76256 0.46967 5.46967Z" fill="currentcolor"/></svg>
+        </button>
+        <div id="domains" class="menu">
+          {{domains}}
+        </div>
+  <script src="select.js?v={{version}}"></script>
+        <button type="button" id="domain-filter-clear">Show all</button>
+      </div>
+    </div>
+    <div id="drop-zone">
+      <div>Drag files or folders here or click to choose</div>
+      <input type="file" id="file-input" multiple accept="image/*,.zip,.cbz,.rar,.cbr" disabled>
+    </div>
+  </div>
+  <p id="process-status"></p>
+  <button type="button" id="cancel-btn" hidden>Cancel</button>
+  <button type="button" id="clear-all-btn" hidden>Clear all results</button>
+  <div id="results"></div>
+  <script src="wasm_exec.js?v={{version}}"></script>
+  <script src="app.js?v={{version}}"></script>
+</body>
+</html>

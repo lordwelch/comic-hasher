@@ -34,6 +34,7 @@ import (
 	"github.com/zeebo/xxh3"
 
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
+	"gitea.narnian.us/lordwelch/comic-hasher/web"
 	"gitea.narnian.us/lordwelch/goimagehash"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -62,6 +63,7 @@ type Server struct {
 	BaseURL        *url.URL
 	Storage        HashStorage
 	HashServer     HashServer
+	static         web.Static
 	Context        context.Context
 	cancel         func()
 	ReaderQueue    chan string
@@ -103,6 +105,7 @@ func NewServer(ctx context.Context, Version string, addr string, onlyHashNewIDs 
 			WriteTimeout:      5 * time.Minute, // if you are downloading slower than 1 megabit per second we timeout
 			MaxHeaderBytes:    512 * 1024,
 		},
+		static:         web.NewHandler(),
 		OnlyHashNewIDs: onlyHashNewIDs,
 		Version:        Version,
 		reg:            prometheus.NewRegistry(),
@@ -148,6 +151,7 @@ func (s *Server) Shutdown() error {
 }
 
 func (s *Server) ListenAndServe() error {
+	s.static.UpdateDomains(s.Storage.GetDomains())
 	err := s.HTTPServer.ListenAndServe()
 	if err != nil {
 		s.cancel()
@@ -170,6 +174,7 @@ func (s *Server) setupAppHandlers() {
 	s.Mux.HandleFunc("/get_cover_hash", s.getCoverHash)
 	s.Mux.HandleFunc("/hashes", s.HashServer.DownloadHashes)
 	s.Mux.Handle("/metrics", promhttp.HandlerFor(s.reg, promhttp.HandlerOpts{}))
+	s.Mux.Handle("/", &s.static)
 	promauto.With(s.reg)
 	s.matchCoverTotal = promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
 		Name: "comic_hasher_match_cover_hash",
@@ -755,6 +760,7 @@ func (s *Server) Mapper(workerID int) {
 		s.consistentIDs.Set(IDsConsistent)
 
 		s.idCount.Add(float64(metrics.IDCount))
+		s.static.UpdateDomains(s.Storage.GetDomains())
 	}
 }
 

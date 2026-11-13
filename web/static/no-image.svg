@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120" viewBox="0 0 80 120">
+  <title>no image</title>
+  <style>rect{fill:#f7f7f7}text{fill:#222222;font-size:10px}@media(prefers-color-scheme:dark){rect{fill:#1a1a1a}text{fill:#eeeeee}}</style>
+  <rect width="100%" height="100%"/>
+  <text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle">no image</text>
+</svg>
