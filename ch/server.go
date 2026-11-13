@@ -111,7 +111,7 @@ func NewServer(ctx context.Context, Version string, addr string, onlyHashNewIDs 
 }
 
 type HashServer struct {
-	hashes            string
+	hashesPath        string
 	mut               sync.RWMutex
 	digests           map[string][]byte
 	digestHeaderCache string
@@ -228,7 +228,7 @@ func (h *HashServer) DownloadHashes(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Repr-Digest", h.reprDigestHeader())
 	w.Header().Set("Content-Type", "application/x-image-hash-db+gzip")
 	w.Header().Set("Content-Disposition", `"attachment; filename="hashes.gz"`)
-	http.ServeFile(w, r, h.hashes)
+	http.ServeFile(w, r, h.hashesPath)
 }
 
 func (h *HashServer) reprDigestHeader() string {
@@ -285,10 +285,10 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	if err != nil {
 		return err
 	}
-	tmpFilePath := h.hashes + ".tmp.gz"
+	tmpFilePath := h.hashesPath + ".tmp.gz"
 	f, err := os.Create(tmpFilePath)
 	if err != nil {
-		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashes+".tmp", err)
+		return fmt.Errorf("failed to write hashes to temporary file %q, %w", h.hashesPath+".tmp", err)
 	}
 
 	defer f.Close() //nolint:errcheck
@@ -297,7 +297,7 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	b := bufio.NewWriterSize(h.gzip, 32*1024)
 	err = EncodeHashesV3(encodedHashes, b)
 	if err != nil {
-		return fmt.Errorf("failed to encode hashes to temporary file %q, %w", h.hashes+".tmp", err)
+		return fmt.Errorf("failed to encode hashes to temporary file %q, %w", h.hashesPath+".tmp", err)
 	}
 	if err = b.Flush(); err != nil {
 		return fmt.Errorf("failed to write hashes: %w", err)
@@ -322,7 +322,7 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 		h.digests[name] = digest.Sum(nil)
 		digest.Reset() // may possibly keep some memory free...
 	}
-	err = os.Rename(tmpFilePath, h.hashes)
+	err = os.Rename(tmpFilePath, h.hashesPath)
 	if err != nil {
 		return fmt.Errorf("failed to update existing file: %w", err)
 	}
@@ -334,7 +334,7 @@ func NewHashServer(hashes string, useAllChecksums bool) HashServer {
 		panic("NewHashServer needs an absolute path for hashes")
 	}
 	h := HashServer{
-		hashes:          hashes,
+		hashesPath:      hashes,
 		digests:         map[string][]byte{},
 		useAllChecksums: useAllChecksums,
 		gzip:            gzip.NewWriter(io.Discard),
@@ -350,7 +350,7 @@ func NewHashServer(hashes string, useAllChecksums bool) HashServer {
 	writer := h.initDigests(io.Discard)
 	_, err = io.Copy(writer, f)
 	if err != nil {
-		panic(fmt.Errorf("checksum hashes file %q, %w", h.hashes, err))
+		panic(fmt.Errorf("checksum hashes file %q, %w", h.hashesPath, err))
 	}
 	for name, digest := range h.digesters {
 		h.digests[name] = digest.Sum(nil)
