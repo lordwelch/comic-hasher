@@ -211,7 +211,14 @@ func loadHashes(opts Opts) (*ch.SavedHashesV3, error) {
 	loadedHashes.Sort()
 
 	if opts.upstream.DownloadHashes {
-		downloadedHashes, err := DownloadUpstreamHashes(download.Client, opts.upstream.URL)
+		log.Println(log.Standard, "Downloading upstream hashes from", opts.upstream.URL.String())
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer cancel()
+		downloadedHashes, err := DownloadUpstreamHashes(ctx, download.Client, opts.upstream.URL)
+		interrupted := ctx.Err() != nil
+		if interrupted {
+			return nil, errors.New("interrupted while downloading upstream hashes")
+		}
 		if err != nil {
 			log.Println(log.Required, "failed to download upstream hashes")
 			return loadedHashes, nil
@@ -228,8 +235,8 @@ func loadHashes(opts Opts) (*ch.SavedHashesV3, error) {
 	return loadedHashes, nil
 }
 
-func DownloadUpstreamHashes(client *http.Client, url URLFlag) (*ch.SavedHashesV3, error) {
-	ctx, cancel := context.WithTimeout(context.TODO(), time.Second*45)
+func DownloadUpstreamHashes(parent context.Context, client *http.Client, url URLFlag) (*ch.SavedHashesV3, error) {
+	ctx, cancel := context.WithTimeout(parent, time.Second*45)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "GET", url.String(), nil)
 	resp, err := client.Do(req)

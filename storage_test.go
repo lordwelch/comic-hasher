@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"encoding/base64"
 	"fmt"
@@ -358,7 +359,7 @@ func TestDownloadUpstreamHashes(t *testing.T) {
 	client := server.Client()
 	var upstreamHashes *ch.SavedHashesV3
 
-	upstreamHashes, err = main.DownloadUpstreamHashes(client, main.URLFlag{
+	upstreamHashes, err = main.DownloadUpstreamHashes(context.Background(), client, main.URLFlag{
 		Scheme: "https",
 		Host:   "comic-hasher.narnian.us",
 		Path:   "/hashes",
