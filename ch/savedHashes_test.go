@@ -291,3 +291,47 @@ func TestGetHashesByID(t *testing.T) {
 		t.Fatalf("expected no hashes for unknown ID, got %d", len(got))
 	}
 }
+
+func TestMerge(t *testing.T) {
+	cvID := ID{Domain: NewSource("comicvine.gamespot.com"), ID: "1"}
+	metronID := ID{Domain: NewSource("metron.cloud"), ID: "2"}
+	gcdID := ID{Domain: NewSource("comics.org"), ID: "3"}
+	otherID := ID{Domain: NewSource("example.org"), ID: "4"}
+	hashes, err := NewSavedHashesV3(&SavedHashesV2{
+		IDs: [][]ID{{cvID, metronID}},
+		Hashes: []SavedHashV2{
+			{ID: cvID, Hash: Hash{Kind: goimagehash.AHash, Hash: 1}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sources do not overlap so this uses the fast merge path
+	toMerge, err := NewSavedHashesV3(&SavedHashesV2{
+		IDs: [][]ID{{gcdID, otherID}},
+		Hashes: []SavedHashV2{
+			{ID: gcdID, Hash: Hash{Kind: goimagehash.AHash, Hash: 2}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := hashes.Merge(toMerge); err != nil {
+		t.Fatal("failed to merge hashes:", err)
+	}
+
+	index, found := hashes.FindID(gcdID)
+	if !found {
+		t.Fatal("failed to find merged ID")
+	}
+	if diff := cmp.Diff([]ID{gcdID, otherID}, hashes.GetAllIDs(index), cmpOpts...); diff != "" {
+		t.Errorf("merged ID group is wrong (-want +got):\n%s", diff)
+	}
+	if _, found := hashes.findHash(goimagehash.AHash, 2, index); !found {
+		t.Fatal("hash was not remapped to the merged ID")
+	}
+	if diff := cmp.Diff(gcdID.Domain, hashes.IDAt(index).Domain, cmpOpts...); diff != "" {
+		t.Errorf("merged ID has wrong source (-want +got):\n%s", diff)
+	}
+}
