@@ -414,10 +414,16 @@ func (l Logger) Println(level Level, args ...any) {
 	l.Log(level, "", args...)
 }
 
-// EnableNonBlocking logging please wait for 11 Milliseconds when exiting to ensure all logs are processed
-func EnableNonBlocking(ctx context.Context, queueSize int) {
-	Diode = NewManyToOne(ctx, queueSize, nil)
-	go asyncLog()
+// EnableNonBlocking returns a cancel function.
+// This should be called once near the start of the program to ensure all logs are processed.
+//
+//	defer log.EnableNonBlocking(ctx, 15)()
+func EnableNonBlocking(ctx context.Context, queueSize int) func() {
+	ctx, cancel := context.WithCancel(ctx)
+	Diode = NewAsyncLogger(ctx, queueSize, nil)
+	d := Diode
+	go Diode.Go()
+	return func() { cancel(); Diode = nil; d.Drain() }
 }
 
 // NewLogger creates a logger. Any aliases are additional names for the same logger, so two loggers that have the same alias can get their level set through a single name.

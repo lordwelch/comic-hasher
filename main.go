@@ -410,7 +410,9 @@ func startServer(opts Opts) error {
 		defer pprof.StopCPUProfile()
 	}
 	server := ch.NewServer(context.Background(), opts.version, opts.addr, opts.onlyHashNewIDs)
-	log.EnableNonBlocking(server.Context, 30)
+	defer server.Shutdown()
+	// We enable NonBlocking logs and defer the drain for when this function exits
+	defer log.EnableNonBlocking(server.Context, 30)()
 	signalQueue := make(chan os.Signal, 1)
 	Notify(signalQueue)
 	var err error
@@ -438,7 +440,7 @@ func startServer(opts Opts) error {
 	}
 	server.DecodeHashes(loadedHashes)
 	log.Println(log.Standard, "Loaded hashes")
-	// This is loaded here so that the log doesn't hang for a few seconds before the first line
+	// This is loaded here so that the log doesn't hang for a few seconds getting the checksum for the existing file before the first line of output
 	server.HashServer = ch.NewHashServer(filepath.Join(opts.path, hashesFilename), opts.useAllChecksums)
 	loadedHashes = nil //nolint:ineffassign
 

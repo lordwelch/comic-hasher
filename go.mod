@@ -6,7 +6,6 @@ go 1.27.1
 //
 // Storage types
 require (
-	code.cloudfoundry.org/go-diodes v0.0.0-20260921100641-e75e32521ad8
 	gitea.narnian.us/lordwelch/goimagehash v0.0.0-20261112092808-e06ac052a7b8
 	github.com/OneOfOne/xxhash v1.2.8
 	github.com/disintegration/imaging v1.6.3-0.20201218193011-d40f48ce0f09
