@@ -442,7 +442,7 @@ func startServer(opts Opts) error {
 	log.Println(log.Standard, "Loaded hashes")
 	// This is loaded here so that the log doesn't hang for a few seconds getting the checksum for the existing file before the first line of output
 	server.HashServer = ch.NewHashServer(filepath.Join(opts.path, hashesFilename), opts.useAllChecksums)
-	loadedHashes = nil //nolint:ineffassign
+	loadedHashes = nil
 
 	_ = os.MkdirAll(opts.path, 0o755)
 	chdb, err := ch.OpenCHDBBolt(opts.path, opts.deleteHashedImages)
