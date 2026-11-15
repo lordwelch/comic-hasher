@@ -147,10 +147,8 @@ func (m *MapStorage) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) 
 
 func NewMapStorage() (ch.HashStorage, error) {
 	storage := &MapStorage{
-		BasicStorage: BasicStorage{
-			hashMutex: &sync.RWMutex{},
-			hashes:    &ch.SavedHashesV3{},
-		},
+		hashMutex:    &sync.RWMutex{},
+		hashes:       &ch.SavedHashesV3{},
 		partialAHash: newPartialHash(),
 		partialDHash: newPartialHash(),
 		partialPHash: newPartialHash(),
