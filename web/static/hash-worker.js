@@ -22,10 +22,7 @@ async function loadWasm() {
 	const wasmURL = `main.wasm?v=${staticVersion}`;
 	let result;
 	if (typeof WebAssembly.instantiateStreaming === "function") {
-		result = await WebAssembly.instantiateStreaming(
-			fetch(wasmURL),
-			go.importObject,
-		);
+		result = await WebAssembly.instantiateStreaming(fetch(wasmURL), go.importObject);
 	} else {
 		const response = await fetch(wasmURL);
 		const bytes = await response.arrayBuffer();
@@ -47,10 +44,10 @@ onmessage = (e) => {
 	queue = queue.then(() => hashRequest(e.data));
 };
 
-async function hashRequest({ id, name, file }) {
+async function hashRequest({ id, file }) {
 	try {
 		const buffer = await file.arrayBuffer();
-		const result = hashCover(name, new Uint8Array(buffer));
+		const result = hashCover(file.name, new Uint8Array(buffer));
 		postMessage({ id, ok: true, result });
 	} catch (err) {
 		postMessage({ id, ok: false, error: err.message });

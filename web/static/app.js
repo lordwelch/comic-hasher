@@ -8,23 +8,15 @@ const maxDistInput = document.getElementById("max-dist");
 const exactOnlyInput = document.getElementById("exact-only");
 const includeAHash = document.getElementById("include-ahash");
 const resultsEl = document.getElementById("results");
-const domainFilter = document.getElementById("domains");
-const domainFilterToggle = document.getElementById("domains-button");
+const domainFilterItems = document.getElementById("domains");
+const domainFilter = document.getElementById("domains-button");
 const domainFilterClear = document.getElementById("domain-filter-clear");
-const staticVersion = document.querySelector(
-	'meta[name="static-version"]',
-).content;
-const noImageURL = `no-image.svg?v=${staticVersion}`;
-const checkURL = `check.svg?v=${staticVersion}`;
+const version = document.querySelector('meta[name="static-version"]').content;
+const noImageURL = `no-image.svg?v=${version}`;
+const checkURL = `check.svg?v=${version}`;
 
 let domains = [];
 const selectedDomains = new Set();
-
-function logTiming(label, ms, detail) {
-	console.log(
-		`[timing] ${label}: ${ms.toFixed(1)} ms${detail ? ` (${detail})` : ""}`,
-	);
-}
 
 // Each run starts its own hash workers and terminates them when the run ends.
 const hashWorkerCount = 4;
@@ -33,7 +25,7 @@ let nextHashId = 1;
 let activeRun = null;
 
 function startHashWorker() {
-	const worker = new Worker(`hash-worker.js?v=${staticVersion}`);
+	const worker = new Worker(`hash-worker.js?v=${version}`);
 	const ready = new Promise((resolveReady, rejectReady) => {
 		worker.onmessage = (e) => {
 			const { id, ok, result, error } = e.data;
@@ -47,8 +39,7 @@ function startHashWorker() {
 			if (ok) request.resolve(result);
 			else request.reject(new Error(error));
 		};
-		worker.onerror = (e) =>
-			rejectReady(new Error(e.message || "hasher worker failed to load"));
+		worker.onerror = (e) => rejectReady(new Error(e.message || "hasher worker failed to load"));
 	});
 	return { worker, ready };
 }
@@ -69,10 +60,8 @@ function popcount(x) {
 	}
 	return count;
 }
-
 // Search hashes are hex; stored hashes are decimal uint64s (quoted when huge).
 function parseHash(value, radix) {
-	if (value == null || value === "") return null;
 	try {
 		const n = radix === 16 ? BigInt(`0x${value}`) : BigInt(value);
 		return { n, bits: n.toString(2).padStart(64, "0") };
@@ -85,17 +74,12 @@ function parseHash(value, radix) {
 function renderBitCompare(search, stored) {
 	const bytes = document.createElement("div");
 	bytes.className = "bit-bytes";
-	const searchBits = search?.bits;
-	const storedBits = stored?.bits;
-	if (!searchBits && !storedBits) {
-		bytes.textContent = "\u2014";
+	if (!search.bits || !stored.bits) {
+		bytes.textContent = "—";
 		return bytes;
 	}
-	const length = Math.max(searchBits?.length ?? 0, storedBits?.length ?? 0);
-	bytes.setAttribute(
-		"aria-label",
-		`search ${searchBits ?? "missing"}, stored ${storedBits ?? "missing"}`,
-	);
+	const length = Math.max(search.bits.length, stored.bits.length);
+	bytes.setAttribute("aria-label", `search ${search.bits}, stored ${stored.bits}`);
 	for (let start = 0; start < length; start += 8) {
 		const byte = document.createElement("span");
 		byte.className = "bit-byte";
@@ -103,14 +87,10 @@ function renderBitCompare(search, stored) {
 		for (let i = start; i < Math.min(start + 8, length); i++) {
 			const pair = document.createElement("span");
 			pair.className = "bit-pair";
-			const top = document.createElement("span");
-			const bottom = document.createElement("span");
-			const s = searchBits?.[i] ?? "\u2014";
-			const t = storedBits?.[i] ?? "\u2014";
-			top.textContent = s;
-			bottom.textContent = t;
-			if (searchBits && storedBits && s !== t) pair.classList.add("bit-diff");
-			pair.append(top, bottom);
+			if (search.bits && stored.bits && search.bits[i] !== stored.bits[i]) {
+				pair.classList.add("bit-diff");
+			}
+			pair.append(search.bits[i], document.createElement("br"), stored.bits[i]);
 			byte.appendChild(pair);
 		}
 		bytes.appendChild(byte);
@@ -121,16 +101,10 @@ function renderBitCompare(search, stored) {
 async function compareStored(id, searchHash, panel) {
 	panel.classList.remove("error");
 	try {
-		const params = new URLSearchParams({
-			domain: id.Domain ?? "",
-			id: id.ID ?? "",
-		});
+		const params = new URLSearchParams({ domain: id.Domain, id: id.ID });
 		const response = await fetch(`get_cover_hash?${params.toString()}`);
 		const jsonText = await response.text();
-		const fixedText = jsonText.replace(
-			/([^\w"])([0-9]{16,})([^\w"])/g,
-			'$1"$2"$3',
-		);
+		const fixedText = jsonText.replace(/([^\w"])([0-9]{16,})([^\w"])/g, '$1"$2"$3');
 		const data = JSON.parse(fixedText);
 		if (!response.ok) throw new Error(data.msg || response.statusText);
 		const results = data.results || [];
@@ -141,8 +115,8 @@ async function compareStored(id, searchHash, panel) {
 		const list = document.createElement("div");
 		list.className = "hash-compares";
 		for (const r of results) {
-			const kind = r.Kind ?? "";
-			const stored = parseHash(r.Hash ?? 0, 10);
+			const kind = r.Kind;
+			const stored = parseHash(r.Hash, 10);
 			const search = parseHash(searchHash[kind], 16);
 			const block = document.createElement("div");
 			block.className = "hash-compare";
@@ -151,16 +125,17 @@ async function compareStored(id, searchHash, panel) {
 			head.className = "hash-compare-head";
 			const kindEl = document.createElement("span");
 			kindEl.className = "hash-kind";
-			kindEl.textContent = kind || "\u2014";
+			kindEl.textContent = kind || "—";
 			const hint = document.createElement("span");
 			hint.className = "bit-hint";
 			hint.textContent = "search over stored";
 			const distEl = document.createElement("span");
 			distEl.className = "hash-distance";
-			distEl.textContent =
-				search && stored
-					? `distance ${popcount(search.n ^ stored.n)}`
-					: "distance \u2014";
+			if (search && stored) {
+				distEl.textContent = `distance ${popcount(search.n ^ stored.n)}`;
+			} else {
+				distEl.textContent = "distance —";
+			}
 			head.append(kindEl, hint, distEl);
 			block.append(head, renderBitCompare(search, stored));
 			list.appendChild(block);
@@ -177,7 +152,7 @@ async function hashOn(run, worker, file) {
 	const id = nextHashId++;
 	return new Promise((resolve, reject) => {
 		hashRequests.set(id, { resolve, reject, worker });
-		worker.postMessage({ id, name: file.name, file });
+		worker.postMessage({ id, file });
 	});
 }
 
@@ -215,23 +190,17 @@ function init() {
 	cancelBtn.addEventListener("click", cancelAll);
 	clearAllBtn.addEventListener("click", clearResults);
 	document.addEventListener("keydown", (e) => {
-		if (e.key === "Escape" && !cancelBtn.hidden) cancelAll();
+		if (e.key === "Escape") cancelAll();
 	});
 
 	document.addEventListener("dragover", (e) => {
-		if (
-			e.dataTransfer &&
-			Array.from(e.dataTransfer.types || []).includes("Files")
-		) {
+		if (e.dataTransfer?.types?.includes("Files")) {
 			e.preventDefault();
 			document.body.classList.add("dragging");
 		}
 	});
 	document.addEventListener("dragleave", (e) => {
-		if (
-			e.dataTransfer?.types &&
-			Array.from(e.dataTransfer.types).includes("Files")
-		) {
+		if (e.dataTransfer?.types?.includes("Files")) {
 			// only remove when leaving window
 			if (e.clientX === 0 && e.clientY === 0) {
 				document.body.classList.remove("dragging");
@@ -251,12 +220,9 @@ function dropItems(dataTransfer) {
 	const items = [];
 	for (const item of Array.from(dataTransfer.items || [])) {
 		if (item.kind !== "file") continue;
-		const entry = item.webkitGetAsEntry?.();
+		const entry = item.webkitGetAsEntry() || item.getAsFile();
 		if (entry) {
 			items.push(entry);
-		} else {
-			const file = item.getAsFile();
-			if (file) items.push(file);
 		}
 	}
 	if (items.length === 0) items.push(...Array.from(dataTransfer.files || []));
@@ -278,18 +244,14 @@ async function walkEntry(entry, signal, found, nested) {
 		) {
 			return;
 		}
-		const file = await new Promise((resolve, reject) =>
-			entry.file(resolve, reject),
-		);
-		found.push({ path: entry.fullPath, file });
+		const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+		found.push(file);
 		return;
 	}
 	if (entry.isDirectory) {
 		const reader = entry.createReader();
 		for (;;) {
-			const batch = await new Promise((resolve, reject) =>
-				reader.readEntries(resolve, reject),
-			);
+			const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
 			if (batch.length === 0) break;
 			for (const child of batch) {
 				await walkEntry(child, signal, found, true);
@@ -302,15 +264,15 @@ async function collectFiles(items, signal) {
 	const found = [];
 	for (const item of items) {
 		if (item instanceof File) {
-			found.push({ path: item.name, file: item });
+			found.push(item);
 		} else {
 			await walkEntry(item, signal, found, false);
 		}
 	}
 	found.sort((a, b) =>
-		a.path.localeCompare(b.path, undefined, { numeric: true }),
+		a.webkitRelativePath.localeCompare(b.webkitRelativePath, undefined, { numeric: true }),
 	);
-	return found.map((f) => f.file);
+	return found;
 }
 
 // Drops during a run join it; otherwise a drop starts a new run. cancelAll aborts the active run.
@@ -419,7 +381,7 @@ function makeDomainIcon(domain) {
 			img.replaceWith(fallback);
 		}
 	});
-	img.src = `${encodeURIComponent(domain)}.ico?v=${staticVersion}`;
+	img.src = `${encodeURIComponent(domain)}.ico?v=${version}`;
 	return img;
 }
 
@@ -468,7 +430,7 @@ function idLink(domain, id) {
 }
 
 function idKey(id) {
-	return `${id?.Domain ?? ""}\u0000${id?.ID ?? ""}`;
+	return `${id?.Domain}:${id?.ID}`;
 }
 
 function cardMatchesFilter(card) {
@@ -488,12 +450,8 @@ function cardMatchesFilter(card) {
 }
 
 function renderDomainFilter() {
-	domainFilter.replaceChildren();
+	domainFilterItems.replaceChildren();
 	for (const domain of domains) {
-		// <button class="menu-item" type="button" data-bs-value="html">
-		// HTML
-		// <svg class="menu-item-check" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 16 16"><path d="m2 7 4 5 8-8"/></svg>
-		// </button>
 		const option = document.createElement("button");
 		option.classList = "menu-item";
 		option.type = "button";
@@ -504,11 +462,10 @@ function renderDomainFilter() {
 		check.src = checkURL;
 		check.classList = "menu-item-check";
 		option.appendChild(check);
-		domainFilter.appendChild(option);
+		domainFilterItems.appendChild(option);
 	}
-	const combobox = window.Combobox?.getOrCreateInstance(domainFilterToggle);
+	const combobox = window.Combobox?.getOrCreateInstance(domainFilter);
 	combobox.setValue(selectedDomains.values().toArray());
-	console.log("render", combobox.value(), selectedDomains);
 }
 
 function reFilterResults() {
@@ -517,15 +474,12 @@ function reFilterResults() {
 	}
 }
 
-// Keeps selectedDomains in sync with the combobox menu, which tracks selection
-// with the "selected" class on its items.
-function syncSelectedDomains() {
+function updateDomains() {
 	selectedDomains.clear();
-	const combobox = window.Combobox?.getOrCreateInstance(domainFilterToggle);
+	const combobox = window.Combobox?.getOrCreateInstance(domainFilter);
 	for (const item of combobox.value()) {
 		selectedDomains.add(item);
 	}
-	console.log("syncSelectedDomains", combobox.value(), selectedDomains);
 }
 
 exactOnlyInput.addEventListener("change", () => {
@@ -537,21 +491,21 @@ exactOnlyInput.addEventListener("change", () => {
 
 includeAHash.addEventListener("change", () => {
 	for (const search of openSearches) {
-		if (!search.hashesSent.includes("ahash")) {
+		if (!search.hashesSent.has("ahash")) {
 			search.refresh();
 		}
 	}
 	reFilterResults();
 });
 
-domainFilterToggle.addEventListener("change", () => {
-	syncSelectedDomains();
+domainFilter.addEventListener("change", () => {
+	updateDomains();
 	reFilterResults();
 });
 
 domainFilterClear.addEventListener("click", () => {
 	selectedDomains.clear();
-	const combobox = window.Combobox?.getOrCreateInstance(domainFilterToggle);
+	const combobox = window.Combobox?.getOrCreateInstance(domainFilter);
 	combobox.setValue([]);
 	reFilterResults();
 });
@@ -628,9 +582,7 @@ function makeChip(eid, refreshMatches) {
 	const chip = document.createElement("span");
 	chip.className = "chip";
 	chip.appendChild(idLink(eid.Domain ?? "", eid.ID ?? ""));
-	const removeBtn = makeRemoveButton(
-		`Remove ${eid.Domain ?? ""}:${eid.ID ?? ""} from group`,
-	);
+	const removeBtn = makeRemoveButton(`Remove ${eid.Domain ?? ""}:${eid.ID ?? ""} from group`);
 	removeBtn.addEventListener("click", async () => {
 		removeBtn.disabled = true;
 		try {
@@ -667,9 +619,7 @@ let cardDrag = null;
 // Sources of every ID in a card's group, including the card's own ID.
 function groupDomains(match) {
 	return new Set(
-		[match.ID, ...(match.EquivalentIDs ?? [])]
-			.map((eid) => eid?.Domain)
-			.filter(Boolean),
+		[match.ID, ...(match.EquivalentIDs ?? [])].map((eid) => eid?.Domain).filter(Boolean),
 	);
 }
 
@@ -694,19 +644,15 @@ function makeCardDraggable(el, match, statusEl, refreshMatches) {
 		e.dataTransfer.effectAllowed = "link";
 		const dragImage = el.querySelector("img.cover-thumb");
 		if (dragImage) e.dataTransfer.setDragImage(dragImage, 24, 24);
-		e.dataTransfer.setData(
-			"text/plain",
-			`${match.ID?.Domain ?? ""}:${match.ID?.ID ?? ""}`,
-		);
+		e.dataTransfer.setData("text/plain", `${match.ID.Domain}:${match.ID.ID}`);
 		el.classList.add("dragging");
 	});
 
 	el.addEventListener("dragend", () => {
 		cardDrag = null;
 		el.classList.remove("dragging");
-		for (const card of document.querySelectorAll(
-			".match-card.drop-target, .match-card.drop-blocked",
-		)) {
+		const cards = document.querySelectorAll(".match-card.drop-target, .match-card.drop-blocked");
+		for (const card of cards) {
 			card.classList.remove("drop-target", "drop-blocked");
 		}
 	});
@@ -742,21 +688,12 @@ function makeCardDraggable(el, match, statusEl, refreshMatches) {
 		el.classList.remove("drop-target", "drop-blocked");
 		if (idKey(dragged.id) === idKey(match.ID)) return;
 		if (groupsConflict(dragged.domains, groupDomains(match))) {
-			setCardStatus(
-				statusEl,
-				"Cannot group two IDs from the same source",
-				true,
-			);
+			setCardStatus(statusEl, "Cannot group two IDs from the same source", true);
 			return;
 		}
-		el.classList.add("grouping");
 		setCardStatus(statusEl, "Grouping…");
 		try {
-			const msg = await associateIDs(
-				match.ID,
-				dragged.id.Domain,
-				dragged.id.ID,
-			);
+			const msg = await associateIDs(match.ID, dragged.id.Domain, dragged.id.ID);
 			if (msg === "New ID added") {
 				setCardStatus(statusEl, "Grouped");
 				// Re-query the affected searches so the server's grouping is
@@ -769,7 +706,6 @@ function makeCardDraggable(el, match, statusEl, refreshMatches) {
 		} catch (err) {
 			setCardStatus(statusEl, err.message, true);
 		} finally {
-			el.classList.remove("grouping");
 			dragged.el.classList.remove("dragging");
 		}
 	});
@@ -778,9 +714,7 @@ function makeCardDraggable(el, match, statusEl, refreshMatches) {
 // Disassociates the card's own ID from its group, then refreshes the search so
 // former group members are no longer shown as equivalents of this ID.
 function makeUngroupButton(id, refreshMatches) {
-	const btn = makeRemoveButton(
-		`Remove ${id.Domain ?? ""}:${id.ID ?? ""} from group`,
-	);
+	const btn = makeRemoveButton(`Remove ${id.Domain ?? ""}:${id.ID ?? ""} from group`);
 	btn.addEventListener("click", async () => {
 		btn.disabled = true;
 		try {
@@ -906,9 +840,7 @@ function makeGroupForm(match, chipsEl, refreshMatches, cardState) {
 			setActive(activeIndex + 1);
 		} else if (e.key === "ArrowUp") {
 			e.preventDefault();
-			setActive(
-				activeIndex < 0 ? suggestions.children.length - 1 : activeIndex - 1,
-			);
+			setActive(activeIndex < 0 ? suggestions.children.length - 1 : activeIndex - 1);
 		} else if (e.key === "Enter" && active) {
 			e.preventDefault();
 			pickSuggestion(active.textContent);
@@ -955,20 +887,17 @@ function makeGroupForm(match, chipsEl, refreshMatches, cardState) {
 }
 
 function renderMatch(match, cardState, searchHash, refreshMatches) {
-	const url = sourceURL(match.ID.Domain, match.ID?.ID ?? "");
+	const url = sourceURL(match.ID.Domain, match.ID.ID);
 
 	const el = document.createElement("article");
 	el.className = "match-card";
 
 	const idWrap = document.createElement("div");
 	idWrap.className = "match-id";
-	idWrap.appendChild(idLink(match.ID.Domain, match.ID?.ID ?? ""));
+	idWrap.appendChild(idLink(match.ID.Domain, match.ID.ID));
 	el.appendChild(idWrap);
 
-	const thumb = makeCover(
-		match.image_url,
-		`${match.ID?.ID ?? ""} ${match.ID?.Domain ?? ""}`,
-	);
+	const thumb = makeCover(match.image_url, `${match.ID.ID} ${match.ID.Domain}`);
 	if (url) {
 		const imgA = document.createElement("a");
 		imgA.href = url;
@@ -980,8 +909,7 @@ function renderMatch(match, cardState, searchHash, refreshMatches) {
 
 	const chips = document.createElement("div");
 	chips.className = "chips";
-	for (const eid of match.EquivalentIDs ?? [])
-		addChip(chips, eid, refreshMatches);
+	for (const eid of match.EquivalentIDs) addChip(chips, eid, refreshMatches);
 	idWrap.appendChild(makeUngroupButton(match.ID, refreshMatches));
 
 	const compareBtn = document.createElement("button");
@@ -989,17 +917,12 @@ function renderMatch(match, cardState, searchHash, refreshMatches) {
 	compareBtn.textContent = "Compare stored";
 	const comparePanel = document.createElement("div");
 	comparePanel.className = "compare-panel";
-	compareBtn.addEventListener("click", () =>
-		compareStored(match.ID, searchHash, comparePanel),
-	);
+	compareBtn.addEventListener("click", () => compareStored(match.ID, searchHash, comparePanel));
 	el.append(compareBtn, comparePanel);
 
-	const matches =
-		Array.isArray(match.Matches) && match.Matches.length
-			? match.Matches
-			: [match];
+	const matches = Array.isArray(match.Matches) && match.Matches.length ? match.Matches : [match];
 	const byKind = new Map();
-	for (const m of matches) byKind.set(m.Hash?.Kind, m);
+	for (const m of matches) byKind.set(m.Hash.Kind, m);
 	const fixedKinds = ["ahash", "dhash", "phash"];
 	const details = document.createElement("div");
 	details.className = "match-details";
@@ -1010,7 +933,7 @@ function renderMatch(match, cardState, searchHash, refreshMatches) {
 		row.className = "match-row";
 		const dist = document.createElement("span");
 		dist.className = "match-distance";
-		dist.textContent = m ? `Distance: ${m.Distance ?? ""}` : "Distance: \u2014";
+		dist.textContent = m ? `Distance: ${m.Distance}` : "Distance: —";
 		const kindEl = document.createElement("span");
 		kindEl.className = "match-kind";
 		kindEl.textContent = kind;
@@ -1024,7 +947,7 @@ function renderMatch(match, cardState, searchHash, refreshMatches) {
 		row.className = "match-row";
 		const dist = document.createElement("span");
 		dist.className = "match-distance";
-		dist.textContent = `Distance: ${m.Distance ?? ""}`;
+		dist.textContent = `Distance: ${m.Distance}`;
 		const kindEl = document.createElement("span");
 		kindEl.className = "match-kind";
 		kindEl.textContent = kind;
@@ -1058,12 +981,7 @@ function renderCluster(cards, cardState, searchHash, refreshMatches) {
 
 	const label = document.createElement("div");
 	label.className = "match-cluster-label";
-	const icon = document.createElement("span");
-	icon.className = "cluster-icon";
-	icon.setAttribute("aria-hidden", "true");
-	icon.innerHTML =
-		'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.2 9.8a2.5 2.5 0 0 0 3.6 0l2-2a2.5 2.5 0 0 0-3.6-3.6l-1 1"/><path d="M9.8 6.2a2.5 2.5 0 0 0-3.6 0l-2 2a2.5 2.5 0 0 0 3.6 3.6l1-1"/></svg>';
-	label.append(icon, `Linked group · ${cards.length} IDs`);
+	label.append(`🔗 Linked group · ${cards.length} IDs`);
 	cluster.appendChild(label);
 
 	const inner = document.createElement("div");
@@ -1079,23 +997,22 @@ function renderCluster(cards, cardState, searchHash, refreshMatches) {
 // render together. cards must already be sorted; each cluster keeps that order
 // and the clusters stay ordered by their best (first) card.
 function clusterCards(cards) {
-	const order = [];
 	const byKey = new Map();
 	for (const card of cards) {
-		const groupIDs = new Set((card.EquivalentIDs ?? []).map(idKey));
+		const groupIDs = new Set(card.EquivalentIDs.map(idKey));
 		groupIDs.add(idKey(card.ID));
-		const key = [...groupIDs].sort().join("\u0001");
+		const key = [...groupIDs].sort().join("\n");
 		let cluster = byKey.get(key);
 		if (!cluster) {
 			cluster = [];
 			byKey.set(key, cluster);
-			order.push(cluster);
 		}
 		cluster.push(card);
 	}
-	return order;
+	return Array.from(byKey.values());
 }
 
+// todo: validate this handles adding to an in-process run
 async function runBatch(items) {
 	const run = {
 		signal: runController.signal,
@@ -1113,16 +1030,12 @@ async function runBatch(items) {
 	};
 	activeRun = run;
 	cancelBtn.hidden = false;
-	run.workers = Array.from({ length: hashWorkerCount }, () =>
-		startHashWorker(),
-	);
+	run.workers = Array.from({ length: hashWorkerCount }, () => startHashWorker());
 	run.ready = Promise.all(run.workers.map((w) => w.ready));
 	run.ready.catch((err) => {
-		if (!run.signal.aborted)
-			processStatusEl.textContent = `Failed to load hasher: ${err.message}`;
+		if (!run.signal.aborted) processStatusEl.textContent = `Failed to load hasher: ${err.message}`;
 	});
 
-	// no reset of resultsEl
 	processStatusEl.setAttribute("aria-live", "polite");
 	processStatusEl.textContent = "Scanning...";
 	const batchStart = performance.now();
@@ -1136,23 +1049,14 @@ async function runBatch(items) {
 			await run.batchInFlight;
 		}
 		const batchMs = performance.now() - batchStart;
-		logTiming(
-			"full batch timing",
-			batchMs,
-			`${run.done} of ${run.files.length} files`,
-		);
 		const lastRun = `Last run: ${(batchMs / 1000).toFixed(1)} s, ${run.done} of ${run.files.length} files, avg hash ${run.hashCount ? (run.hashMsTotal / run.hashCount).toFixed(0) : "–"} ms`;
-		processStatusEl.textContent = run.signal.aborted
-			? `Cancelled. ${lastRun}`
-			: lastRun;
+		processStatusEl.textContent = run.signal.aborted ? `Cancelled. ${lastRun}` : lastRun;
 		if (!resultsEl.querySelector(".file-card")) {
 			showEmptyState();
 		}
 	} catch (err) {
 		processStatusEl.textContent =
-			err.name === "AbortError"
-				? "Cancelled"
-				: `Failed to read: ${err.message}`;
+			err.name === "AbortError" ? "Cancelled" : `Failed to read: ${err.message}`;
 	} finally {
 		finishRun(run);
 	}
@@ -1187,12 +1091,10 @@ function scheduleBatch(run) {
 	if (run.finished || run.batchInFlight) return;
 	const batch = run.queued.splice(0, hashBatchSize);
 	if (batch.length === 0) return;
-	run.batchInFlight = Promise.all(batch.map((file) => runFile(run, file))).then(
-		() => {
-			run.batchInFlight = null;
-			scheduleBatch(run);
-		},
-	);
+	run.batchInFlight = Promise.all(batch.map((file) => runFile(run, file))).then(() => {
+		run.batchInFlight = null;
+		scheduleBatch(run);
+	});
 }
 
 function runFile(run, file) {
@@ -1227,13 +1129,6 @@ function finishRun(run) {
 	cancelBtn.hidden = true;
 }
 
-function dataUrlToBlob(dataUrl) {
-	const binary = atob(dataUrl.slice(dataUrl.indexOf(",") + 1));
-	const bytes = new Uint8Array(binary.length);
-	for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-	return new Blob([bytes]);
-}
-
 // Downscales to a small preview so the full-size image can be released.
 async function thumbnailUrl(source) {
 	try {
@@ -1242,13 +1137,9 @@ async function thumbnailUrl(source) {
 		const canvas = document.createElement("canvas");
 		canvas.width = Math.round(bitmap.width * scale);
 		canvas.height = Math.round(bitmap.height * scale);
-		canvas
-			.getContext("2d")
-			.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+		canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
 		bitmap.close();
-		const blob = await new Promise((resolve) =>
-			canvas.toBlob(resolve, "image/webp"),
-		);
+		const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp"));
 		return blob ? URL.createObjectURL(blob) : null;
 	} catch {
 		return null;
@@ -1257,50 +1148,37 @@ async function thumbnailUrl(source) {
 
 async function showPreview(state, searchImage, source) {
 	const url = await thumbnailUrl(source);
-	if (state.dismissed) {
-		if (url) URL.revokeObjectURL(url);
-		return;
-	}
 	releasePreview(state);
 	state.previewUrl = url;
 	setCoverSource(searchImage, url || noImageURL);
-}
-
-function releasePreview(state) {
-	if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
-	state.previewUrl = null;
+	setTimeout(releasePreview, 1000, state);
 }
 
 // Combines raw match rows that refer to the same ID into one card's worth of
 // data, sorted by the closest match.
 function combineResults(results) {
 	// group by hash kind, sort each group by distance, keep first 10
-	const groups = new Map();
+	const groups = new Map([
+		["phash", []],
+		["dhash", []],
+		["ahash", []],
+	]);
 	for (const r of results) {
-		const kind = r.Hash?.Kind ?? "";
-		if (!groups.has(kind)) groups.set(kind, []);
-		groups.get(kind).push(r);
+		if (!groups.has(r.Hash.Kind)) groups.set(r.Hash.Kind, []);
+		groups.get(r.Hash.Kind).push(r);
 	}
 	const limited = [];
 	for (const [_, arr] of groups) {
-		arr.sort(
-			(a, b) =>
-				(a.Distance ?? 0) - (b.Distance ?? 0) ||
-				String(a.ID?.Domain ?? "").localeCompare(String(b.ID?.Domain ?? "")),
-		);
+		arr.sort((a, b) => a.Distance - b.Distance || a.ID.Domain.localeCompare(b.ID.Domain));
 		limited.push(...arr.slice(0, 10));
 	}
 	// sort all by distance then source
-	limited.sort(
-		(a, b) =>
-			(a.Distance ?? 0) - (b.Distance ?? 0) ||
-			String(a.ID?.Domain ?? "").localeCompare(String(b.ID?.Domain ?? "")),
-	);
+	limited.sort((a, b) => a.Distance - b.Distance || a.ID.Domain.localeCompare(b.ID.Domain));
 
 	// Combine results that refer to the same ID into a single card.
 	const combinedMap = new Map();
 	for (const r of limited) {
-		const key = `${r.ID?.Domain ?? ""}\u0000${r.ID?.ID ?? ""}`;
+		const key = `${r.ID.Domain}:${r.ID.ID}`;
 		if (!combinedMap.has(key)) {
 			combinedMap.set(key, {
 				ID: r.ID,
@@ -1313,8 +1191,8 @@ function combineResults(results) {
 		const combined = combinedMap.get(key);
 		combined.Matches.push(r);
 		if (!combined.image_url) combined.image_url = r.image_url || "";
-		for (const eid of r.EquivalentIDs || []) {
-			const eidKey = `${eid?.Domain ?? ""}\u0000${eid?.ID ?? ""}`;
+		for (const eid of r.EquivalentIDs) {
+			const eidKey = `${eid.Domain}:${eid.ID}`;
 			if (!combined.equivalentKeys.has(eidKey)) {
 				combined.equivalentKeys.add(eidKey);
 				combined.EquivalentIDs.push(eid);
@@ -1323,18 +1201,14 @@ function combineResults(results) {
 	}
 	const combined = Array.from(combinedMap.values());
 	for (const c of combined) {
-		c.Matches.sort(
-			(a, b) =>
-				(a.Distance ?? 0) - (b.Distance ?? 0) ||
-				String(a.Hash?.Kind ?? "").localeCompare(String(b.Hash?.Kind ?? "")),
-		);
-		c.minDistance = Math.min(...c.Matches.map((m) => m.Distance ?? 0));
+		c.Matches.sort((a, b) => a.Distance - b.Distance || a.Hash.Kind.localeCompare(b.Hash.Kind));
+		c.minDistance = Math.min(...c.Matches.map((m) => m.Distance));
 	}
 	combined.sort((a, b) => {
 		return (
 			a.minDistance - b.minDistance ||
-			String(a.ID?.Domain ?? "").localeCompare(String(b.ID?.Domain ?? "")) ||
-			String(a.ID?.ID ?? "").localeCompare(String(b.ID?.ID ?? ""))
+			a.ID.Domain.localeCompare(b.ID.Domain) ||
+			a.ID.ID.localeCompare(b.ID.ID)
 		);
 	});
 	return combined;
@@ -1372,7 +1246,7 @@ async function processFile(file, pendingHash, signal) {
 	card.appendChild(status);
 	resultsEl.appendChild(card);
 
-	const state = { card, dismissed: false, previewUrl: null, hashesSent: [] };
+	const state = { card, dismissed: false, previewUrl: null, hashesSent: new Set() };
 	state.previewUrl = URL.createObjectURL(file);
 	resultStates.add(state);
 	updateClearButton();
@@ -1392,25 +1266,18 @@ async function processFile(file, pendingHash, signal) {
 		updateClearButton();
 	});
 
-	let hash;
+	const result = await pendingHash;
 	try {
-		const result = await pendingHash;
-		if (result.error) {
+		if (!result?.hash?.image) {
 			showPreview(state, searchImage, file);
-			throw result.error;
-		}
-		logTiming(`${file.name} hash round trip`, result.hashMs);
-		hash = result.hash;
-		if (hash.image) {
-			showPreview(state, searchImage, dataUrlToBlob(hash.image));
-			hash.image = null;
+			if (result.error) throw result.error;
 		} else {
-			showPreview(state, searchImage, file);
+			showPreview(state, searchImage, new Blob([result.hash.image]));
+			result.hash.image = null;
 		}
 	} catch (err) {
-		if (state.dismissed) return;
-		if (signal.aborted) {
-			status.textContent = "Cancelled";
+		if (state.dismissed) {
+			if (signal.aborted) status.textContent = "Cancelled";
 			return;
 		}
 		status.textContent = `Error: ${err.message}`;
@@ -1425,8 +1292,8 @@ async function processFile(file, pendingHash, signal) {
 		return;
 	}
 
-	if (hash.error) {
-		status.textContent = hash.error;
+	if (result.hash.error) {
+		status.textContent = result.hash.error;
 		status.className = "error";
 		return;
 	}
@@ -1437,10 +1304,10 @@ async function processFile(file, pendingHash, signal) {
 
 	const meta = document.createElement("p");
 	meta.className = "meta";
-	const entryName = String(hash.entry ?? "")
+	const entryName = String(result.hash.entry ?? "")
 		.split("/")
 		.pop();
-	meta.textContent = `${entryName} — ${hash.format} — ${hash.width}×${hash.height}`;
+	meta.textContent = `${entryName} — ${result.hash.format} — ${result.hash.width}×${result.hash.height}`;
 	metaContainer.appendChild(meta);
 
 	const serverStatus = document.createElement("p");
@@ -1450,7 +1317,7 @@ async function processFile(file, pendingHash, signal) {
 	const hashes = document.createElement("p");
 	hashes.className = "hashes";
 	hashes.setHTML(
-		`ahash ${hash.ahash}<br/>dhash ${hash.dhash}<br/>phash ${hash.phash}`,
+		`ahash ${result.hash.ahash}<br/>dhash ${result.hash.dhash}<br/>phash ${result.hash.phash}`,
 	);
 	metaContainer.appendChild(hashes);
 
@@ -1458,42 +1325,37 @@ async function processFile(file, pendingHash, signal) {
 	card.appendChild(el);
 
 	const searchHash = {
-		ahash: hash.ahash,
-		dhash: hash.dhash,
-		phash: hash.phash,
+		ahash: result.hash.ahash,
+		dhash: result.hash.dhash,
+		phash: result.hash.phash,
 	};
+
 	const grid = document.createElement("div");
 	grid.className = "match-grid";
-
+	card.appendChild(grid);
 	function renderGrid() {
 		if (state.combined == null) return;
 		const visible = state.combined.filter(cardMatchesFilter);
-		if (!grid.isConnected) card.appendChild(grid);
 		grid.replaceChildren();
-		for (const cluster of clusterCards(visible)) {
-			if (cluster.length > 1) {
-				grid.appendChild(
-					renderCluster(cluster, state, searchHash, refreshMatches),
-				);
-			} else {
-				grid.appendChild(
-					renderMatch(cluster[0], state, searchHash, refreshMatches),
-				);
-			}
-		}
-		if (selectedDomains.size === 0) {
-			serverStatus.textContent = state.summary;
-			serverStatus.classList.remove("error");
-			return;
-		}
 		// Report no matches if they are hidden by a filter
 		if (visible.length === 0) {
 			serverStatus.textContent = "No hashes found";
 			serverStatus.classList.add("error");
 			return;
 		}
-		serverStatus.textContent = `${state.summary} · ${visible.length} of ${state.combined.length} shown`;
+		for (const cluster of clusterCards(visible)) {
+			if (cluster.length > 1) {
+				grid.appendChild(renderCluster(cluster, state, searchHash, refreshMatches));
+			} else {
+				grid.appendChild(renderMatch(cluster[0], state, searchHash, refreshMatches));
+			}
+		}
 		serverStatus.classList.remove("error");
+		if (selectedDomains.size === 0) {
+			serverStatus.textContent = state.summary;
+			return;
+		}
+		serverStatus.textContent = `${state.summary} · ${visible.length} of ${state.combined.length} shown`;
 	}
 
 	// Re-runs the lookup so grouping changes made elsewhere show up here.
@@ -1505,16 +1367,14 @@ async function processFile(file, pendingHash, signal) {
 		try {
 			const params = new URLSearchParams();
 			if (includeAHash.checked) {
-				state.hashesSent.push("ahash");
-				params.set("ahash", hash.ahash);
+				state.hashesSent.add("ahash");
+				params.set("ahash", result.hash.ahash);
 			}
-			params.set("dhash", hash.dhash);
-			state.hashesSent.push("dhash");
-			params.set("phash", hash.phash);
-			state.hashesSent.push("phash");
-			const max = Number.isInteger(maxDistInput.valueAsNumber)
-				? maxDistInput.valueAsNumber
-				: 8;
+			params.set("dhash", result.hash.dhash);
+			state.hashesSent.add("dhash");
+			params.set("phash", result.hash.phash);
+			state.hashesSent.add("phash");
+			const max = Number.isInteger(maxDistInput.valueAsNumber) ? maxDistInput.valueAsNumber : 8;
 			params.set("max", String(Math.min(8, Math.max(0, max))));
 			params.set("exactOnly", exactOnlyInput.checked ? "true" : "false");
 			params.set("images", "true");
@@ -1561,8 +1421,7 @@ async function processFile(file, pendingHash, signal) {
 		state.combined = combined;
 		state.candidateIDs = collectCandidateIDs(combined);
 		serverStatus.className = "server-status";
-		state.summary =
-			data.msg || `${results.length} match${results.length === 1 ? "" : "es"}`;
+		state.summary = data.msg || `${results.length} match${results.length === 1 ? "" : "es"}`;
 		renderGrid();
 	}
 
@@ -1587,6 +1446,10 @@ async function processFile(file, pendingHash, signal) {
 	state.applyFilter = renderGrid;
 	openSearches.add(state);
 	await refreshMatches();
+}
+function releasePreview(state) {
+	if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
+	state.previewUrl = null;
 }
 
 init();

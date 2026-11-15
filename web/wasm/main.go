@@ -5,7 +5,6 @@ package main
 import (
 	"archive/zip"
 	"bytes"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"image"
@@ -144,14 +143,6 @@ func hashFile(name string, data []byte) (map[string]any, error) {
 	logTiming("wasm phash "+name, time.Since(hashStart))
 	bounds := im.Bounds()
 
-	// Only archives need a preview image from the hasher; browsers can't show them directly.
-	var imageDataURL string
-	if imBytes != nil {
-		encodeStart := time.Now()
-		imageDataURL = "data:image/*;base64," + base64.StdEncoding.EncodeToString(imBytes)
-		logTiming("wasm preview encode "+name, time.Since(encodeStart))
-	}
-
 	return map[string]any{
 		"entry":  entry,
 		"format": format,
@@ -160,7 +151,7 @@ func hashFile(name string, data []byte) (map[string]any, error) {
 		"ahash":  fmt.Sprintf("%016x", ahash.GetHash()),
 		"dhash":  fmt.Sprintf("%016x", dhash.GetHash()),
 		"phash":  fmt.Sprintf("%016x", phash.GetHash()),
-		"image":  imageDataURL,
+		"image":  imBytes,
 	}, nil
 }
 
