@@ -22,7 +22,6 @@ import (
 	"gitea.narnian.us/lordwelch/goimagehash"
 	_ "github.com/gen2brain/gav1d/avif"
 	_ "github.com/gen2brain/jxl"
-	"github.com/kr/pretty"
 	_ "github.com/spakin/netpbm"
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/tiff"

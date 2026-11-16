@@ -1,6 +1,9 @@
 const staticVersion = new URL(self.location.href).searchParams.get("v");
-
-importScripts(`wasm_exec.js?v=${staticVersion}`);
+// Note the hash-worker is started from the /static path so these relative urls will resolve
+// with the prefix /static/
+const wasmExecURL = `wasm_exec.js?v=${staticVersion}`;
+const wasmURL = `main.wasm?v=${staticVersion}`;
+importScripts(wasmExecURL);
 
 function waitForHashCover() {
 	return new Promise((resolve, reject) => {
@@ -19,7 +22,6 @@ function waitForHashCover() {
 
 async function loadWasm() {
 	const go = new Go();
-	const wasmURL = `main.wasm?v=${staticVersion}`;
 	let result;
 	if (typeof WebAssembly.instantiateStreaming === "function") {
 		result = await WebAssembly.instantiateStreaming(fetch(wasmURL), go.importObject);

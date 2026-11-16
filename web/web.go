@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/klauspost/compress/gzhttp"
 )
 
 //go:embed static
@@ -21,17 +23,13 @@ var static embed.FS
 type Static struct {
 	domains []byte
 	index   []byte
-	sub     fs.FS
+	// sub     fs.FS
 	files   http.Handler
 	version string
 }
 
 func NewHandler() Static {
-	sub, err := fs.Sub(static, "static")
-	if err != nil {
-		panic(err)
-	}
-	indexTemplate, err := fs.ReadFile(sub, "index.html")
+	indexTemplate, err := fs.ReadFile(static, "static/index.html")
 	if err != nil {
 		panic(err)
 	}
@@ -39,8 +37,7 @@ func NewHandler() Static {
 	s := Static{
 		version: version,
 		index:   bytes.ReplaceAll(indexTemplate, []byte("{{version}}"), []byte(version)),
-		files:   http.FileServerFS(sub),
-		sub:     sub,
+		files:   gzhttp.GzipHandler(http.FileServerFS(static)),
 	}
 	return s
 }
@@ -49,7 +46,7 @@ const template = `
 <button class="menu-item" type="button" data-bs-value="{{domain}}">
 <img width="16" height="16" loading="lazy" referrerpolicy="no-referrer" alt="{{domain}}" title="{{domain}}" src="{{domain}}.ico?v={{version}}">
 {{domain}}
-<img src="check.svg?v={{version}}" class="menu-item-check">
+<img src="static/check.svg?v={{version}}" class="menu-item-check">
 </button>`
 
 func (s *Static) UpdateDomains(domains []string) {
@@ -75,8 +72,12 @@ func (s *Static) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(bytes.Replace(s.index, []byte("{{domains}}"), s.domains, 1))
 		return
 	}
-	if _, err := fs.Stat(s.sub, strings.TrimPrefix(path.Clean(r.URL.Path), "/")); err == nil {
+	if _, err := fs.Stat(static, strings.TrimPrefix(path.Clean(r.URL.Path), "/")); err == nil {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		if br := strings.HasSuffix(path.Clean(r.URL.Path), "main.wasm"); br {
+			w.Header().Set("Content-Encoding", "br")
+			w.Header().Set("Content-Type", "application/wasm")
+		}
 	}
 	s.files.ServeHTTP(w, r)
 }

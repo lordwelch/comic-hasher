@@ -175,7 +175,8 @@ func (s *Server) setupAppHandlers() {
 	s.Mux.HandleFunc("/get_cover_hash", s.getCoverHash)
 	s.Mux.HandleFunc("/hashes", s.HashServer.DownloadHashes)
 	s.Mux.Handle("/metrics", promhttp.HandlerFor(s.reg, promhttp.HandlerOpts{}))
-	s.Mux.Handle("/", &s.static)
+	s.Mux.Handle("/{$}", &s.static)
+	s.Mux.Handle("/static/", &s.static)
 	promauto.With(s.reg)
 	s.matchCoverTotal = promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
 		Name: "comic_hasher_match_cover_hash",

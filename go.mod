@@ -13,6 +13,7 @@ require (
 	github.com/gen2brain/jxl v0.2.1
 	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3
 	github.com/google/go-cmp v0.7.0
+	github.com/klauspost/compress v1.20.3
 	github.com/klauspost/pgzip v1.3.0
 	github.com/kr/pretty v0.3.1
 	github.com/minio/minlz v1.2.4
@@ -20,7 +21,7 @@ require (
 	github.com/spakin/netpbm v1.3.2
 	github.com/twmb/murmur3 v1.1.8
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	github.com/zeebo/xxh3 v1.1.0
+	github.com/zeebo/xxh3 v1.1.1-0.20261019234534-86009ce8e369
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/crypto v0.47.0
 	golang.org/x/image v0.36.0
@@ -32,7 +33,6 @@ require (
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect

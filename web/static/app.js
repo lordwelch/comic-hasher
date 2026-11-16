@@ -12,8 +12,9 @@ const domainFilterItems = document.getElementById("domains");
 const domainFilter = document.getElementById("domains-button");
 const domainFilterClear = document.getElementById("domain-filter-clear");
 const version = document.querySelector('meta[name="static-version"]').content;
-const noImageURL = `no-image.svg?v=${version}`;
-const checkURL = `check.svg?v=${version}`;
+const noImageURL = `static/no-image.svg?v=${version}`;
+const checkURL = `static/check.svg?v=${version}`;
+const hashWorkerURL = `static/hash-worker.js?v=${version}`;
 
 let domains = [];
 const selectedDomains = new Set();
@@ -25,7 +26,7 @@ let nextHashId = 1;
 let activeRun = null;
 
 function startHashWorker() {
-	const worker = new Worker(`hash-worker.js?v=${version}`);
+	const worker = new Worker(hashWorkerURL);
 	const ready = new Promise((resolveReady, rejectReady) => {
 		worker.onmessage = (e) => {
 			const { id, ok, result, error } = e.data;
@@ -381,7 +382,7 @@ function makeDomainIcon(domain) {
 			img.replaceWith(fallback);
 		}
 	});
-	img.src = `${encodeURIComponent(domain)}.ico?v=${version}`;
+	img.src = `static/${encodeURIComponent(domain)}.ico?v=${version}`;
 	return img;
 }
 

@@ -6,7 +6,16 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data: https: blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="static-version" content="{{version}}">
   <title>Comic Cover Hash Lookup</title>
-  <link rel="stylesheet" href="style.css?v={{version}}">
+  <link rel="stylesheet" href="static/style.css?v={{version}}">
+  <link rel="preload" href="static/app.js?v={{version}}" as="script" />
+  <link rel="preload" href="static/check.svg?v={{version}}" as="image" />
+  <link rel="preload" href="static/comicvine.gamespot.com.ico?v={{version}}" as="image" />
+  <link rel="preload" href="static/hash-worker.js?v={{version}}" as="script" />
+  <link rel="preload" href="static/main.wasm?v={{version}}" as="fetch" />
+  <link rel="preload" href="static/metron.cloud.ico?v={{version}}" as="image" />
+  <link rel="preload" href="static/no-image.svg?v={{version}}" as="image" />
+  <link rel="preload" href="static/select.js?v={{version}}" as="script" />
+  <link rel="preload" href="static/wasm_exec.js?v={{version}}" as="script" />
 </head>
 <body>
   <h1>Comic Cover Hash Lookup</h1>
@@ -40,9 +49,8 @@
   <p id="process-status"></p>
   <button type="button" id="cancel-btn" hidden>Cancel</button>
   <button type="button" id="clear-all-btn" hidden>Clear all results</button>
-  <div id="results"></div>
-  <script src="select.js?v={{version}}"></script>
-  <script src="wasm_exec.js?v={{version}}"></script>
-  <script src="app.js?v={{version}}"></script>
+  <div id="results"><p class="empty-state">No searches. Drop files to begin.</p></div>
+  <script src="static/select.js?v={{version}}"></script>
+  <script src="static/app.js?v={{version}}"></script>
 </body>
 </html>
