@@ -29,8 +29,7 @@
 	const SELECTOR_DATA_TOGGLE = '[data-bs-toggle="combobox"]';
 	const SELECTOR_MENU = ".menu";
 	const SELECTOR_MENU_ITEM = ".menu-item[data-bs-value]";
-	const SELECTOR_VISIBLE_ITEMS =
-		".menu-item[data-bs-value]:not(.disabled):not(:disabled)";
+	const SELECTOR_VISIBLE_ITEMS = ".menu-item[data-bs-value]:not(.disabled):not(:disabled)";
 	const SELECTOR_VALUE = ".combobox-value";
 	const SELECTOR_SEARCH_INPUT = ".combobox-search-input";
 	const SELECTOR_NO_RESULTS = ".combobox-no-results";
@@ -85,47 +84,32 @@
 		if (!element || element.nodeType !== Node.ELEMENT_NODE) return true;
 		if (element.classList.contains("disabled")) return true;
 		if (typeof element.disabled !== "undefined") return element.disabled;
-		return (
-			element.hasAttribute("disabled") &&
-			element.getAttribute("disabled") !== "false"
-		);
+		return element.hasAttribute("disabled") && element.getAttribute("disabled") !== "false";
 	};
 
 	const isVisible = (element) => {
 		if (!element || element.getClientRects().length === 0) return false;
-		return (
-			getComputedStyle(element).getPropertyValue("visibility") === "visible"
-		);
+		return getComputedStyle(element).getPropertyValue("visibility") === "visible";
 	};
 
-	const getNextActiveElement = (
-		list,
-		activeElement,
-		shouldGetNext,
-		isCycleAllowed,
-	) => {
+	const getNextActiveElement = (list, activeElement, shouldGetNext, isCycleAllowed) => {
 		const listLength = list.length;
 		let index = list.indexOf(activeElement);
-		if (index === -1)
-			return !shouldGetNext && isCycleAllowed ? list[listLength - 1] : list[0];
+		if (index === -1) return !shouldGetNext && isCycleAllowed ? list[listLength - 1] : list[0];
 		index += shouldGetNext ? 1 : -1;
 		if (isCycleAllowed) index = (index + listLength) % listLength;
 		return list[Math.max(0, Math.min(index, listLength - 1))];
 	};
 
 	const trigger = (element, event, args) => {
-		const evt = Object.assign(
-			new Event(event, { bubbles: true, cancelable: true }),
-			args,
-		);
+		const evt = Object.assign(new Event(event, { bubbles: true, cancelable: true }), args);
 		element.dispatchEvent(evt);
 		return evt;
 	};
 
 	const getConfig = (element) => {
 		const data = element.dataset;
-		const bool = (value, fallback) =>
-			value === undefined ? fallback : value !== "false";
+		const bool = (value, fallback) => (value === undefined ? fallback : value !== "false");
 		return {
 			multiple: bool(data.bsMultiple, false),
 			name: data.bsName ?? null,
@@ -137,8 +121,7 @@
 
 	const nextMatch = (element, selector) => {
 		let sibling = element.nextElementSibling;
-		while (sibling && !sibling.matches(selector))
-			sibling = sibling.nextElementSibling;
+		while (sibling && !sibling.matches(selector)) sibling = sibling.nextElementSibling;
 		return sibling;
 	};
 
@@ -236,7 +219,6 @@
 		}
 
 		setValue(values) {
-			console.log(values);
 			const items = [...this._menu.querySelectorAll(SELECTOR_MENU_ITEM)];
 			for (const item of items) {
 				if (Array.isArray(values)) {
@@ -377,10 +359,7 @@
 		_selectItem(item) {
 			if (this._config.multiple) {
 				item.classList.toggle(CLASS_NAME_SELECTED);
-				item.setAttribute(
-					"aria-selected",
-					String(item.classList.contains(CLASS_NAME_SELECTED)),
-				);
+				item.setAttribute("aria-selected", String(item.classList.contains(CLASS_NAME_SELECTED)));
 			} else {
 				for (const prev of this._getSelectedItems()) {
 					prev.classList.remove(CLASS_NAME_SELECTED);
@@ -429,12 +408,8 @@
 					this._valueDisplay.textContent = `${selectedItems.length} selected`;
 				} else {
 					const item = selectedItems[0];
-					const label = item.querySelector(
-						".menu-item-content > span:first-child",
-					);
-					this._valueDisplay.textContent = label
-						? label.textContent
-						: item.textContent.trim();
+					const label = item.querySelector(".menu-item-content > span:first-child");
+					this._valueDisplay.textContent = label ? label.textContent : item.textContent.trim();
 				}
 			}
 		}
@@ -451,9 +426,7 @@
 			if (!this._hiddenInput) return;
 
 			const values = this._getSelectedItems().map((el) => el.dataset.bsValue);
-			this._hiddenInput.value = this._config.multiple
-				? values.join(",")
-				: values[0] || "";
+			this._hiddenInput.value = this._config.multiple ? values.join(",") : values[0] || "";
 		}
 
 		_getSelectedItems() {
@@ -461,9 +434,7 @@
 		}
 
 		_getVisibleItems() {
-			return [...this._menu.querySelectorAll(SELECTOR_VISIBLE_ITEMS)].filter(
-				(item) => isVisible(item),
-			);
+			return [...this._menu.querySelectorAll(SELECTOR_VISIBLE_ITEMS)].filter((item) => isVisible(item));
 		}
 
 		_filterItems(query) {
@@ -541,12 +512,7 @@
 				event.preventDefault();
 				const items = this._getVisibleItems();
 				if (items.length > 0) {
-					getNextActiveElement(
-						items,
-						target,
-						key === ARROW_DOWN_KEY,
-						!items.includes(target),
-					).focus();
+					getNextActiveElement(items, target, key === ARROW_DOWN_KEY, !items.includes(target)).focus();
 				}
 
 				return;
@@ -571,19 +537,13 @@
 	}
 
 	document.addEventListener("click", (event) => {
-		for (const toggle of document.querySelectorAll(
-			`${SELECTOR_DATA_TOGGLE}.${CLASS_NAME_SHOW}`,
-		)) {
+		for (const toggle of document.querySelectorAll(`${SELECTOR_DATA_TOGGLE}.${CLASS_NAME_SHOW}`)) {
 			const instance = Combobox.getInstance(toggle);
 			if (!instance || toggle.contains(event.target)) continue;
 
 			const inMenu = instance._menu.contains(event.target);
 			if (instance._config.multiple && inMenu) continue;
-			if (
-				inMenu &&
-				/input|select|option|textarea|form/i.test(event.target.tagName)
-			)
-				continue;
+			if (inMenu && /input|select|option|textarea|form/i.test(event.target.tagName)) continue;
 
 			instance.hide();
 		}
@@ -600,8 +560,7 @@
 	const getOrCreateInstance = (element) => Combobox.getOrCreateInstance(element);
 
 	const init = () => {
-		for (const toggle of document.querySelectorAll(SELECTOR_DATA_TOGGLE))
-			getOrCreateInstance(toggle);
+		for (const toggle of document.querySelectorAll(SELECTOR_DATA_TOGGLE)) getOrCreateInstance(toggle);
 	};
 
 	if (document.readyState === "loading") {

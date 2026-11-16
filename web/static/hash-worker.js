@@ -48,7 +48,7 @@ async function hashRequest({ id, file }) {
 	try {
 		const buffer = await file.arrayBuffer();
 		const result = hashCover(file.name, new Uint8Array(buffer));
-		postMessage({ id, ok: true, result });
+		postMessage({ id, ok: true, result, error: null });
 	} catch (err) {
 		postMessage({ id, ok: false, error: err.message });
 	}

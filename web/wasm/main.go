@@ -20,6 +20,9 @@ import (
 	"time"
 
 	"gitea.narnian.us/lordwelch/goimagehash"
+	_ "github.com/gen2brain/gav1d/avif"
+	_ "github.com/gen2brain/jxl"
+	"github.com/kr/pretty"
 	_ "github.com/spakin/netpbm"
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/tiff"
@@ -89,7 +92,7 @@ func hashFile(name string, data []byte) (map[string]any, error) {
 		im      image.Image
 		format  string
 		err     error
-		imBytes []byte
+		imBytes js.Value
 	)
 	start := time.Now()
 	switch {
@@ -101,9 +104,11 @@ func hashFile(name string, data []byte) (map[string]any, error) {
 		entry = name
 		im, format, err = decodeImage(data)
 		if format == "ppm" {
-			b := bytes.NewBuffer(imBytes)
+			b := bytes.NewBuffer(nil)
 			jpeg.Encode(b, im, nil)
-			imBytes = b.Bytes()
+			imBytes = js.Global().Get("Uint8Array").New(b.Len())
+			// 2. Copy the bytes from Go into the JS Uint8Array
+			js.CopyBytesToJS(imBytes, b.Bytes())
 		}
 	}
 	if err != nil {
@@ -164,10 +169,10 @@ func decodeImage(data []byte) (image.Image, string, error) {
 }
 
 // coverFromZip returns the first image in natural name order that decodes.
-func coverFromZip(data []byte) (string, image.Image, string, []byte, error) {
+func coverFromZip(data []byte) (string, image.Image, string, js.Value, error) {
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		return "", nil, "", nil, fmt.Errorf("failed to read zip: %w", err)
+		return "", nil, "", js.Null(), fmt.Errorf("failed to read zip: %w", err)
 	}
 	var candidates []*zip.File
 	for _, f := range zr.File {
@@ -177,7 +182,7 @@ func coverFromZip(data []byte) (string, image.Image, string, []byte, error) {
 		candidates = append(candidates, f)
 	}
 	if len(candidates) == 0 {
-		return "", nil, "", nil, errors.New("no images found in archive")
+		return "", nil, "", js.Null(), errors.New("no images found in archive")
 	}
 	slices.SortFunc(candidates, func(a, b *zip.File) int {
 		if naturalLess(a.Name, b.Name) {
@@ -200,9 +205,12 @@ func coverFromZip(data []byte) (string, image.Image, string, []byte, error) {
 			lastErr = err
 			continue
 		}
-		return f.Name, im, format, b, nil
+		uint8Array := js.Global().Get("Uint8Array").New(len(b))
+		// 2. Copy the bytes from Go into the JS Uint8Array
+		js.CopyBytesToJS(uint8Array, b)
+		return f.Name, im, format, uint8Array, nil
 	}
-	return "", nil, "", nil, fmt.Errorf("no decodable images in archive: %w", lastErr)
+	return "", nil, "", js.Null(), fmt.Errorf("no decodable images in archive: %w", lastErr)
 }
 
 func readZipFile(f *zip.File) ([]byte, error) {

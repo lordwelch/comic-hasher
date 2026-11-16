@@ -51,10 +51,6 @@ h1 {
 #status {
 	display: inline-block;
 }
-#status,
-#process-status {
-	min-height: 1.25em;
-}
 
 body {
 	timeline-scope: --dz;
@@ -76,6 +72,7 @@ body {
 	background: var(--bs-body-bg, #fff);
 	display: flex;
 	flex-flow: column;
+	column-gap: 0.5rem;
 }
 
 #drop-zone {
@@ -87,49 +84,49 @@ body {
 #process-status {
 	clear: both;
 }
-
 @keyframes options-scroll {
 	to {
 		border: none;
 		width: 100%;
 		padding: 0.3rem;
-		flex-flow: column-reverse;
+		flex-flow: row-reverse wrap-reverse;
+		margin-left: -1rem;
 	}
 }
 
 @keyframes inner-options-scroll {
 	to {
 		margin-top: 0;
+		flex: 1 3 auto;
+	}
+}
+
+@keyframes status-scroll {
+	to {
+		flex: 999999999999999999 1 20%;
 	}
 }
 
 @supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
-	#options {
-		animation: options-scroll auto linear both;
+	#options,
+	#options .options,
+	div:has(> #status) {
+		animation-timing-function: linear;
+		animation-fill-mode: both;
 		animation-timeline: --dz;
 		animation-range: exit 99% exit 100%;
+	}
+
+	#options {
+		animation-name: options-scroll;
 	}
 	#options .options {
-		animation: inner-options-scroll auto linear both;
-		animation-timeline: --dz;
-		animation-range: exit 99% exit 100%;
+		animation-name: inner-options-scroll;
+	}
+	div:has(> #status) {
+		animation-name: status-scroll;
 	}
 }
-/*@keyframes shrink {
-	to {
-		min-height: 0;
-		margin-bottom: 0;
-		height: fit-content;
-	}
-}
-
-@supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
-	#options {
-		animation: shrink auto linear both;
-		animation-timeline: --dz;
-		animation-range: exit 99% exit 100%;
-	}
-}*/
 
 h1 {
 	text-align: center;
@@ -590,7 +587,7 @@ body.dragging {
 	border-radius: 0.5rem;
 	opacity: 0;
 	transform: scale(0.95);
-	transform-origin: top start;
+	/*transform-origin: top start;*/
 	transition:
 		opacity 0.15s,
 		transform 0.15s,

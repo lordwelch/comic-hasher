@@ -220,7 +220,7 @@ function dropItems(dataTransfer) {
 	const items = [];
 	for (const item of Array.from(dataTransfer.items || [])) {
 		if (item.kind !== "file") continue;
-		const entry = item.webkitGetAsEntry() || item.getAsFile();
+		const entry = item.getAsFile() || item.webkitGetAsEntry();
 		if (entry) {
 			items.push(entry);
 		}
@@ -270,7 +270,7 @@ async function collectFiles(items, signal) {
 		}
 	}
 	found.sort((a, b) =>
-		a.webkitRelativePath.localeCompare(b.webkitRelativePath, undefined, { numeric: true }),
+		(a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name, undefined, { numeric: true }),
 	);
 	return found;
 }
@@ -391,6 +391,7 @@ function makeCover(url, alt) {
 	img.alt = alt;
 	img.title = alt;
 	img.referrerPolicy = "no-referrer";
+	img.draggable = false;
 	img.addEventListener("error", () => setCoverSource(img, noImageURL));
 	setCoverSource(img, url || noImageURL);
 	return img;
@@ -399,7 +400,10 @@ function makeCover(url, alt) {
 function setCoverSource(img, url) {
 	if (url !== noImageURL) delete img.dataset.noImage;
 	if (img.dataset.noImage) return;
-	if (url === noImageURL) img.dataset.noImage = "true";
+	if (url === noImageURL) {
+		console.log("replacing", img.src, "with the fallback image");
+		img.dataset.noImage = "true";
+	}
 	img.src = url;
 }
 
@@ -435,11 +439,7 @@ function idKey(id) {
 
 function cardMatchesFilter(card) {
 	const matches = card.Matches ?? [];
-	if (
-		!includeAHash.checked &&
-		matches.length > 0 &&
-		!matches.some((m) => m.Hash?.Kind !== "ahash")
-	) {
+	if (!includeAHash.checked && !matches.some((m) => m.Hash?.Kind !== "ahash")) {
 		return false;
 	}
 	if (selectedDomains.size === 0) return true;
@@ -618,9 +618,7 @@ let cardDrag = null;
 
 // Sources of every ID in a card's group, including the card's own ID.
 function groupDomains(match) {
-	return new Set(
-		[match.ID, ...(match.EquivalentIDs ?? [])].map((eid) => eid?.Domain).filter(Boolean),
-	);
+	return new Set([match.ID, ...match.EquivalentIDs].map((eid) => eid.Domain).filter(Boolean));
 }
 
 // The server rejects a grouping when both groups already share a source.
@@ -635,17 +633,20 @@ function makeCardDraggable(el, match, statusEl, refreshMatches) {
 	el.title = "Drag onto another result to group their IDs";
 
 	el.addEventListener("dragstart", (e) => {
+		if (e.target !== el) {
+			return;
+		}
 		// Let form controls handle their own drag/selection behaviour.
 		if (e.target.closest?.("input, select, button, textarea")) {
 			e.preventDefault();
 			return;
 		}
-		cardDrag = { id: match.ID, domains: groupDomains(match), el };
-		e.dataTransfer.effectAllowed = "link";
+		cardDrag = { id: match.ID, domains: groupDomains(match) };
 		const dragImage = el.querySelector("img.cover-thumb");
 		if (dragImage) e.dataTransfer.setDragImage(dragImage, 24, 24);
-		e.dataTransfer.setData("text/plain", `${match.ID.Domain}:${match.ID.ID}`);
+		e.dataTransfer.items.add(`${match.ID.Domain}:${match.ID.ID}`, "text/plain");
 		el.classList.add("dragging");
+		e.dataTransfer.effectAllowed = "copy"; // This would be link but chrome is a piece of shit
 	});
 
 	el.addEventListener("dragend", () => {
@@ -655,6 +656,14 @@ function makeCardDraggable(el, match, statusEl, refreshMatches) {
 		for (const card of cards) {
 			card.classList.remove("drop-target", "drop-blocked");
 		}
+	});
+
+	el.addEventListener("dragenter", (e) => {
+		e.dataTransfer.effectAllowed = "copy";
+		if (!cardDrag || cardDrag.el === el) return;
+		const dragged = cardDrag.id;
+		if (!dragged?.Domain || dragged.ID == null || dragged.ID === "") return;
+		e.preventDefault();
 	});
 
 	el.addEventListener("dragover", (e) => {
@@ -668,7 +677,7 @@ function makeCardDraggable(el, match, statusEl, refreshMatches) {
 			el.classList.add("drop-blocked");
 			return;
 		}
-		e.dataTransfer.dropEffect = "link";
+		e.dataTransfer.dropEffect = "copy";
 		el.classList.remove("drop-blocked");
 		el.classList.add("drop-target");
 	});
@@ -868,10 +877,7 @@ function makeGroupForm(match, chipsEl, refreshMatches, cardState) {
 			if (msg === "New ID added") {
 				idInput.value = "";
 				status.textContent = msg;
-				await refreshAffected(
-					[match.ID, { Domain: domainSelect.value, ID: newID }],
-					refreshMatches,
-				);
+				await refreshAffected([match.ID, { Domain: domainSelect.value, ID: newID }], refreshMatches);
 			} else {
 				status.classList.add("error");
 				status.textContent = msg;
@@ -1055,8 +1061,7 @@ async function runBatch(items) {
 			showEmptyState();
 		}
 	} catch (err) {
-		processStatusEl.textContent =
-			err.name === "AbortError" ? "Cancelled" : `Failed to read: ${err.message}`;
+		processStatusEl.textContent = err.name === "AbortError" ? "Cancelled" : `Failed to read: ${err.message}`;
 	} finally {
 		finishRun(run);
 	}
@@ -1205,11 +1210,7 @@ function combineResults(results) {
 		c.minDistance = Math.min(...c.Matches.map((m) => m.Distance));
 	}
 	combined.sort((a, b) => {
-		return (
-			a.minDistance - b.minDistance ||
-			a.ID.Domain.localeCompare(b.ID.Domain) ||
-			a.ID.ID.localeCompare(b.ID.ID)
-		);
+		return a.minDistance - b.minDistance || a.ID.Domain.localeCompare(b.ID.Domain) || a.ID.ID.localeCompare(b.ID.ID);
 	});
 	return combined;
 }
@@ -1254,6 +1255,7 @@ async function processFile(file, pendingHash, signal) {
 	el.className = "match-card";
 
 	const searchImage = makeCover(state.previewUrl, file.name);
+	searchImage.draggable = true;
 	el.appendChild(searchImage);
 
 	closeBtn.addEventListener("click", () => {
@@ -1316,9 +1318,7 @@ async function processFile(file, pendingHash, signal) {
 
 	const hashes = document.createElement("p");
 	hashes.className = "hashes";
-	hashes.setHTML(
-		`ahash ${result.hash.ahash}<br/>dhash ${result.hash.dhash}<br/>phash ${result.hash.phash}`,
-	);
+	hashes.setHTML(`ahash ${result.hash.ahash}<br/>dhash ${result.hash.dhash}<br/>phash ${result.hash.phash}`);
 	metaContainer.appendChild(hashes);
 
 	el.appendChild(metaContainer);
