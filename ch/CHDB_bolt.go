@@ -14,7 +14,6 @@ import (
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 
 	bolt "go.etcd.io/bbolt"
-	"golang.org/x/exp/constraints"
 )
 
 type Version string
@@ -246,7 +245,7 @@ func (c CHDBBolt) PathHashed(path string) bool {
 	return false
 }
 
-func IntToBolt[T constraints.Integer](v T) []byte {
+func IntToBolt[T int64 | int](v T) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, uint64(v))
 	return b

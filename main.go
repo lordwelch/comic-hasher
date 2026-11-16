@@ -29,6 +29,8 @@ import (
 	"github.com/disintegration/imaging"
 	"github.com/kr/pretty"
 
+	_ "github.com/gen2brain/gav1d/avif"
+	_ "github.com/gen2brain/jxl"
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/vp8"
 	_ "golang.org/x/image/vp8l"
@@ -146,10 +148,6 @@ func initializeStorage(opts Opts) (ch.HashStorage, error) {
 		return storage.NewMapStorage()
 	case Basic:
 		return storage.NewBasicStorage()
-	case Sqlite:
-		return storage.NewSqliteStorage("sqlite", filepath.Join(opts.path, "tmp.sqlite"))
-	case Sqlite3:
-		return storage.NewSqliteStorage("sqlite3", filepath.Join(opts.path, "tmp.sqlite"))
 	case VPTree:
 		return storage.NewVPStorage()
 	}

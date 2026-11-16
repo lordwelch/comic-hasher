@@ -15,8 +15,6 @@ import (
 	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 	"gitea.narnian.us/lordwelch/comic-hasher/cv"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 )
 
 type Storage int
@@ -186,14 +184,13 @@ func Usage(f *flag.FlagSet) {
 		}
 		helpItems[groups[currentFlag.Name]] = append(helpItems[groups[currentFlag.Name]], b.String())
 	})
-	toTitle := cases.Title(language.English)
 	for section := range helpItems {
 		if !slices.ContainsFunc(groupOrder, func(s string) bool { return ch.Lower(s) == ch.Lower(section) }) {
 			groupOrder = append(groupOrder, section)
 		}
 	}
 	for _, group := range groupOrder {
-		groupItems := helpItems[group]
+		groupItems := helpItems[strings.ToLower(group)]
 		if len(groupItems) == 0 {
 			continue
 		}
@@ -201,9 +198,9 @@ func Usage(f *flag.FlagSet) {
 			return strings.Compare(strings.ToLower(a), strings.ToLower(b))
 		})
 		if group != "" {
-			_, _ = fmt.Fprintf(f.Output(), "\n%s:\n", toTitle.String(group))
+			_, _ = fmt.Fprintf(f.Output(), "\n%s:\n", group)
 		}
-		for _, item := range helpItems[group] {
+		for _, item := range groupItems {
 			_, _ = fmt.Fprintln(f.Output(), item)
 		}
 	}
@@ -258,7 +255,7 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 }
 
 var (
-	groupOrder = []string{"", "file", "upstream", "hash", "download", "comic vine", "metron", "debug"}
+	groupOrder = []string{"", "File", "Upstream", "Hash", "Download", "Comic Vine", "Metron", "Debug"}
 	groups     = map[string]string{
 		"upstream-download-hashes": "upstream",
 		"upstream-merge":           "upstream",
