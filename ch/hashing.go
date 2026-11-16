@@ -158,16 +158,29 @@ func Clone(s string) string {
 }
 
 type HashStorage interface {
+	// How you search the database
 	GetMatches(hashes []Hash, max int, exactOnly bool) ([]Result, error)
-	MapHashes(ImageHash) Metrics
-	DecodeHashes(hashes *SavedHashesV3) (Metrics, error)
-	EncodeHashes() (*SavedHashesV3, error)
+	// How you add content to the database
+	AddHashes(ImageHash) Metrics
+	// For populating a filter on the web ui
 	GetDomains() []string
+	// For bulk review of ID's to associate
+	GetDuplicateHashes() [][]Result
+	// Linking ID's from separate sources
 	AssociateIDs(OldID, NewID ID) error
+	// Unlinking ID's from separate sources
 	DisassociateID(id ID)
+	// For checking if an ID is already hashed so we don't download the cover again
 	GetIDs(id ID) []ID
+	// For comparing why a cover didn't match all hashes
 	GetHashes(id ID) []Hash
+	// You can probably figure this one out
+	LoadHashes(hashes *SavedHashesV3) (Metrics, error)
+	// Note specifically BasicStorage and MapStorage simply return the live pointer. The caller is responsible for calling [HashStorage.Rlock] and [HashStorage.RUnlock]
+	EncodeHashes() (*SavedHashesV3, error)
+	// Once up and running RLock will be called before EncodeHashes
 	RLock()
+	// Once up and running RLock will be called after data from EncodeHashes is no longer needed
 	RUnlock()
 }
 

@@ -102,11 +102,11 @@ func (v *VPTree) getCurrentTree(kind goimagehash.Kind) *vptree.Tree {
 	panic("Unknown hash type: " + kind.String())
 }
 
-func (v *VPTree) MapHashes(ch.ImageHash) ch.Metrics {
+func (v *VPTree) AddHashes(ch.ImageHash) ch.Metrics {
 	panic("Not Implemented")
 }
 
-func (v *VPTree) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) {
+func (v *VPTree) LoadHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) {
 	if hashes == nil {
 		return ch.Metrics{}, nil
 	}
@@ -184,6 +184,35 @@ func (v *VPTree) GetHashes(id ch.ID) []ch.Hash {
 	return v.hashes.GetHashes(id)
 }
 
+func (v *VPTree) getResult(hash ch.HashV3, kind goimagehash.Kind, distance int) ch.Result {
+	return ch.Result{
+		Hash:          ch.Hash{Hash: hash.Hash, Kind: kind},
+		ID:            v.hashes.IDAt(hash.ID),
+		Distance:      distance,
+		EquivalentIDs: v.hashes.GetAllIDs(hash.ID),
+	}
+}
+
+func (v *VPTree) GetDuplicateHashes() [][]ch.Result {
+	res := [][]ch.Result{}
+	group := []ch.Result{}
+	var (
+		currentHash ch.HashV3
+		firstHash   = ch.HashV3{ID: ch.NoIDGroup} // This should never match. Though it's not enforced
+	)
+	for _, currentHash = range v.hashes.AHashes {
+		if currentHash.Hash != firstHash.Hash {
+			if len(group) > 0 {
+				group = append(group, v.getResult(firstHash, goimagehash.AHash, 0))
+			}
+			firstHash = currentHash
+			continue
+		}
+		group = append(group, v.getResult(currentHash, goimagehash.AHash, 0))
+	}
+	return res
+}
+
 func (v *VPTree) GetDomains() []string {
 	return slices.Clone(v.hashes.Sources)
 }
@@ -203,7 +232,7 @@ func (v *VPTree) DisassociateID(id ch.ID) {
 	// this is read-only
 }
 
-func NewVPStorage() (ch.HashStorage, error) {
+func NewVPTree() (ch.HashStorage, error) {
 	var err error
 	v := &VPTree{
 		aHashes: []vptree.Comparable{},

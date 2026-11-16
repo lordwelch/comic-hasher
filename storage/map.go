@@ -8,14 +8,14 @@ import (
 	"gitea.narnian.us/lordwelch/goimagehash"
 )
 
-type MapStorage struct {
-	BasicStorage
+type Map struct {
+	Basic
 	partialAHash [8]map[uint8][]uint64
 	partialDHash [8]map[uint8][]uint64
 	partialPHash [8]map[uint8][]uint64
 }
 
-func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Result, error) {
+func (m *Map) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Result, error) {
 	var (
 		foundMatches []ch.Result
 		exactMatches []ch.Result
@@ -83,12 +83,7 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 		var storedHash ch.HashV3
 		for _, tmatch = range realMatches {
 			for _, storedHash = range currentHashes[tmatch.index : tmatch.index+tmatch.count] {
-				foundMatches = append(foundMatches, ch.Result{
-					Hash:          ch.Hash{Hash: storedHash.Hash, Kind: searchHash.Kind},
-					ID:            m.hashes.IDAt(storedHash.ID),
-					Distance:      tmatch.match.Distance,
-					EquivalentIDs: m.hashes.GetAllIDs(storedHash.ID),
-				})
+				foundMatches = append(foundMatches, m.getResult(storedHash, searchHash.Kind, tmatch.match.Distance))
 			}
 		}
 	}
@@ -97,7 +92,7 @@ func (m *MapStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch
 }
 
 // getCurrentHashes must have a read lock before using
-func (m *MapStorage) getCurrentHashes(kind goimagehash.Kind) ([]ch.HashV3, [8]map[uint8][]uint64) {
+func (m *Map) getCurrentHashes(kind goimagehash.Kind) ([]ch.HashV3, [8]map[uint8][]uint64) {
 	if kind == goimagehash.AHash {
 		return *m.hashes.HashesForKind(kind), m.partialAHash
 	}
@@ -110,8 +105,8 @@ func (m *MapStorage) getCurrentHashes(kind goimagehash.Kind) ([]ch.HashV3, [8]ma
 	panic("Unknown hash type: " + kind.String())
 }
 
-func (m *MapStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
-	metrics := m.BasicStorage.MapHashes(hash)
+func (m *Map) AddHashes(hash ch.ImageHash) ch.Metrics {
+	metrics := m.Basic.AddHashes(hash)
 	for _, hash := range hash.Hashes {
 		_, partialHashes := m.getCurrentHashes(hash.Kind)
 		for i, partialHash := range ch.SplitHash(hash.Hash) {
@@ -121,11 +116,11 @@ func (m *MapStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 	return metrics
 }
 
-func (m *MapStorage) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) {
+func (m *Map) LoadHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) {
 	if hashes == nil {
 		return ch.Metrics{}, nil
 	}
-	metrics, err := m.BasicStorage.DecodeHashes(hashes)
+	metrics, err := m.Basic.LoadHashes(hashes)
 	if err != nil {
 		return ch.Metrics{}, err
 	}
@@ -145,8 +140,8 @@ func (m *MapStorage) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) 
 	return metrics, nil
 }
 
-func NewMapStorage() (ch.HashStorage, error) {
-	storage := &MapStorage{
+func NewMap() (ch.HashStorage, error) {
+	storage := &Map{
 		hashMutex:    &sync.RWMutex{},
 		hashes:       &ch.SavedHashesV3{},
 		partialAHash: newPartialHash(),

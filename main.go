@@ -146,11 +146,11 @@ func signalHandler(s *ch.Server, signalQueue <-chan os.Signal) {
 func initializeStorage(opts Opts) (ch.HashStorage, error) {
 	switch opts.storageType {
 	case Map:
-		return storage.NewMapStorage()
+		return storage.NewMap()
 	case Basic:
-		return storage.NewBasicStorage()
+		return storage.NewBasic()
 	case VPTree:
-		return storage.NewVPStorage()
+		return storage.NewVPTree()
 	}
 	return nil, errors.New("unknown storage type provided")
 }
@@ -424,13 +424,13 @@ func startServer(opts Opts) error {
 	mwg := sync.WaitGroup{}
 	mwg.Go(func() { server.Mapper(1) })
 
-	// DecodeHashes would normally need a write lock
+	// LoadHashes would normally need a write lock
 	// nothing else has been started yet so we don't need one
 	loadedHashes, err := loadHashes(opts)
 	if err != nil {
 		return err
 	}
-	server.DecodeHashes(loadedHashes)
+	server.LoadHashes(loadedHashes)
 	log.Println(log.Standard, "Loaded hashes")
 	tl.LogTime("Loaded hashes")
 	// This is loaded here so that the log doesn't hang for a few seconds getting the checksum for the existing file before the first line of output

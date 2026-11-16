@@ -750,7 +750,7 @@ func (s *Server) Mapper(workerID int) {
 	defer logger.Println(log.MoreVerbose, "Mapper", workerID, "completed")
 	var metrics Metrics
 	for hash := range s.MappingQueue {
-		metrics = s.Storage.MapHashes(hash)
+		metrics = s.Storage.AddHashes(hash)
 		for m, count := range metrics.Hashes {
 			s.hashCount.WithLabelValues(m.Kind.String(), string(*m.Source)).Add(float64(count))
 		}
@@ -789,8 +789,8 @@ func (s *Server) Hasher(workerID int) {
 	}
 }
 
-func (s *Server) DecodeHashes(loadedHashes *SavedHashesV3) error {
-	metrics, err := s.Storage.DecodeHashes(loadedHashes)
+func (s *Server) LoadHashes(loadedHashes *SavedHashesV3) error {
+	metrics, err := s.Storage.LoadHashes(loadedHashes)
 	if err != nil {
 		return err
 	}

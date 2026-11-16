@@ -84,7 +84,7 @@ func SeedHashes(hs ch.HashStorage) {
 	if err != nil {
 		panic(err)
 	}
-	hs.DecodeHashes(savedHashes)
+	hs.LoadHashes(savedHashes)
 }
 
 func GetMatchesBasic(t *testing.T, hs ch.HashStorage) {
@@ -212,7 +212,7 @@ func GetIDs(t *testing.T, hs ch.HashStorage) {
 }
 
 func TestBasicStorage(t *testing.T) {
-	hs, err := storage.NewBasicStorage()
+	hs, err := storage.NewBasic()
 	if err != nil {
 		t.Fatal("Failed to create basic storage:", err)
 	}
@@ -227,7 +227,7 @@ func TestBasicStorage(t *testing.T) {
 }
 
 func TestMapStorage(t *testing.T) {
-	hs, err := storage.NewMapStorage()
+	hs, err := storage.NewMap()
 	if err != nil {
 		t.Fatal("Failed to create map storage:", err)
 	}
@@ -242,7 +242,7 @@ func TestMapStorage(t *testing.T) {
 }
 
 func TestVPSStorage(t *testing.T) {
-	hs, err := storage.NewVPStorage()
+	hs, err := storage.NewVPTree()
 	if err != nil {
 		t.Fatal("Failed to create basic storage:", err)
 	}
@@ -280,7 +280,7 @@ func (mux *fakeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestHashServer(t *testing.T) {
-	hs, err := storage.NewBasicStorage()
+	hs, err := storage.NewBasic()
 	if err != nil {
 		t.Fatal("Failed to create basic storage:", err)
 	}
@@ -343,7 +343,7 @@ func TestHashServer(t *testing.T) {
 }
 
 func TestDownloadUpstreamHashes(t *testing.T) {
-	hs, err := storage.NewBasicStorage()
+	hs, err := storage.NewBasic()
 	if err != nil {
 		t.Fatal("Failed to create basic storage:", err)
 	}
@@ -386,7 +386,7 @@ func TestDownloadUpstreamHashes(t *testing.T) {
 }
 
 func TestLoadEmbeddedHashes(t *testing.T) {
-	hs, err := storage.NewBasicStorage()
+	hs, err := storage.NewBasic()
 	if err != nil {
 		t.Fatal("failed to create basic map storage:", err)
 	}
@@ -421,7 +421,7 @@ func TestDecodeHashesV3(t *testing.T) {
 }
 
 func BenchmarkLoadEmbeddedHashes(b *testing.B) {
-	hs, err := storage.NewBasicStorage()
+	hs, err := storage.NewBasic()
 	if err != nil {
 		b.Fatal("failed to create basic map storage:", err)
 	}
@@ -432,21 +432,21 @@ func BenchmarkLoadEmbeddedHashes(b *testing.B) {
 
 func BenchmarkDecodeHashes(b *testing.B) {
 	hashes := unzipEmbedded()
-	hs, err := storage.NewBasicStorage()
+	hs, err := storage.NewBasic()
 	if err != nil {
 		b.Fatal("failed to create basic map storage:", err)
 	}
 	for b.Loop() {
-		decodeHashes(hs, hashes)
+		LoadHashes(hs, hashes)
 	}
 }
 
-func decodeHashes(hs ch.HashStorage, hashes []byte) {
+func LoadHashes(hs ch.HashStorage, hashes []byte) {
 	loadedHashes, err := ch.DecodeHashesV3(bytes.NewReader(hashes))
 	if err != nil {
 		panic(err)
 	}
-	hs.DecodeHashes(loadedHashes)
+	hs.LoadHashes(loadedHashes)
 }
 
 func unzipEmbedded() []byte {
@@ -462,7 +462,7 @@ func unzipEmbedded() []byte {
 }
 
 func SeedEmbeddedHashes(hs ch.HashStorage) {
-	decodeHashes(hs, unzipEmbedded())
+	LoadHashes(hs, unzipEmbedded())
 }
 
 func BenchmarkStorageSmall(fuck *testing.B) {
@@ -472,7 +472,7 @@ func BenchmarkStorageSmall(fuck *testing.B) {
 		{Hash: 0xf95ac0669da8b4a9, Kind: goimagehash.PHash},
 	}
 
-	hs, err := storage.NewBasicStorage()
+	hs, err := storage.NewBasic()
 	if err != nil {
 		fuck.Fatal("Failed to create Basic storage:", err)
 	}
@@ -489,7 +489,7 @@ func BenchmarkStorageSmall(fuck *testing.B) {
 		}
 	})
 
-	hs, err = storage.NewMapStorage()
+	hs, err = storage.NewMap()
 	if err != nil {
 		fuck.Fatal("Failed to create Map storage:", err)
 	}
@@ -506,7 +506,7 @@ func BenchmarkStorageSmall(fuck *testing.B) {
 		}
 	})
 
-	hs, err = storage.NewVPStorage()
+	hs, err = storage.NewVPTree()
 	if err != nil {
 		fuck.Fatal("Failed to create VPS storage:", err)
 	}
@@ -531,7 +531,7 @@ func BenchmarkStorageLarge(b *testing.B) {
 		{Hash: 0x95274a996be4349e, Kind: goimagehash.PHash},
 	}
 
-	hs, err := storage.NewBasicStorage()
+	hs, err := storage.NewBasic()
 	if err != nil {
 		b.Fatal("Failed to create Basic storage:", err)
 	}
@@ -548,7 +548,7 @@ func BenchmarkStorageLarge(b *testing.B) {
 		}
 	})
 
-	hs, err = storage.NewMapStorage()
+	hs, err = storage.NewMap()
 	if err != nil {
 		b.Fatal("Failed to create Map storage:", err)
 	}
@@ -565,7 +565,7 @@ func BenchmarkStorageLarge(b *testing.B) {
 		}
 	})
 
-	hs, err = storage.NewVPStorage()
+	hs, err = storage.NewVPTree()
 	if err != nil {
 		b.Fatal("Failed to create VPS storage:", err)
 	}

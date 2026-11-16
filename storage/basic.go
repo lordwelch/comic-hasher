@@ -10,35 +10,27 @@ import (
 	"gitea.narnian.us/lordwelch/goimagehash"
 )
 
-type BasicStorage struct {
+type Basic struct {
 	hashMutex *sync.RWMutex
 	hashes    *ch.SavedHashesV3
 }
 
-func (b *BasicStorage) RLock() {
+func (b *Basic) RLock() {
 	b.hashMutex.RLock()
 }
 
-func (b *BasicStorage) RUnlock() {
+func (b *Basic) RUnlock() {
 	b.hashMutex.RUnlock()
 }
 
 // atleast must have a read lock before using
-func (b *BasicStorage) atleast(kind goimagehash.Kind, maxDistance int, searchHash uint64) []ch.Result {
+func (b *Basic) atleast(kind goimagehash.Kind, maxDistance int, searchHash uint64) []ch.Result {
 	otherHashes := make([]ch.Result, 0, 20) // hope that we don't need more
 
 	for _, storedHash := range *b.hashes.HashesForKind(kind) {
 		distance := bits.OnesCount64(searchHash ^ storedHash.Hash)
 		if distance <= maxDistance {
-			otherHashes = append(otherHashes, ch.Result{
-				Hash: ch.Hash{
-					Hash: storedHash.Hash,
-					Kind: kind,
-				},
-				ID:            b.hashes.IDAt(storedHash.ID),
-				Distance:      distance,
-				EquivalentIDs: b.hashes.GetAllIDs(storedHash.ID),
-			})
+			otherHashes = append(otherHashes, b.getResult(storedHash, kind, distance))
 		}
 	}
 
@@ -47,7 +39,7 @@ func (b *BasicStorage) atleast(kind goimagehash.Kind, maxDistance int, searchHas
 	return matchingHashes
 }
 
-func (b *BasicStorage) exactMatches(hash ch.Hash) []ch.Result {
+func (b *Basic) exactMatches(hash ch.Hash) []ch.Result {
 	var foundMatches []ch.Result
 	mappedIds := map[uint32]bool{}
 
@@ -62,17 +54,12 @@ func (b *BasicStorage) exactMatches(hash ch.Hash) []ch.Result {
 		}
 		mappedIds[storedHash.ID] = true
 
-		foundMatches = append(foundMatches, ch.Result{
-			Hash:          ch.Hash{Hash: storedHash.Hash, Kind: hash.Kind},
-			ID:            b.hashes.IDAt(storedHash.ID),
-			Distance:      0,
-			EquivalentIDs: b.hashes.GetAllIDs(storedHash.ID),
-		})
+		foundMatches = append(foundMatches, b.getResult(storedHash, hash.Kind, 0))
 	}
 	return foundMatches
 }
 
-func (b *BasicStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Result, error) {
+func (b *Basic) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Result, error) {
 	var (
 		foundMatches []ch.Result
 		exactMatches []ch.Result
@@ -103,7 +90,7 @@ func (b *BasicStorage) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]
 // must have a read lock before using
 // return value is index, count
 // if count < 1 then no results were found
-func (b *BasicStorage) findHash(hash ch.Hash) (int, int) {
+func (b *Basic) findHash(hash ch.Hash) (int, int) {
 	currentHashes := *b.hashes.HashesForKind(hash.Kind)
 	index, found := slices.BinarySearchFunc(currentHashes, hash.Hash, func(existing ch.HashV3, target uint64) int {
 		if existing.Hash != target {
@@ -128,7 +115,7 @@ func (b *BasicStorage) findHash(hash ch.Hash) (int, int) {
 	return start, end - start
 }
 
-func (b *BasicStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
+func (b *Basic) AddHashes(hash ch.ImageHash) ch.Metrics {
 	b.hashMutex.Lock()
 	defer b.hashMutex.Unlock()
 	idCount := b.hashes.IDCount
@@ -146,9 +133,9 @@ func (b *BasicStorage) MapHashes(hash ch.ImageHash) ch.Metrics {
 	return count
 }
 
-// DecodeHashes must already have a lock. SavedHashesV3 is already in the
+// LoadHashes must already have a lock. SavedHashesV3 is already in the
 // runtime representation so all that is needed is to keep the pointer.
-func (b *BasicStorage) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) {
+func (b *Basic) LoadHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error) {
 	if hashes == nil {
 		return ch.Metrics{}, nil
 	}
@@ -157,27 +144,76 @@ func (b *BasicStorage) DecodeHashes(hashes *ch.SavedHashesV3) (ch.Metrics, error
 }
 
 // EncodeHashes should already have a lock
-func (b *BasicStorage) EncodeHashes() (*ch.SavedHashesV3, error) {
+func (b *Basic) EncodeHashes() (*ch.SavedHashesV3, error) {
 	return b.hashes, nil
 }
 
-func (b *BasicStorage) GetDomains() []string {
+func (b *Basic) GetDomains() []string {
 	return slices.Clone(b.hashes.Sources)
 }
 
-func (b *BasicStorage) AssociateIDs(OldID, NewID ch.ID) error {
+func (b *Basic) AssociateIDs(OldID, NewID ch.ID) error {
 	b.hashMutex.Lock()
 	defer b.hashMutex.Unlock()
 	return b.hashes.AssociateIDs(OldID, NewID)
 }
 
-func (b *BasicStorage) GetHashes(id ch.ID) []ch.Hash {
+func (b *Basic) getResult(hash ch.HashV3, kind goimagehash.Kind, distance int) ch.Result {
+	return ch.Result{
+		Hash:          ch.Hash{Hash: hash.Hash, Kind: kind},
+		ID:            b.hashes.IDAt(hash.ID),
+		Distance:      distance,
+		EquivalentIDs: b.hashes.GetAllIDs(hash.ID),
+	}
+}
+
+func (b *Basic) GetDuplicateHashes() [][]ch.Result {
+	res := [][]ch.Result{}
+	group := []ch.Result{}
+	var (
+		currentHash ch.HashV3
+		firstHash   = ch.HashV3{ID: ch.NoIDGroup} // This should never match. Though it's not enforced
+	)
+	for _, currentHash = range b.hashes.AHashes {
+		if currentHash.Hash != firstHash.Hash {
+			if len(group) > 0 {
+				group = append(group, b.getResult(firstHash, goimagehash.AHash, 0))
+			}
+			firstHash = currentHash
+			continue
+		}
+		group = append(group, b.getResult(currentHash, goimagehash.AHash, 0))
+	}
+	for _, currentHash = range b.hashes.DHashes {
+		if currentHash.Hash != firstHash.Hash {
+			if len(group) > 0 {
+				group = append(group, b.getResult(firstHash, goimagehash.DHash, 0))
+			}
+			firstHash = currentHash
+			continue
+		}
+		group = append(group, b.getResult(currentHash, goimagehash.DHash, 0))
+	}
+	for _, currentHash = range b.hashes.PHashes {
+		if currentHash.Hash != firstHash.Hash {
+			if len(group) > 0 {
+				group = append(group, b.getResult(firstHash, goimagehash.PHash, 0))
+			}
+			firstHash = currentHash
+			continue
+		}
+		group = append(group, b.getResult(currentHash, goimagehash.PHash, 0))
+	}
+	return res
+}
+
+func (b *Basic) GetHashes(id ch.ID) []ch.Hash {
 	b.hashMutex.RLock()
 	defer b.hashMutex.RUnlock()
 	return b.hashes.GetHashes(id)
 }
 
-func (b *BasicStorage) GetIDs(id ch.ID) []ch.ID {
+func (b *Basic) GetIDs(id ch.ID) []ch.ID {
 	b.hashMutex.RLock()
 	defer b.hashMutex.RUnlock()
 	rid, ok := b.hashes.FindID(id)
@@ -187,14 +223,14 @@ func (b *BasicStorage) GetIDs(id ch.ID) []ch.ID {
 	return b.hashes.GetAllIDs(rid)
 }
 
-func (b *BasicStorage) DisassociateID(id ch.ID) {
+func (b *Basic) DisassociateID(id ch.ID) {
 	b.hashMutex.RLock()
 	defer b.hashMutex.RUnlock()
 	b.hashes.DisassociateID(id)
 }
 
-func NewBasicStorage() (ch.HashStorage, error) {
-	storage := &BasicStorage{
+func NewBasic() (ch.HashStorage, error) {
+	storage := &Basic{
 		hashMutex: &sync.RWMutex{},
 		hashes:    &ch.SavedHashesV3{},
 	}
