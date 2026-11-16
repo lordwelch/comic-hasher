@@ -122,7 +122,8 @@ func doStuff(opts Opts) int {
 
 	opts.path, _ = filepath.Abs(opts.path)
 	log.Println(log.Standard, pretty.Sprint(opts))
-
+	// We enable NonBlocking logs and defer the drain for when this function exits
+	defer log.EnableNonBlocking(context.Background(), 30)()
 	err := startServer(opts)
 	if err != nil {
 		log.Log(log.Fatal, "comic-hasher failed: %v", err)
@@ -134,7 +135,7 @@ func doStuff(opts Opts) int {
 func signalHandler(s *ch.Server, signalQueue <-chan os.Signal) {
 	select {
 	case sig := <-signalQueue:
-		log.Log(log.Verbose, "Signal: %v\n", sig)
+		log.Log(log.Verbose, "Signal: %v", sig)
 	case <-s.Context.Done():
 		log.Log(log.Standard, "Recieved quit: Attempting to shutdown gracefully")
 	}
@@ -387,6 +388,8 @@ func bToKb(b uint64) uint64 {
 }
 
 func startServer(opts Opts) error {
+	tl := ch.TimeLog{}
+	tl.ResetTime()
 	imaging.SetMaxProcs(2)
 	if opts.cpuprofile != "" {
 		f, err := os.Create(opts.cpuprofile)
@@ -398,24 +401,26 @@ func startServer(opts Opts) error {
 	}
 	server := ch.NewServer(context.Background(), opts.version, opts.addr, opts.onlyHashNewIDs)
 	defer server.Shutdown()
-	// We enable NonBlocking logs and defer the drain for when this function exits
-	defer log.EnableNonBlocking(server.Context, 30)()
+
 	signalQueue := make(chan os.Signal, 1)
 	Notify(signalQueue)
 	var err error
 	log.Println(log.Verbose, "Init storage")
+	tl.LogTime("Init storage")
 	server.Storage, err = initializeStorage(opts)
 	if err != nil {
 		return fmt.Errorf("failed to initialize storage: %w", err)
 	}
 
 	log.Println(log.Verbose, "Init 10 hashers")
+	tl.LogTime("Init 10 hashers")
 	hwg := sync.WaitGroup{}
 	for i := range 10 {
 		hwg.Go(func() { server.Hasher(i) })
 	}
 
 	log.Println(log.Verbose, "Init 1 mapper")
+	tl.LogTime("Init 1 mapper")
 	mwg := sync.WaitGroup{}
 	mwg.Go(func() { server.Mapper(1) })
 
@@ -427,6 +432,7 @@ func startServer(opts Opts) error {
 	}
 	server.DecodeHashes(loadedHashes)
 	log.Println(log.Standard, "Loaded hashes")
+	tl.LogTime("Loaded hashes")
 	// This is loaded here so that the log doesn't hang for a few seconds getting the checksum for the existing file before the first line of output
 	server.HashServer = ch.NewHashServer(filepath.Join(opts.path, hashesFilename), opts.useAllChecksums)
 	loadedHashes = nil
@@ -438,6 +444,7 @@ func startServer(opts Opts) error {
 	}
 
 	log.Println(log.Verbose, "Init downloaders")
+	tl.LogTime("Init downloaders")
 	dwg := sync.WaitGroup{}
 	dcwg := sync.WaitGroup{}
 	finishedDownloadQueue := make(chan download.Download, 1)
@@ -514,6 +521,7 @@ func startServer(opts Opts) error {
 	}
 	hashEncoders := sync.WaitGroup{}
 	log.Println(log.Verbose, "Init hash encoder")
+	tl.LogTime("Init hash encoder")
 	if opts.hashSaveInterval > 0 {
 		hashEncoders.Go(func() {
 			for {
@@ -553,16 +561,20 @@ func startServer(opts Opts) error {
 	}
 
 	log.Println(log.Required, "Listening on ", server.HTTPServer.Addr)
+	tl.LogTime("Listening on " + server.HTTPServer.Addr)
 	err = server.ListenAndServe()
 	if err != nil {
 		log.Println(log.Fatal, err)
 	}
 	log.Println(log.Required, "Shutting down comic-hasher")
+	tl.LogTime("Shutting down comic-hasher")
 
 	log.Println(log.Verbose, "waiting on downloaders")
+	tl.LogTime("waiting on downloaders")
 	dwg.Wait() // Downloaders send to finishedDownloadQueue -> server.hashingQueue
 
 	log.Println(log.Standard, "waiting on download workers")
+	tl.LogTime("waiting on download workers")
 	// Downloaders are done which means that we can close finishedDownloadQueue
 	close(finishedDownloadQueue)
 	dcwg.Wait() // Wait for all hashing queue producers to finish.
@@ -573,6 +585,7 @@ func startServer(opts Opts) error {
 	}
 
 	log.Println(log.Standard, "waiting on hashers")
+	tl.LogTime("waiting on hashers")
 	hwg.Wait()
 	for dw := range server.HashingQueue { // Closed by downloadProcessor. This should never happen as hwg.Wait() should only return after all hashing is complete
 		log.Println(log.Verbose, "Skipping hashing", dw.ID)
@@ -580,12 +593,14 @@ func startServer(opts Opts) error {
 
 	close(server.MappingQueue)
 	log.Println(log.Standard, "waiting on mappers")
+	tl.LogTime("waiting on mappers")
 	mwg.Wait()
 	// This should never happen but we drain anyway
 	for dw := range server.MappingQueue {
 		log.Println(log.Verbose, "Skipping mapping", dw.ID)
 	}
 	log.Println(log.Standard, "waiting on hash encoder server")
+	tl.LogTime("waiting on hash encoder server")
 	// Go doesn't really have a way to cancel IO operations so we have to wait for this no matter what
 	hashEncoders.Wait()
 	log.Println(log.Required, "If you press Ctrl+C after this point the saved hashes will be corrupted")
@@ -596,6 +611,7 @@ func startServer(opts Opts) error {
 	}
 
 	log.Println(log.Verbose, "Compacting CHDB")
+	tl.LogTime("Compacting CHDB")
 	err = chdb.Compact()
 	if err != nil {
 		log.Println(log.Verbose, "Failed to compact the CHDB, this is probably fine:", err)
@@ -604,6 +620,8 @@ func startServer(opts Opts) error {
 
 	// server.EncodeHashes would normally need a read lock
 	// the server has been stopped so it's not needed here
+	tl.LogTime("Encoding Hashes")
+	defer tl.LogTime("Saving Hashes")
 	hashes, err := server.Storage.EncodeHashes()
 	if err != nil {
 		return fmt.Errorf("failed to save hashes: %w", err)

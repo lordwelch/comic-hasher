@@ -401,7 +401,7 @@ type failedDownload struct {
 func (c *Downloader) handleNotFound() {
 	for failedDownload := range c.notFound {
 		c.chdb.AddURL(failedDownload.url)
-		logger.Log(log.Verbose, "Not found: volumeID: %d issueID: %d Offset: %d URL: %s\n", failedDownload.volumeID, failedDownload.issueID, failedDownload.offset, failedDownload.url)
+		logger.Log(log.Verbose, "Not found: volumeID: %d issueID: %d Offset: %d URL: %s", failedDownload.volumeID, failedDownload.issueID, failedDownload.offset, failedDownload.url)
 	}
 }
 
