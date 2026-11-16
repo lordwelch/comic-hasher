@@ -46,19 +46,90 @@ h1 {
 	gap: 1rem;
 	flex-wrap: wrap;
 	align-items: center;
-	margin-bottom: 1rem;
 }
 
+#status {
+	display: inline-block;
+}
 #status,
 #process-status {
 	min-height: 1.25em;
 }
 
-#cont {
-	display: flex;
-	gap: 0.75rem;
-	flex-wrap: wrap;
+body {
+	timeline-scope: --dz;
 }
+
+#cont {
+	display: contents;
+}
+
+#options {
+	border: 2px solid transparent;
+	padding: 0.5rem;
+	float: left;
+	position: sticky;
+	top: 0;
+	z-index: 100;
+	height: fit-content;
+	margin: 0 0.75rem 0 0;
+	background: var(--bs-body-bg, #fff);
+	display: flex;
+	flex-flow: column;
+}
+
+#drop-zone {
+	display: flow-root;
+	min-width: 15rem;
+	view-timeline: --dz block;
+}
+
+#process-status {
+	clear: both;
+}
+
+@keyframes options-scroll {
+	to {
+		border: none;
+		width: 100%;
+		padding: 0.3rem;
+		flex-flow: column-reverse;
+	}
+}
+
+@keyframes inner-options-scroll {
+	to {
+		margin-top: 0;
+	}
+}
+
+@supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
+	#options {
+		animation: options-scroll auto linear both;
+		animation-timeline: --dz;
+		animation-range: exit 99% exit 100%;
+	}
+	#options .options {
+		animation: inner-options-scroll auto linear both;
+		animation-timeline: --dz;
+		animation-range: exit 99% exit 100%;
+	}
+}
+/*@keyframes shrink {
+	to {
+		min-height: 0;
+		margin-bottom: 0;
+		height: fit-content;
+	}
+}
+
+@supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
+	#options {
+		animation: shrink auto linear both;
+		animation-timeline: --dz;
+		animation-range: exit 99% exit 100%;
+	}
+}*/
 
 h1 {
 	text-align: center;
@@ -82,7 +153,8 @@ h1 {
 	border-color: var(--accent);
 }
 
-input[type="file"] {
+input[type="file"],
+.options {
 	margin-top: 0.5rem;
 }
 
@@ -201,7 +273,7 @@ input[type="file"] {
 
 .cover-thumb {
 	max-width: fit-content;
-	max-height: 240px;
+	height: 240px; /* change to max-height once ladybird supports it */
 	object-fit: contain;
 	border-radius: 0.25rem;
 	background: var(--card);
@@ -578,7 +650,7 @@ body.dragging {
 	width: 100%;
 	/*min-height: 2.375rem;*/
 	/*padding: 0.375rem 0.75rem;*/
-	font: inherit;
+	/*font: inherit;*/
 	line-height: 1.5;
 	color: var(--fg);
 	appearance: none;
