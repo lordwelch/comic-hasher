@@ -904,7 +904,7 @@ function renderMatch(match, cardState, searchHash, refreshMatches) {
 	idWrap.appendChild(idLink(match.ID.Domain, match.ID.ID));
 	el.appendChild(idWrap);
 
-	const thumb = makeCover(match.image_url, `${match.ID.ID} ${match.ID.Domain}`);
+	const thumb = makeCover(match.ImageURL, `${match.ID.ID} ${match.ID.Domain}`);
 	if (url) {
 		const imgA = document.createElement("a");
 		imgA.href = url;
@@ -1188,7 +1188,7 @@ function combineResults(results) {
 		if (!combinedMap.has(key)) {
 			combinedMap.set(key, {
 				ID: r.ID,
-				image_url: r.image_url || "",
+				ImageURL: r.ImageURL || "",
 				Matches: [],
 				EquivalentIDs: [],
 				equivalentKeys: new Set(),
@@ -1196,7 +1196,7 @@ function combineResults(results) {
 		}
 		const combined = combinedMap.get(key);
 		combined.Matches.push(r);
-		if (!combined.image_url) combined.image_url = r.image_url || "";
+		if (!combined.ImageURL) combined.ImageURL = r.ImageURL || "";
 		for (const eid of r.EquivalentIDs) {
 			const eidKey = `${eid.Domain}:${eid.ID}`;
 			if (!combined.equivalentKeys.has(eidKey)) {
