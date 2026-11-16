@@ -1011,16 +1011,17 @@ func EncodeHashesV3(hashes *SavedHashesV3, w io.Writer) error {
 		return err
 	}
 
-	var u [4]byte
+	var u [(256 * 4) + 1]byte
+	var b []byte
 	for _, group := range hashes.IDGroups {
-		if _, err := hw.Write([]byte{byte(len(group))}); err != nil {
-			return err
+		groupLen := len(group) * 4
+		u[0] = byte(len(group))
+		b = u[1 : groupLen+1]
+		for i, id := range group {
+			binary.LittleEndian.PutUint32(b[i*4:], id)
 		}
-		for _, id := range group {
-			binary.LittleEndian.PutUint32(u[:], id)
-			if _, err := hw.Write(u[:]); err != nil {
-				return err
-			}
+		if _, err := hw.Write(u[:groupLen+1]); err != nil {
+			return err
 		}
 	}
 	return writeSum()
