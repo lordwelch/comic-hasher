@@ -15,6 +15,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/klauspost/pgzip v1.3.0
 	github.com/kr/pretty v0.3.1
+	github.com/minio/minlz v1.2.4
 	github.com/prometheus/client_golang v1.24.1
 	github.com/spakin/netpbm v1.3.2
 	github.com/twmb/murmur3 v1.1.8

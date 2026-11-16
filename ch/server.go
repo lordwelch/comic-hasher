@@ -2,6 +2,7 @@ package ch
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"crypto"
@@ -27,7 +28,7 @@ import (
 	"sync"
 	"time"
 
-	gzip "github.com/klauspost/pgzip"
+	minlz "github.com/minio/minlz"
 
 	"github.com/OneOfOne/xxhash"
 	"github.com/twmb/murmur3"
@@ -123,7 +124,7 @@ type HashServer struct {
 	reprHeaderCache   string
 	digesters         map[string]hash.Hash
 	hashesDownloaded  prometheus.Counter
-	gzip              *gzip.Writer
+	minlz             *minlz.Writer
 	useAllChecksums   bool
 }
 
@@ -234,7 +235,7 @@ func (h *HashServer) DownloadHashes(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Digest", h.digestHeader())
 	}
 	w.Header().Set("Repr-Digest", h.reprDigestHeader())
-	w.Header().Set("Content-Type", "application/x-image-hash-db+gzip")
+	w.Header().Set("Content-Type", "application/x-image-hash-db+minlz")
 	w.Header().Set("Content-Disposition", `"attachment; filename="hashes.gz"`)
 	http.ServeFile(w, r, h.hashesPath)
 }
@@ -283,6 +284,10 @@ func (h *HashServer) digestHeader() string {
 	return h.digestHeaderCache
 }
 
+func IsMinLZ(b []byte) bool {
+	return bytes.Equal([]byte{0xFF, 0x06, 0x00, 0x00, 0x4D, 0x69, 0x6E, 0x4C, 0x7A}, b[:9])
+}
+
 func (h *HashServer) WriteHashes(hashes HashStorage) error {
 	// Encoding hashes requires a lock as it assumes pointers are in use to reduce unnecessary memory usage
 	logger.Println(log.Verbose, "Writing hashes to disk")
@@ -301,8 +306,8 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 
 	defer f.Close() //nolint:errcheck
 	writer := bufio.NewWriter(h.initDigests(f))
-	h.gzip.Reset(writer)
-	b := bufio.NewWriterSize(h.gzip, 32*1024)
+	h.minlz.Reset(writer)
+	b := bufio.NewWriterSize(h.minlz, 32*1024)
 	err = EncodeHashesV3(encodedHashes, b)
 	if err != nil {
 		return fmt.Errorf("failed to encode hashes to temporary file %q, %w", h.hashesPath+".tmp", err)
@@ -311,8 +316,8 @@ func (h *HashServer) WriteHashes(hashes HashStorage) error {
 		return fmt.Errorf("failed to write hashes: %w", err)
 	}
 
-	// Close gzip so we have a proper stream
-	if err = h.gzip.Close(); err != nil {
+	// Close minlz so we have a proper stream
+	if err = h.minlz.Close(); err != nil {
 		return fmt.Errorf("failed to write hashes: %w", err)
 	}
 	if err = writer.Flush(); err != nil {
@@ -345,7 +350,7 @@ func NewHashServer(hashes string, useAllChecksums bool) HashServer {
 		hashesPath:      hashes,
 		digests:         map[string][]byte{},
 		useAllChecksums: useAllChecksums,
-		gzip:            gzip.NewWriter(io.Discard),
+		minlz:           minlz.NewWriter(io.Discard),
 	}
 	f, err := os.Open(hashes)
 	if err != nil {

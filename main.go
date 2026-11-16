@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	gzip "github.com/klauspost/pgzip"
+	"github.com/minio/minlz"
 
 	"github.com/disintegration/imaging"
 	"github.com/kr/pretty"
@@ -161,24 +161,22 @@ func loadHashes(opts Opts) (*ch.SavedHashesV3, error) {
 	var hashReader io.Reader
 
 	log.Println(log.Verbose, "Looking for saved hashes at", hashesPath)
-	f, err := os.Open(hashesPath)
-	if err == nil {
-		defer f.Close()
-		var r io.ReadCloser = f
-		if gr, err := gzip.NewReader(f); err == nil {
-			r = gr
-			defer gr.Close()
-		} else {
-			_, _ = f.Seek(0, io.SeekStart)
-		}
-		log.Println(log.Standard, "Loading saved hashes from", hashesPath)
-		// We don't read everything here because we want some of these to be separate allocations
-		// And we don't want duplicate allocations
-		hashReader = bufio.NewReader(r)
-	} else {
+	b, err := os.ReadFile(hashesPath)
+	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			log.Println(log.Standard, "Unable to load saved hashes", err)
 		}
+	} else {
+		// We don't read everything here because we want some of these to be separate allocations
+		// And we don't want duplicate allocations
+		hashReader = bytes.NewReader(b)
+		if ok := ch.IsMinLZ(b); ok {
+			hashReader = minlz.NewReader(hashReader, minlz.ReaderFallback(false))
+			fmt.Println("This is a minilz file")
+		} else {
+			fmt.Println("SOMETHING MAY HAVE FUCKED UP", ok)
+		}
+		log.Println(log.Standard, "Loading saved hashes from", hashesPath)
 	}
 	if errors.Is(err, os.ErrNotExist) || hashReader == nil {
 		log.Println(log.Standard, "No saved hashes to load")
@@ -266,13 +264,8 @@ func DownloadUpstreamHashes(parent context.Context, client *http.Client, url URL
 		}
 	}
 	var reader io.Reader = bytes.NewReader(b)
-	if [3]byte(b[:3]) == [3]byte{0x1F, 0x8B, 0x8} {
-		gz, err := gzip.NewReader(bytes.NewReader(b))
-		if err != nil {
-			return nil, fmt.Errorf("HashServer did not send a gzipped response: %w", err)
-		}
-		defer gz.Close()
-		reader = gz
+	if ok := ch.IsMinLZ(b); ok {
+		reader = bufio.NewReader(minlz.NewReader(bytes.NewReader(b), minlz.ReaderFallback(false)))
 	}
 	loadedHashes, err := ch.DecodeHashesV3(reader)
 	if err != nil {
@@ -302,14 +295,10 @@ func saveHashes(opts Opts, hashes *ch.SavedHashesV3) error {
 	}
 	defer f.Close()
 	b := bufio.NewWriter(f)
-	gzw := gzip.NewWriter(b)
-	gzb := bufio.NewWriterSize(gzw, 32*1024)
-	err = ch.EncodeHashesV3(hashes, gzb)
+	gzw := minlz.NewWriter(b, minlz.WriterLevel(minlz.LevelFastest))
+	err = ch.EncodeHashesV3(hashes, gzw)
 	if err != nil {
 		return fmt.Errorf("unable to encode hashes: %w", err)
-	}
-	if err = gzb.Flush(); err != nil {
-		return fmt.Errorf("failed to write hashes: %w", err)
 	}
 
 	if err = gzw.Close(); err != nil {
