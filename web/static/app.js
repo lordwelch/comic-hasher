@@ -1334,119 +1334,134 @@ async function processFile(file, pendingHash, signal) {
 	const grid = document.createElement("div");
 	grid.className = "match-grid";
 	card.appendChild(grid);
-	function renderGrid() {
-		if (state.combined == null) return;
-		const visible = state.combined.filter(cardMatchesFilter);
-		grid.replaceChildren();
-		// Report no matches if they are hidden by a filter
-		if (visible.length === 0) {
-			serverStatus.textContent = "No hashes found";
-			serverStatus.classList.add("error");
-			return;
-		}
-		for (const cluster of clusterCards(visible)) {
-			if (cluster.length > 1) {
-				grid.appendChild(renderCluster(cluster, state, searchHash, refreshMatches));
-			} else {
-				grid.appendChild(renderMatch(cluster[0], state, searchHash, refreshMatches));
-			}
-		}
-		serverStatus.classList.remove("error");
-		if (selectedDomains.size === 0) {
-			serverStatus.textContent = state.summary;
-			return;
-		}
-		serverStatus.textContent = `${state.summary} · ${visible.length} of ${state.combined.length} shown`;
-	}
 
-	// Re-runs the lookup so grouping changes made elsewhere show up here.
-	let requestSeq = 0;
-	async function runMatchLookup() {
-		await domainsReady;
-		const seq = ++requestSeq;
-		let response;
-		try {
-			const params = new URLSearchParams();
-			if (includeAHash.checked) {
-				state.hashesSent.add("ahash");
-				params.set("ahash", result.hash.ahash);
-			}
-			params.set("dhash", result.hash.dhash);
-			state.hashesSent.add("dhash");
-			params.set("phash", result.hash.phash);
-			state.hashesSent.add("phash");
-			const max = Number.isInteger(maxDistInput.valueAsNumber) ? maxDistInput.valueAsNumber : 8;
-			params.set("max", String(Math.min(8, Math.max(0, max))));
-			params.set("exactOnly", exactOnlyInput.checked ? "true" : "false");
-			params.set("images", "true");
-			response = await fetch(`match_cover_hash?${params.toString()}`, {
-				signal,
-			});
-		} catch (err) {
-			if (state.dismissed || seq !== requestSeq) return;
-			if (signal.aborted) {
-				serverStatus.textContent = "Cancelled";
-				return;
-			}
-			serverStatus.textContent = `Network error: ${err.message}`;
-			serverStatus.className = "error";
-			return;
-		}
-
-		if (state.dismissed || seq !== requestSeq) return;
-
-		let data;
-		try {
-			data = await response.json();
-		} catch (err) {
-			if (state.dismissed || seq !== requestSeq) return;
-			if (signal.aborted) {
-				serverStatus.textContent = "Cancelled";
-				return;
-			}
-			serverStatus.textContent = `Invalid server response: ${err.message}`;
-			serverStatus.className = "error";
-			return;
-		}
-
-		if (state.dismissed || seq !== requestSeq) return;
-
-		if (!response.ok) {
-			serverStatus.textContent = data.msg || response.statusText;
-			serverStatus.className = "error";
-			return;
-		}
-
-		const results = data.results || [];
-		const combined = combineResults(results);
-		state.combined = combined;
-		state.candidateIDs = collectCandidateIDs(combined);
-		serverStatus.className = "server-status";
-		state.summary = data.msg || `${results.length} match${results.length === 1 ? "" : "es"}`;
-		renderGrid();
-	}
-
-	// Keeps the refresh button disabled while any lookup is still running.
-	let pendingLookups = 0;
-	async function refreshMatches() {
-		pendingLookups++;
-		refreshBtn.disabled = true;
-		try {
-			await runMatchLookup();
-		} finally {
-			pendingLookups--;
-			if (pendingLookups === 0) refreshBtn.disabled = state.dismissed;
-		}
-	}
+	const ctx = {
+		state,
+		signal,
+		hash: result.hash,
+		searchHash,
+		grid,
+		serverStatus,
+		refreshBtn,
+		requestSeq: 0,
+		pendingLookups: 0,
+	};
 
 	refreshBtn.addEventListener("click", () => {
-		refreshMatches();
+		refreshMatches(ctx);
 	});
 
-	state.refresh = refreshMatches;
-	state.applyFilter = renderGrid;
+	state.refresh = () => refreshMatches(ctx);
+	state.applyFilter = () => renderGrid(ctx);
 	openSearches.add(state);
-	await refreshMatches();
+	await refreshMatches(ctx);
+}
+
+function renderGrid(ctx) {
+	const { state, grid, serverStatus, searchHash } = ctx;
+	if (state.combined == null) return;
+	const visible = state.combined.filter(cardMatchesFilter);
+	grid.replaceChildren();
+	// Report no matches if they are hidden by a filter
+	if (visible.length === 0) {
+		serverStatus.textContent = "No hashes found";
+		serverStatus.classList.add("error");
+		return;
+	}
+	const onRefresh = () => refreshMatches(ctx);
+	for (const cluster of clusterCards(visible)) {
+		if (cluster.length > 1) {
+			grid.appendChild(renderCluster(cluster, state, searchHash, onRefresh));
+		} else {
+			grid.appendChild(renderMatch(cluster[0], state, searchHash, onRefresh));
+		}
+	}
+	serverStatus.classList.remove("error");
+	if (selectedDomains.size === 0) {
+		serverStatus.textContent = state.summary;
+		return;
+	}
+	serverStatus.textContent = `${state.summary} · ${visible.length} of ${state.combined.length} shown`;
+}
+
+// Re-runs the lookup so grouping changes made elsewhere show up here.
+async function runMatchLookup(ctx) {
+	const { state, signal, hash, serverStatus } = ctx;
+	await domainsReady;
+	const seq = ++ctx.requestSeq;
+	let response;
+	try {
+		const params = new URLSearchParams();
+		if (includeAHash.checked) {
+			state.hashesSent.add("ahash");
+			params.set("ahash", hash.ahash);
+		}
+		params.set("dhash", hash.dhash);
+		state.hashesSent.add("dhash");
+		params.set("phash", hash.phash);
+		state.hashesSent.add("phash");
+		const max = Number.isInteger(maxDistInput.valueAsNumber) ? maxDistInput.valueAsNumber : 8;
+		params.set("max", String(Math.min(8, Math.max(0, max))));
+		params.set("exactOnly", exactOnlyInput.checked ? "true" : "false");
+		params.set("images", "true");
+		response = await fetch(`match_cover_hash?${params.toString()}`, {
+			signal,
+		});
+	} catch (err) {
+		if (state.dismissed || seq !== ctx.requestSeq) return;
+		if (signal.aborted) {
+			serverStatus.textContent = "Cancelled";
+			return;
+		}
+		serverStatus.textContent = `Network error: ${err.message}`;
+		serverStatus.className = "error";
+		return;
+	}
+
+	if (state.dismissed || seq !== ctx.requestSeq) return;
+
+	let data;
+	try {
+		data = await response.json();
+	} catch (err) {
+		if (state.dismissed || seq !== ctx.requestSeq) return;
+		if (signal.aborted) {
+			serverStatus.textContent = "Cancelled";
+			return;
+		}
+		serverStatus.textContent = `Invalid server response: ${err.message}`;
+		serverStatus.className = "error";
+		return;
+	}
+
+	if (state.dismissed || seq !== ctx.requestSeq) return;
+
+	if (!response.ok) {
+		serverStatus.textContent = data.msg || response.statusText;
+		serverStatus.className = "error";
+		return;
+	}
+
+	const results = data.results || [];
+	const combined = combineResults(results);
+	state.combined = combined;
+	state.candidateIDs = collectCandidateIDs(combined);
+	serverStatus.className = "server-status";
+	state.summary = data.msg || `${results.length} match${results.length === 1 ? "" : "es"}`;
+	renderGrid(ctx);
+}
+
+// Keeps the refresh button disabled while any lookup is still running.
+async function refreshMatches(ctx) {
+	const { state, refreshBtn } = ctx;
+	ctx.pendingLookups++;
+	refreshBtn.disabled = true;
+	try {
+		await runMatchLookup(ctx);
+	} finally {
+		ctx.pendingLookups--;
+		if (ctx.pendingLookups === 0) refreshBtn.disabled = state.dismissed;
+	}
 }
 function releasePreview(state) {
 	if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
