@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"image"
 	_ "image/gif"
-	_ "image/jpeg"
 	_ "image/png"
 	"io"
 	"net/http"
@@ -26,7 +25,6 @@ import (
 
 	"github.com/minio/minlz"
 
-	"github.com/disintegration/imaging"
 	"github.com/kr/pretty"
 
 	_ "github.com/gen2brain/gav1d/avif"
@@ -42,7 +40,17 @@ import (
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"gitea.narnian.us/lordwelch/comic-hasher/metron"
 	"gitea.narnian.us/lordwelch/comic-hasher/storage"
+	jpeg "github.com/gen2brain/jpegn"
 )
+
+func init() {
+	image.RegisterFormat("jpeg", "\xff\xd8", func(r io.Reader) (image.Image, error) {
+		return jpeg.Decode(r, &jpeg.Options{
+			ToRGBA:         true,
+			UpsampleMethod: jpeg.CatmullRom,
+		})
+	}, jpeg.DecodeConfig)
+}
 
 var bufPool = &sync.Pool{
 	New: func() any {
@@ -390,7 +398,6 @@ func bToKb(b uint64) uint64 {
 func startServer(opts Opts) error {
 	tl := ch.TimeLog{}
 	tl.ResetTime()
-	imaging.SetMaxProcs(2)
 	if opts.cpuprofile != "" {
 		f, err := os.Create(opts.cpuprofile)
 		if err != nil {

@@ -6,10 +6,10 @@ go 1.27.1
 //
 // Storage types
 require (
-	gitea.narnian.us/lordwelch/goimagehash v0.0.0-20261112092808-e06ac052a7b8
+	gitea.narnian.us/lordwelch/goimagehash v0.0.0-20261117222623-98c189e374b5
 	github.com/OneOfOne/xxhash v1.2.8
-	github.com/disintegration/imaging v1.6.3-0.20201218193011-d40f48ce0f09
 	github.com/gen2brain/gav1d v0.2.7
+	github.com/gen2brain/jpegn v0.7.0
 	github.com/gen2brain/jxl v0.2.1
 	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3
 	github.com/google/go-cmp v0.7.0
@@ -41,7 +41,6 @@ require (
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/rogpeppe/go-internal v1.9.0 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
-	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
