@@ -18,11 +18,11 @@ func NewAsyncLogger(ctx context.Context, size int, alerter diode.Alerter) *Async
 }
 
 func (a *AsyncLogger) Set(data Record) {
-	a.poller.Set(diode.GenericDataType(&data))
+	a.poller.Diode.Set(diode.GenericDataType(&data))
 }
 
 func (a *AsyncLogger) TryNext() (Record, bool) {
-	data, ok := a.poller.TryNext()
+	data, ok := a.poller.Diode.TryNext()
 	if !ok {
 		return Record{}, ok
 	}

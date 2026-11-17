@@ -423,7 +423,7 @@ func EnableNonBlocking(ctx context.Context, queueSize int) func() {
 	Diode = NewAsyncLogger(ctx, queueSize, nil)
 	d := Diode
 	go Diode.Go()
-	return func() { cancel(); Diode = nil; d.Drain() }
+	return func() { Diode = nil; cancel(); d.Drain() }
 }
 
 // NewLogger creates a logger. Any aliases are additional names for the same logger, so two loggers that have the same alias can get their level set through a single name.

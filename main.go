@@ -123,7 +123,7 @@ func doStuff(opts Opts) int {
 	opts.path, _ = filepath.Abs(opts.path)
 	log.Println(log.Standard, pretty.Sprint(opts))
 	// We enable NonBlocking logs and defer the drain for when this function exits
-	defer log.EnableNonBlocking(context.Background(), 30)()
+	defer log.EnableNonBlocking(context.Background(), 100)()
 	err := startServer(opts)
 	if err != nil {
 		log.Log(log.Fatal, "comic-hasher failed: %v", err)

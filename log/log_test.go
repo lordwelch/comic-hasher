@@ -72,7 +72,7 @@ func TestLoggerOutputChangesWithLevelAsync(t *testing.T) {
 		oldFlags := stdlog.Flags()
 		ctx, cancel := context.WithCancel(t.Context())
 
-		EnableNonBlocking(ctx, 15)
+		EnableNonBlocking(ctx, 150)
 		t.Cleanup(func() {
 			cancel()
 			Diode = nil
@@ -138,7 +138,6 @@ func TestLoggerOutputChangesWithLevel(t *testing.T) {
 }
 
 func checkLogs(t *testing.T, logger Logger, assertOutput func(string)) {
-
 	// Trace records must be emitted for a logger at the trace level.
 	SetLevel(ALL, Standard)
 	SetLevel(logger, Trace)

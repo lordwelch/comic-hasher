@@ -59,24 +59,14 @@ func (p *Poller) Next() GenericDataType {
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 	for {
-		data, ok := p.Diode.TryNext() // nolint:staticcheck
-		if !ok {
-			select {
-			case <-ticker.C:
-			case <-p.ctx.Done():
-				return nil
+		select {
+		case <-ticker.C:
+			data, ok := p.Diode.TryNext()
+			if ok {
+				return data
 			}
-			continue
+		case <-p.ctx.Done():
+			return nil
 		}
-		return data
-	}
-}
-
-func (p *Poller) isDone() bool {
-	select {
-	case <-p.ctx.Done():
-		return true
-	default:
-		return false
 	}
 }
