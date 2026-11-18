@@ -5,11 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"image"
-	_ "image/jpeg"
 	"image/png"
+	"io"
 	"log"
 	"os"
 	"strings"
+
+	jpeg "github.com/gen2brain/jpegn"
 
 	_ "golang.org/x/image/webp"
 
@@ -18,11 +20,12 @@ import (
 )
 
 func init() {
-	// image.RegisterFormat("jpeg", "\xff\xd8", func(r io.Reader) (image.Image, error){return jpeg.Decode(r, &jpeg.DecoderOptions{
-	// 	DisableFancyUpsampling: false,
-	// 	DisableBlockSmoothing: false,
-	// 	DCTMethod: jpeg.DCTFloat,
-	// })}, jpeg.DecodeConfig)
+	image.RegisterFormat("jpeg", "\xff\xd8", func(r io.Reader) (image.Image, error) {
+		return jpeg.Decode(r, &jpeg.Options{
+			ToRGBA:         true,
+			UpsampleMethod: jpeg.CatmullRom,
+		})
+	}, jpeg.DecodeConfig)
 }
 
 func saveImage(im image.Image, name string) {
@@ -79,6 +82,7 @@ func main() {
 	log.SetFlags(0)
 	imPath := flag.String("file", "", "image file to hash")
 	debug := flag.Bool("debug", false, "Enable debug output")
+	bin := flag.Bool("bin", false, "Enable binary hash output")
 	flag.Parse()
 	if imPath == nil || *imPath == "" {
 		flag.Usage()
@@ -108,7 +112,13 @@ func main() {
 
 	hash := ch.HashImage(ch.Im{Im: im, Format: format, ID: ch.ID{Domain: ch.NewSource(ch.ComicVine), ID: "nothing"}})
 
-	fmt.Println("ahash: ", goimagehash.NewImageHash(hash.Hashes[0].Hash, hash.Hashes[0].Kind).BinString())
-	fmt.Println("dhash: ", goimagehash.NewImageHash(hash.Hashes[1].Hash, hash.Hashes[1].Kind).BinString())
-	fmt.Println("phash: ", goimagehash.NewImageHash(hash.Hashes[2].Hash, hash.Hashes[2].Kind).BinString())
+	if *bin {
+		fmt.Println("ahash: ", goimagehash.NewImageHash(hash.Hashes[0].Hash, hash.Hashes[0].Kind).BinString())
+		fmt.Println("dhash: ", goimagehash.NewImageHash(hash.Hashes[1].Hash, hash.Hashes[1].Kind).BinString())
+		fmt.Println("phash: ", goimagehash.NewImageHash(hash.Hashes[2].Hash, hash.Hashes[2].Kind).BinString())
+	} else {
+		fmt.Println("ahash: ", goimagehash.NewImageHash(hash.Hashes[0].Hash, hash.Hashes[0].Kind).String())
+		fmt.Println("dhash: ", goimagehash.NewImageHash(hash.Hashes[1].Hash, hash.Hashes[1].Kind).String())
+		fmt.Println("phash: ", goimagehash.NewImageHash(hash.Hashes[2].Hash, hash.Hashes[2].Kind).String())
+	}
 }

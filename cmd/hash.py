@@ -14,6 +14,7 @@ ap = argparse.ArgumentParser()
 
 ap.add_argument('--file', type=pathlib.Path)
 ap.add_argument('--debug', action='store_true')
+ap.add_argument('--bin', action='store_true')
 
 opts = ap.parse_args()
 opts.file = pathlib.Path(opts.file)
@@ -64,6 +65,11 @@ if opts.debug:
     print_image(resized)
     print(file=sys.stderr)
 
-print('ahash: ', str(imagehash.average_hash(image)))
-print('dhash: ', str(imagehash.dhash(image)))
-print('phash: ', str(imagehash.phash(image)))
+print_str = str
+
+if opts.bin:
+    print_str = bin_str
+
+print('ahash: ', print_str(imagehash.average_hash(image)))
+print('dhash: ', print_str(imagehash.dhash(image)))
+print('phash: ', print_str(imagehash.phash(image)))
