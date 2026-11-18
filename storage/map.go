@@ -83,7 +83,7 @@ func (m *Map) GetMatches(hashes []ch.Hash, max int, exactOnly bool) ([]ch.Result
 		var storedHash ch.HashV3
 		for _, tmatch = range realMatches {
 			for _, storedHash = range currentHashes[tmatch.index : tmatch.index+tmatch.count] {
-				foundMatches = append(foundMatches, m.getResult(storedHash, searchHash.Kind, tmatch.match.Distance))
+				foundMatches = append(foundMatches, m.hashes.GetResult(storedHash, searchHash.Kind, tmatch.match.Distance))
 			}
 		}
 	}

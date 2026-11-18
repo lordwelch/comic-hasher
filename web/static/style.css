@@ -50,6 +50,7 @@ h1 {
 
 #status {
 	display: inline-block;
+	overflow-wrap: anywhere;
 }
 
 body {
@@ -81,13 +82,10 @@ body {
 	view-timeline: --dz block;
 }
 
-#process-status {
-	clear: both;
-}
 @keyframes options-scroll {
 	to {
 		border: none;
-		width: 100%;
+		width: 100vw;
 		padding: 0.3rem;
 		flex-flow: row-reverse wrap-reverse;
 		margin-left: -1rem;
@@ -110,7 +108,7 @@ body {
 @supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
 	#options,
 	#options .options,
-	div:has(> #status) {
+	.status-wrap {
 		animation-timing-function: linear;
 		animation-fill-mode: both;
 		animation-timeline: --dz;
@@ -123,7 +121,8 @@ body {
 	#options .options {
 		animation-name: inner-options-scroll;
 	}
-	div:has(> #status) {
+	/* Only grow the status into the sticky bar row when it has something to say. */
+	.status-wrap:not(:has(> #status:empty)) {
 		animation-name: status-scroll;
 	}
 }
@@ -144,6 +143,13 @@ h1 {
 #cancel-btn,
 #clear-all-btn {
 	margin: 0 0 1rem;
+}
+
+/* #options floats left; keep the blocks that follow it clear of it. */
+#cancel-btn,
+#clear-all-btn,
+#results {
+	clear: both;
 }
 
 #drop-zone.dragover {
@@ -170,9 +176,18 @@ input[type="file"],
 }
 
 .meta,
-.hashes,
-.server-status {
+.hashes {
 	margin: 0.25rem 0;
+}
+
+/* Card-local status lines: one pattern for spacing, wrapping and empty state. */
+.status {
+	margin: 0.25rem 0;
+	overflow-wrap: anywhere;
+}
+
+.status:empty {
+	display: none;
 }
 
 .hashes {
@@ -239,33 +254,327 @@ input[type="file"],
 	min-width: 180px;
 }
 
-.match-card[draggable="true"] {
+/* Duplicate review cards: one compact card per ID, with exact hashes visible.
+   Every row has one cell per source so IDs for the same comic line up across
+   all domains. */
+.duplicate-id-grid {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+	margin-top: 0.75rem;
+}
+
+.duplicate-id-row {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+	gap: 0.75rem;
+	align-items: stretch;
+}
+
+/* One duplicate issue is a row of IDs that share hashes. It starts collapsed so
+   the summary can list the issue IDs and any available issue details. */
+.duplicate-issue {
+	border: 1px solid var(--border);
+	border-radius: 0.5rem;
+	background: var(--bg);
+	min-width: 0;
+}
+
+.duplicate-issue-linked {
+	border-color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.duplicate-issue > summary {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	padding: 0.45rem 0.55rem;
+	cursor: pointer;
+	list-style: none;
+	border-radius: 0.5rem;
+}
+
+.duplicate-issue > summary::-webkit-details-marker {
+	display: none;
+}
+
+.duplicate-issue > summary:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+.duplicate-issue-summary-marker {
+	flex-shrink: 0;
+	font-size: 0.7rem;
+	line-height: 1;
+	color: color-mix(in srgb, var(--fg) 60%, transparent);
+}
+
+.duplicate-issue[open] .duplicate-issue-summary-marker::after {
+	content: "▾";
+}
+
+.duplicate-issue:not([open]) .duplicate-issue-summary-marker::after {
+	content: "▸";
+}
+
+.duplicate-issue-summary-heading {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+	flex-wrap: wrap;
+}
+
+.duplicate-issue-summary-ids {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem 0.75rem;
+	font-size: 0.72rem;
+	color: color-mix(in srgb, var(--fg) 65%, transparent);
+}
+
+.duplicate-issue-summary-id {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0.35rem;
+}
+
+.duplicate-issue .issue-info-inline {
+	display: inline;
+	border: none;
+	padding: 0;
+	min-height: 0;
+	font-size: inherit;
+	line-height: inherit;
+	color: inherit;
+}
+
+.duplicate-issue > .duplicate-id-row {
+	padding: 0.5rem;
+	border-top: 1px solid var(--border);
+}
+
+.duplicate-id-cell {
+	display: flex;
+	min-width: 0;
+}
+
+.duplicate-id-cell > .duplicate-id-card {
+	flex: 1;
+}
+
+.duplicate-id-cell-empty {
+	border: 1px dashed var(--border);
+	border-radius: 0.5rem;
+	opacity: 0.25;
+}
+
+.duplicate-id-head-row {
+	align-items: end;
+}
+
+.duplicate-id-column-head {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+	margin: 0;
+	font-size: 0.8rem;
+	font-weight: 600;
+	color: color-mix(in srgb, var(--fg) 70%, transparent);
+	overflow-wrap: anywhere;
+}
+
+.duplicate-id-column-count {
+	margin-left: auto;
+	font-weight: 400;
+	color: color-mix(in srgb, var(--fg) 55%, transparent);
+	white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+	.duplicate-id-cell-empty {
+		display: none;
+	}
+}
+
+.duplicate-id-card {
+	border: 1px solid var(--border);
+	border-radius: 0.5rem;
+	padding: 0.5rem;
+	background: var(--bg);
+	display: flex;
+	gap: 0.6rem;
+	align-items: flex-start;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.duplicate-id-card .cover-thumb {
+	height: 240px;
+	max-width: 40%;
+	flex-shrink: 0;
+}
+
+/* The card is narrower than a search result card, so let the form's first
+   column shrink instead of forcing a fixed 8rem source picker. */
+.duplicate-id-card .group-form {
+	grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.duplicate-id-body {
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+	flex: 1;
+	min-width: 0;
+}
+
+.issue-info {
+	border: 1px dashed var(--border);
+	border-radius: 0.25rem;
+	padding: 0.15rem 0.35rem;
+	min-height: 1.8rem;
+	font-size: 0.72rem;
+	line-height: 1.3;
+	color: color-mix(in srgb, var(--fg) 65%, transparent);
+	overflow-wrap: anywhere;
+}
+
+.issue-info:empty::before {
+	content: attr(data-placeholder);
+}
+
+.duplicate-hashes {
+	display: flex;
+	flex-direction: column;
+	gap: 0.1rem;
+	margin: 0;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	font-size: 0.68rem;
+	line-height: 1.3;
+}
+
+.duplicate-hash {
+	display: flex;
+	gap: 0.4rem;
+	align-items: baseline;
+}
+
+.duplicate-hash dt {
+	min-width: 3.4rem;
+	font-weight: 600;
+	color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+
+.duplicate-hash dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+.duplicate-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem;
+	align-items: center;
+}
+
+.compare-toggle,
+.duplicate-compare-clear {
+	font-size: 0.72rem;
+	padding: 0.1rem 0.4rem;
+	cursor: pointer;
+	border: 1px solid var(--border);
+	border-radius: 0.25rem;
+	background: var(--card);
+	color: var(--fg);
+}
+
+.compare-toggle.compare-selected {
+	border-color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 18%, transparent);
+	color: var(--accent);
+}
+
+.duplicate-id-card.compare-selected {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 1px var(--accent);
+}
+
+.duplicate-linked {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem;
+	align-items: center;
+}
+
+.duplicate-linked-label {
+	font-size: 0.7rem;
+	color: color-mix(in srgb, var(--fg) 60%, transparent);
+}
+
+.duplicate-manual summary {
+	font-size: 0.72rem;
+	cursor: pointer;
+	color: color-mix(in srgb, var(--fg) 60%, transparent);
+}
+
+.duplicate-manual .group-form {
+	margin-top: 0.25rem;
+}
+
+.duplicate-compare {
+	margin-top: 0.75rem;
+	padding-top: 0.6rem;
+	border-top: 1px solid var(--border);
+	min-width: 0;
+}
+
+.duplicate-compare-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.duplicate-compare-legend {
+	margin: 0.15rem 0 0.4rem;
+	font-size: 0.75rem;
+	overflow-wrap: anywhere;
+	color: color-mix(in srgb, var(--fg) 65%, transparent);
+}
+
+.duplicate-compare-hint {
+	margin: 0.2rem 0 0;
+	font-size: 0.75rem;
+	overflow-wrap: anywhere;
+	color: color-mix(in srgb, var(--fg) 65%, transparent);
+}
+
+.match-card[draggable="true"],
+.duplicate-id-card[draggable="true"] {
 	cursor: grab;
 }
 
-.match-card.dragging {
+.match-card.dragging,
+.duplicate-id-card.dragging {
 	opacity: 0.45;
 }
 
-.match-card.drop-target {
+.match-card.drop-target,
+.duplicate-id-card.drop-target {
 	border-color: var(--accent);
 	outline: 2px dashed var(--accent);
 	outline-offset: 2px;
 }
 
-.match-card.drop-blocked {
+.match-card.drop-blocked,
+.duplicate-id-card.drop-blocked {
 	border-color: var(--error);
 	outline: 2px dashed var(--error);
 	outline-offset: 2px;
 	cursor: not-allowed;
-}
-
-.drop-status {
-	margin: 0.35rem 0 0;
-}
-
-.drop-status:empty {
-	display: none;
 }
 
 .cover-thumb {

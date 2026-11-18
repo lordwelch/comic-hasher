@@ -280,15 +280,26 @@ func TestGetHashesByID(t *testing.T) {
 	hashes.InsertHash(Hash{Kind: goimagehash.DHash, Hash: 2}, cvID)
 	hashes.InsertHash(Hash{Kind: goimagehash.PHash, Hash: 3}, metronID)
 
-	if got := hashes.GetHashes(cvID); len(got) != 2 {
+	cvIndex, found := hashes.FindID(cvID)
+	if !found {
+		t.FailNow()
+	}
+	if got := hashes.GetHashes(cvIndex); len(got) != 2 {
 		t.Fatalf("expected 2 hashes for CV ID, got %d", len(got))
 	}
-	if got := hashes.GetHashes(metronID); len(got) != 1 {
+
+	metronIndex, found := hashes.FindID(metronID)
+	if !found {
+		t.FailNow()
+	}
+	if got := hashes.GetHashes(metronIndex); len(got) != 1 {
 		t.Fatalf("expected 1 hash for metron ID, got %d", len(got))
 	}
+
 	unknown := ID{Domain: NewSource("comicvine.gamespot.com"), ID: "999"}
-	if got := hashes.GetHashes(unknown); len(got) != 0 {
-		t.Fatalf("expected no hashes for unknown ID, got %d", len(got))
+	unknownIndex, found := hashes.FindID(unknown)
+	if found {
+		t.Fatalf("expected to not find the unknown unknown ID, got %v %v", unknownIndex, found)
 	}
 }
 

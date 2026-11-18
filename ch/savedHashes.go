@@ -475,17 +475,22 @@ func (s *SavedHashesV3) SortIndex() {
 	}
 }
 
-// GetHashes returns every hash stored for id. It returns nil if id is unknown.
-func (s *SavedHashesV3) GetHashes(id ID) []Hash {
-	index, found := s.FindID(id)
-	if !found {
-		return nil
+func (s *SavedHashesV3) GetResult(hash HashV3, kind goimagehash.Kind, distance int) Result {
+	return Result{
+		Hash:          Hash{Hash: hash.Hash, Kind: kind},
+		ID:            s.IDAt(hash.ID),
+		Distance:      distance,
+		EquivalentIDs: s.GetAllIDs(hash.ID),
 	}
-	var results []Hash
+}
+
+// GetHashes returns every hash stored for id. It returns nil if id is unknown.
+func (s *SavedHashesV3) GetHashes(id uint32) []Result {
+	var results []Result
 	for _, kind := range []goimagehash.Kind{goimagehash.AHash, goimagehash.DHash, goimagehash.PHash} {
 		for _, stored := range *s.HashesForKind(kind) {
-			if stored.ID == index {
-				results = append(results, Hash{Hash: stored.Hash, Kind: kind})
+			if stored.ID == id {
+				results = append(results, s.GetResult(stored, kind, 0))
 			}
 		}
 	}

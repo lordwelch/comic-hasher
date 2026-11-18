@@ -30,7 +30,7 @@ func (b *Basic) atleast(kind goimagehash.Kind, maxDistance int, searchHash uint6
 	for _, storedHash := range *b.hashes.HashesForKind(kind) {
 		distance := bits.OnesCount64(searchHash ^ storedHash.Hash)
 		if distance <= maxDistance {
-			otherHashes = append(otherHashes, b.getResult(storedHash, kind, distance))
+			otherHashes = append(otherHashes, b.hashes.GetResult(storedHash, kind, distance))
 		}
 	}
 
@@ -54,7 +54,7 @@ func (b *Basic) exactMatches(hash ch.Hash) []ch.Result {
 		}
 		mappedIds[storedHash.ID] = true
 
-		foundMatches = append(foundMatches, b.getResult(storedHash, hash.Kind, 0))
+		foundMatches = append(foundMatches, b.hashes.GetResult(storedHash, hash.Kind, 0))
 	}
 	return foundMatches
 }
@@ -158,59 +158,104 @@ func (b *Basic) AssociateIDs(OldID, NewID ch.ID) error {
 	return b.hashes.AssociateIDs(OldID, NewID)
 }
 
-func (b *Basic) getResult(hash ch.HashV3, kind goimagehash.Kind, distance int) ch.Result {
-	return ch.Result{
-		Hash:          ch.Hash{Hash: hash.Hash, Kind: kind},
-		ID:            b.hashes.IDAt(hash.ID),
-		Distance:      distance,
-		EquivalentIDs: b.hashes.GetAllIDs(hash.ID),
+func (b *Basic) GetSources(i uint32) []string {
+	s := []string{}
+	groupID := b.hashes.IDs[i].Group
+	if groupID == ch.NoIDGroup {
+		return []string{b.hashes.Sources[b.hashes.IDs[i].Source]}
 	}
+	for _, rid := range b.hashes.IDGroups[groupID] {
+		s = append(s, b.hashes.Sources[b.hashes.IDs[rid].Source])
+	}
+	slices.Sort(s)
+	return s
+}
+
+func (b *Basic) hashSourcesCollide(_a, _b uint32) bool {
+	if b.hashes.IDs[_a].Source == b.hashes.IDs[_b].Source {
+		return true
+	}
+	bSources := b.GetSources(_b)
+	for _, source := range b.GetSources(_a) {
+		if slices.Contains(bSources, source) {
+			return true
+		}
+	}
+	return false
+}
+
+// Returns true if there are at least two seprate sources in this group of hashes
+func (b *Basic) hasDuplicate(group []uint32) bool {
+	for i, hash := range group {
+		for _, shash := range group[i+1:] {
+			if !b.hashSourcesCollide(hash, shash) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (b *Basic) results(res [][]uint32) [][]ch.Result {
+	results := make([][]ch.Result, 0, len(res))
+	for _, currentGroup := range res {
+		resGroup := make([]ch.Result, 0, len(currentGroup)*3)
+		for _, idIndex := range currentGroup {
+			resGroup = append(resGroup, b.hashes.GetHashes(idIndex)...)
+		}
+		results = append(results, resGroup)
+	}
+	return results
 }
 
 func (b *Basic) GetDuplicateHashes() [][]ch.Result {
-	res := [][]ch.Result{}
-	group := []ch.Result{}
-	var (
-		currentHash ch.HashV3
-		firstHash   = ch.HashV3{ID: ch.NoIDGroup} // This should never match. Though it's not enforced
-	)
-	for _, currentHash = range b.hashes.AHashes {
-		if currentHash.Hash != firstHash.Hash {
-			if len(group) > 0 {
-				group = append(group, b.getResult(firstHash, goimagehash.AHash, 0))
-			}
-			firstHash = currentHash
-			continue
-		}
-		group = append(group, b.getResult(currentHash, goimagehash.AHash, 0))
-	}
-	for _, currentHash = range b.hashes.DHashes {
-		if currentHash.Hash != firstHash.Hash {
-			if len(group) > 0 {
-				group = append(group, b.getResult(firstHash, goimagehash.DHash, 0))
-			}
-			firstHash = currentHash
-			continue
-		}
-		group = append(group, b.getResult(currentHash, goimagehash.DHash, 0))
-	}
-	for _, currentHash = range b.hashes.PHashes {
-		if currentHash.Hash != firstHash.Hash {
-			if len(group) > 0 {
-				group = append(group, b.getResult(firstHash, goimagehash.PHash, 0))
-			}
-			firstHash = currentHash
-			continue
-		}
-		group = append(group, b.getResult(currentHash, goimagehash.PHash, 0))
-	}
-	return res
+	hashes := b.getDuplicateHashes(goimagehash.DHash)
+	hashes = append(hashes, b.getDuplicateHashes(goimagehash.PHash)...)
+	return hashes
 }
 
-func (b *Basic) GetHashes(id ch.ID) []ch.Hash {
+func (b *Basic) getDuplicateHashes(kind goimagehash.Kind) [][]ch.Result {
+	var (
+		currentHash ch.HashV3
+		lastHash    ch.HashV3
+	)
 	b.hashMutex.RLock()
 	defer b.hashMutex.RUnlock()
-	return b.hashes.GetHashes(id)
+	hashes := *b.hashes.HashesForKind(kind)
+
+	groups := [][]uint32{}
+	currentGroup := []uint32{}
+	lastHash = hashes[0]
+	currentGroup = append(currentGroup, lastHash.ID)
+	for _, currentHash = range hashes[1:] {
+		if lastHash.Hash == currentHash.Hash {
+			currentGroup = append(currentGroup, currentHash.ID)
+			lastHash = currentHash
+			continue
+		}
+
+		lastHash = currentHash
+		if len(currentGroup) < 2 {
+			currentGroup = currentGroup[:0]
+			continue
+		}
+		if b.hasDuplicate(currentGroup) {
+			groups = append(groups, slices.Clone(currentGroup))
+		}
+		currentGroup = currentGroup[:0]
+	}
+	fmt.Println("basic dupes", len(groups))
+	return b.results(groups)
+}
+
+func (b *Basic) GetHashes(id ch.ID) []ch.Result {
+	b.hashMutex.RLock()
+	defer b.hashMutex.RUnlock()
+	idIndex, found := b.hashes.FindID(id)
+	if !found {
+		return nil
+	}
+	return b.hashes.GetHashes(idIndex)
 }
 
 func (b *Basic) GetIDs(id ch.ID) []ch.ID {

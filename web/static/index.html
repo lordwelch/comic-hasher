@@ -21,7 +21,7 @@
   <h1>Comic Cover Hash Lookup</h1>
   <div id="cont">
     <div id="options">
-      <div>Status:<div id="status"></div></div>
+      <div class="status-wrap">Status: <div id="status" role="status"></div></div>
       <div class="options">
         <label>Include A Hash <input type="checkbox" id="include-ahash"/></label>
         <label>Max distance <input type="number" id="max-dist" min="0" max="8" value="8"/></label>
@@ -39,6 +39,7 @@
           {{domains}}
         </div>
         <button type="button" id="domain-filter-clear">Show all</button>
+        <button type="button" id="check-duplicates">Check Duplicates</button>
       </div>
     </div>
     <div id="drop-zone">
@@ -46,7 +47,6 @@
       <input type="file" id="file-input" multiple accept="image/*,.zip,.cbz,.rar,.cbr" disabled>
     </div>
   </div>
-  <p id="process-status"></p>
   <button type="button" id="cancel-btn" hidden>Cancel</button>
   <button type="button" id="clear-all-btn" hidden>Clear all results</button>
   <div id="results"><p class="empty-state">No searches. Drop files to begin.</p></div>

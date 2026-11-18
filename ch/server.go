@@ -170,6 +170,7 @@ func (s *Server) setupAppHandlers() {
 	s.Mux.HandleFunc("/domains", s.domains)
 	s.Mux.HandleFunc("/add_cover", s.addCover)
 	s.Mux.HandleFunc("/match_cover_hash", s.matchCoverHash)
+	s.Mux.HandleFunc("/get_duplicates", s.getDuplicates)
 	s.Mux.HandleFunc("/associate_ids", s.associateIDs)
 	s.Mux.HandleFunc("/disassociate_id", s.disassociateID)
 	s.Mux.HandleFunc("/get_cover_hash", s.getCoverHash)
@@ -525,8 +526,8 @@ func (s *Server) getCoverHash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type result struct {
-		Results []Hash `json:"results,omitempty"`
-		Msg     string `json:"msg,omitempty"`
+		Results []Result `json:"results,omitempty"`
+		Msg     string   `json:"msg,omitempty"`
 	}
 	var (
 		values = r.URL.Query()
@@ -552,6 +553,11 @@ func (s *Server) getCoverHash(w http.ResponseWriter, r *http.Request) {
 type result struct {
 	Results []Result `json:"results,omitempty"`
 	Msg     string   `json:"msg,omitempty"`
+}
+
+type dupeResult struct {
+	Results [][]Result `json:"results,omitempty"`
+	Msg     string     `json:"msg,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, res any) {
@@ -679,6 +685,48 @@ func (s *Server) matchCoverHash(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, result{
+		Results: matches,
+	})
+}
+
+func (s *Server) getDuplicates(w http.ResponseWriter, r *http.Request) {
+	user, authed := s.authenticated(w, r)
+	if !authed || user == "" {
+		http.Error(w, "Invalid Auth", http.StatusForbidden)
+		return
+	}
+	var (
+		values = r.URL.Query()
+		images = strings.ToLower(strings.TrimSpace(values.Get("images"))) == "true"
+	)
+
+	timer := prometheus.NewTimer(prometheus.ObserverFunc(func(v float64) {
+		s.lastRequestDuration.Set(v)
+	}))
+	defer timer.ObserveDuration()
+	matches := s.Storage.GetDuplicateHashes()
+	cmpFunc := func(a Result, b Result) int {
+		return cmp.Or(
+			cmp.Compare(a.Hash.Kind, b.Hash.Kind),
+			cmp.Compare(a.Hash.Hash, b.Hash.Hash),
+			a.ID.Compare(b.ID),
+			cmp.Compare(a.Distance, b.Distance),
+		)
+	}
+	for _, matchGroup := range matches {
+		slices.SortFunc(matchGroup, cmpFunc)
+		matchGroup = slices.CompactFunc(matchGroup, func(a, b Result) bool { return cmpFunc(a, b) == 0 })
+		if images {
+			for i := range matchGroup {
+				matchGroup[i].ImageURL = s.IssueImageURL(matchGroup[i].ID)
+			}
+		}
+	}
+	if len(matches) == 0 {
+		writeJSON(w, http.StatusNotFound, result{Msg: "No hashes found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, dupeResult{
 		Results: matches,
 	})
 }

@@ -177,11 +177,12 @@ func (v *VPTree) AssociateIDs(OldID, NewID ch.ID) error {
 	return errors.New("not implemented")
 }
 
-func (v *VPTree) GetHashes(id ch.ID) []ch.Hash {
-	if v.hashes == nil {
+func (v *VPTree) GetHashes(id ch.ID) []ch.Result {
+	idIndex, found := v.hashes.FindID(id)
+	if !found {
 		return nil
 	}
-	return v.hashes.GetHashes(id)
+	return v.hashes.GetHashes(idIndex)
 }
 
 func (v *VPTree) getResult(hash ch.HashV3, kind goimagehash.Kind, distance int) ch.Result {

@@ -173,7 +173,7 @@ type HashStorage interface {
 	// For checking if an ID is already hashed so we don't download the cover again
 	GetIDs(id ID) []ID
 	// For comparing why a cover didn't match all hashes
-	GetHashes(id ID) []Hash
+	GetHashes(id ID) []Result
 	// You can probably figure this one out
 	LoadHashes(hashes *SavedHashesV3) (Metrics, error)
 	// Note specifically BasicStorage and MapStorage simply return the live pointer. The caller is responsible for calling [HashStorage.Rlock] and [HashStorage.RUnlock]

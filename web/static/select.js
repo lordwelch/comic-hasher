@@ -242,13 +242,11 @@
 				minWidth: `${offsetWidth}px`,
 			});
 			this._toggle.focus({ focusVisible: false });
-			this._toggle.setAttribute("aria-expanded", "true");
 			this._menu.classList.add(CLASS_NAME_SHOW);
 			this._toggle.classList.add(CLASS_NAME_SHOW);
 		}
 
 		_hideMenu() {
-			this._toggle.setAttribute("aria-expanded", "false");
 			this._menu.classList.remove(CLASS_NAME_SHOW);
 			this._toggle.classList.remove(CLASS_NAME_SHOW);
 		}
@@ -359,15 +357,12 @@
 		_selectItem(item) {
 			if (this._config.multiple) {
 				item.classList.toggle(CLASS_NAME_SELECTED);
-				item.setAttribute("aria-selected", String(item.classList.contains(CLASS_NAME_SELECTED)));
 			} else {
 				for (const prev of this._getSelectedItems()) {
 					prev.classList.remove(CLASS_NAME_SELECTED);
-					prev.setAttribute("aria-selected", "false");
 				}
 
 				item.classList.add(CLASS_NAME_SELECTED);
-				item.setAttribute("aria-selected", "true");
 			}
 
 			this._updateToggleText();
