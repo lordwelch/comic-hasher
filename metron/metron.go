@@ -288,7 +288,6 @@ func (d *Downloader) GetIssue(id ch.ID) (ch.Issue, error) {
 		return ch.Issue{}, fmt.Errorf("invalid ID: %w", err)
 	}
 	i := d.DB.Issue(idInt)
-	log.Println(log.Trace, "metron GetIssue", i)
 	if i.Image.String() == "" {
 		return ch.Issue{}, fmt.Errorf("unable to find issue: %v", id)
 	}
