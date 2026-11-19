@@ -44,6 +44,10 @@ const resultStates = new Set();
 let cardDrag = null;
 let groupSuggestionSeq = 0;
 
+// Drag state for comparing IDs: the compare button currently being dragged.
+const COMPARE_DRAG_TYPE = "application/x-comic-hasher-compare";
+let compareDrag = null;
+
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
@@ -1263,6 +1267,51 @@ function setCompareState(card, button, index) {
 	button.classList.toggle("compare-selected", selected);
 }
 
+// Selects an exact pair for comparison: A is the dragged ID, B is the target.
+function setComparePair(ctx, keyA, keyB) {
+	if (keyA === keyB) return;
+	ctx.state.compareSelection = [keyA, keyB];
+	updateDuplicateCompareSelection(ctx);
+}
+
+function clearCompareDropMarks() {
+	for (const card of document.querySelectorAll(".duplicate-id-card.compare-drop-target")) {
+		card.classList.remove("compare-drop-target");
+	}
+}
+
+// Lets a duplicate card accept a compare button dragged from another card in
+// the same group. Grouping drags are handled separately by makeCardDraggable.
+function makeCompareDropTarget(el, ctx, key) {
+	const canDrop = () => compareDrag && compareDrag.ctx === ctx && compareDrag.el !== el && compareDrag.key !== key;
+	const clear = () => el.classList.remove("compare-drop-target");
+
+	el.addEventListener("dragenter", (e) => {
+		if (canDrop()) e.preventDefault();
+	});
+
+	el.addEventListener("dragover", (e) => {
+		if (!canDrop()) return;
+		e.preventDefault();
+		e.dataTransfer.dropEffect = "copy";
+		el.classList.add("compare-drop-target");
+	});
+
+	el.addEventListener("dragleave", (e) => {
+		if (!el.contains(e.relatedTarget)) clear();
+	});
+
+	el.addEventListener("drop", (e) => {
+		if (!canDrop()) return;
+		e.preventDefault();
+		e.stopPropagation();
+		const dragged = compareDrag;
+		compareDrag = null;
+		clearCompareDropMarks();
+		setComparePair(ctx, dragged.key, key);
+	});
+}
+
 // A compact card for one ID in a duplicate group. It keeps hash values visible
 // and reserves a spot for issue details, unlike the cards used for file searches.
 function renderDuplicateIDCard(ctx, entry) {
@@ -1287,6 +1336,30 @@ function renderDuplicateIDCard(ctx, entry) {
 	const body = create("div", "duplicate-id-body");
 	const idWrap = create("div", "match-id");
 	idWrap.appendChild(idLink(entry.ID.Domain, entry.ID.ID));
+
+	// The compare button sits on the ID line, next to the link.
+	const compareBtn = create("button", "compare-toggle");
+	compareBtn.type = "button";
+	compareBtn.title = "Click to select for comparison, or drag onto another ID's card to compare them";
+	compareBtn.draggable = true;
+	setCompareState(el, compareBtn, state.compareSelection.indexOf(key));
+	compareBtn.addEventListener("click", () => toggleDuplicateCompare(ctx, entry));
+	compareBtn.addEventListener("dragstart", (e) => {
+		compareDrag = { el, key, ctx };
+		e.dataTransfer.effectAllowed = "copy";
+		e.dataTransfer.setData(COMPARE_DRAG_TYPE, key);
+		e.dataTransfer.setData("text/plain", key);
+		compareBtn.classList.add("compare-dragging");
+		el.classList.add("compare-dragging");
+	});
+	compareBtn.addEventListener("dragend", () => {
+		compareDrag = null;
+		compareBtn.classList.remove("compare-dragging");
+		el.classList.remove("compare-dragging");
+		clearCompareDropMarks();
+	});
+	idWrap.appendChild(compareBtn);
+
 	// The issue info is reserved for details that will be added later.
 	body.append(idWrap, makeIssueInfo(entry));
 
@@ -1301,17 +1374,11 @@ function renderDuplicateIDCard(ctx, entry) {
 	}
 	body.appendChild(hashes);
 
-	const actions = create("div", "duplicate-actions");
-	const compareBtn = create("button", "compare-toggle");
-	compareBtn.type = "button";
-	compareBtn.title = "Select this ID to compare its hashes with another ID";
-	setCompareState(el, compareBtn, state.compareSelection.indexOf(key));
-	compareBtn.addEventListener("click", () => toggleDuplicateCompare(ctx, entry));
-	actions.appendChild(compareBtn);
-	if (entry.EquivalentIDs.length > 0) actions.appendChild(makeUngroupButton(entry.ID, ctx.refresh, cardStatus));
-	body.appendChild(actions);
-
 	if (entry.EquivalentIDs.length > 0) {
+		const actions = create("div", "duplicate-actions");
+		actions.appendChild(makeUngroupButton(entry.ID, ctx.refresh, cardStatus));
+		body.appendChild(actions);
+
 		const linkedChips = create("div", "chips");
 		for (const eid of entry.EquivalentIDs) addChip(linkedChips, eid, ctx.refresh, cardStatus);
 		const linked = create("div", "duplicate-linked");
@@ -1331,6 +1398,7 @@ function renderDuplicateIDCard(ctx, entry) {
 
 	state.compareButtons.set(key, { card: el, button: compareBtn });
 	makeCardDraggable(el, entry, cardStatus, ctx.refresh);
+	makeCompareDropTarget(el, ctx, key);
 	return el;
 }
 

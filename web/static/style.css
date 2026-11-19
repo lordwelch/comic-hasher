@@ -502,6 +502,26 @@ input[type="file"],
 	box-shadow: 0 0 0 1px var(--accent);
 }
 
+.compare-toggle[draggable="true"] {
+	cursor: grab;
+}
+
+.compare-toggle.compare-dragging {
+	cursor: grabbing;
+	opacity: 0.6;
+}
+
+.duplicate-id-card.compare-dragging {
+	opacity: 0.45;
+}
+
+.duplicate-id-card.compare-drop-target {
+	border-color: var(--accent);
+	outline: 2px dashed var(--accent);
+	outline-offset: 2px;
+	background: color-mix(in srgb, var(--accent) 8%, var(--card));
+}
+
 .duplicate-linked {
 	display: flex;
 	flex-wrap: wrap;
@@ -673,6 +693,11 @@ a:has(.cover-thumb) {
 	display: flex;
 	align-items: center;
 	gap: 0.25rem;
+}
+
+/* Push the compare button to the right edge of the ID line. */
+.match-id .compare-toggle {
+	margin-left: auto;
 }
 
 .group-form {
