@@ -23,26 +23,17 @@ const (
 	_ = iota + 1
 	Basic
 	Map
-	Sqlite
-	Sqlite3
-	VPTree
 )
 
 var storageNames = map[Storage]string{
 	Map:     "Map",
 	Basic:   "Basic",
-	Sqlite:  "Sqlite",
-	Sqlite3: "Sqlite3",
-	VPTree:  "VPTree",
 }
 
 var storageValues = map[string]Storage{
 	"map":      Map,
 	"basic":    Basic,
 	"basicmap": Basic,
-	"sqlite":   Sqlite,
-	"sqlite3":  Sqlite3,
-	"vptree":   VPTree,
 }
 
 type URLFlag url.URL
@@ -227,7 +218,7 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 	fs.BoolVar(&opts.loadEmbeddedHashes, "load-embedded-hashes", true, "Use hashes embedded in the application if there are no saved hashes to load")
 	fs.BoolVar(&opts.saveEmbeddedHashes, "save-embedded-hashes", true, "Allows blocking the saving of the embedded hashes")
 
-	fs.Var(&opts.storageType, "storage-type", "Specify the `storage type` used internally to search hashes\n(Basic, Map, Sqlite, Sqlite3, VPTree)")
+	fs.Var(&opts.storageType, "storage-type", "Specify the `storage type` used internally to search hashes\n(Basic, Map)")
 	fs.DurationVar(&opts.hashSaveInterval, "hash-save-interval", time.Hour, "Specify the interval that hashes will automaticall be saved to disk. 0 means never")
 
 	fs.BoolVar(&opts.onlyHashNewIDs, "only-hash-new-ids", true, "Only hashes new covers\n\nIf multiple image types (-cv-images) are selected more than 1 may get through")

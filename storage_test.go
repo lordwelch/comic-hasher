@@ -241,36 +241,6 @@ func TestMapStorage(t *testing.T) {
 	t.Run("GetIDs", func(t *testing.T) { GetIDs(t, hs) })
 }
 
-func TestVPSStorage(t *testing.T) {
-	hs, err := storage.NewVPTree()
-	if err != nil {
-		t.Fatal("Failed to create basic storage:", err)
-	}
-	SeedHashes(hs)
-
-	t.Run("GetMatchesBasic", func(t *testing.T) { GetMatchesBasic(t, hs) })
-	t.Run("GetMatchesNoMatchExact", func(t *testing.T) { GetMatchesNoMatchExact(t, hs) })
-	t.Run("GetMatchesSharedAHash", func(t *testing.T) { GetMatchesSharedAHash(t, hs) })
-	t.Run("GetMatchesNearDHash", func(t *testing.T) { GetMatchesNearDHash(t, hs) })
-	t.Run("GetMatchesMultipleHashes", func(t *testing.T) { GetMatchesMultipleHashes(t, hs) })
-	t.Run("GetIDs", func(t *testing.T) { GetIDs(t, hs) })
-}
-
-func TestSqliteStorage(t *testing.T) {
-	hs, err := storage.NewSqliteStorage("sqlite", filepath.Join(t.TempDir(), "sqlite.db"))
-	if err != nil {
-		t.Fatal("Failed to create sqlite storage:", err)
-	}
-	SeedHashes(hs)
-
-	t.Run("GetMatchesBasic", func(t *testing.T) { GetMatchesBasic(t, hs) })
-	t.Run("GetMatchesNoMatchExact", func(t *testing.T) { GetMatchesNoMatchExact(t, hs) })
-	t.Run("GetMatchesSharedAHash", func(t *testing.T) { GetMatchesSharedAHash(t, hs) })
-	t.Run("GetMatchesNearDHash", func(t *testing.T) { GetMatchesNearDHash(t, hs) })
-	t.Run("GetMatchesMultipleHashes", func(t *testing.T) { GetMatchesMultipleHashes(t, hs) })
-	t.Run("GetIDs", func(t *testing.T) { GetIDs(t, hs) })
-}
-
 type fakeMux struct {
 	ch.HashServer
 }
@@ -505,23 +475,6 @@ func BenchmarkStorageSmall(fuck *testing.B) {
 			hs.GetMatches(Match, 8, true)
 		}
 	})
-
-	hs, err = storage.NewVPTree()
-	if err != nil {
-		fuck.Fatal("Failed to create VPS storage:", err)
-	}
-	SeedEmbeddedHashes(hs)
-	runtime.GC()
-	runtime.GC()
-	m = runtime.MemStats{}
-	runtime.ReadMemStats(&m)
-
-	fuck.Run("VPS Storage", func(b *testing.B) {
-		for b.Loop() {
-			b.ReportMetric(float64(m.HeapAlloc), "bytes")
-			hs.GetMatches(Match, 8, true)
-		}
-	})
 }
 
 func BenchmarkStorageLarge(b *testing.B) {
@@ -559,23 +512,6 @@ func BenchmarkStorageLarge(b *testing.B) {
 	runtime.ReadMemStats(&m)
 
 	b.Run("Map Storage", func(b *testing.B) {
-		for b.Loop() {
-			b.ReportMetric(float64(m.HeapAlloc), "bytes")
-			hs.GetMatches(Match, 8, true)
-		}
-	})
-
-	hs, err = storage.NewVPTree()
-	if err != nil {
-		b.Fatal("Failed to create VPS storage:", err)
-	}
-	SeedEmbeddedHashes(hs)
-	runtime.GC()
-	runtime.GC()
-	m = runtime.MemStats{}
-	runtime.ReadMemStats(&m)
-
-	b.Run("VPS Storage", func(b *testing.B) {
 		for b.Loop() {
 			b.ReportMetric(float64(m.HeapAlloc), "bytes")
 			hs.GetMatches(Match, 8, true)

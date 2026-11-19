@@ -157,8 +157,6 @@ func initializeStorage(opts Opts) (ch.HashStorage, error) {
 		return storage.NewMap()
 	case Basic:
 		return storage.NewBasic()
-	case VPTree:
-		return storage.NewVPTree()
 	}
 	return nil, errors.New("unknown storage type provided")
 }
