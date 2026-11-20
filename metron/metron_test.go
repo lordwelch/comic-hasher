@@ -3,6 +3,7 @@ package metron
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+
+	"gitea.narnian.us/lordwelch/comic-hasher/ch"
 )
 
 func TestMain(m *testing.M) {
@@ -19,6 +22,36 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	time.Local = oldLocal
 	os.Exit(code)
+}
+
+func TestIssueRoundTripZSTD(t *testing.T) {
+	db, err := OpenBolt(filepath.Join(t.TempDir(), "metron.bolt"), DBVersion, []string{BucketIssue, BucketMeta})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	codec, err := ch.NewCodec(ch.CompressionZSTD, zstdDict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Codec = codec
+	issue := Issue{
+		Series:    Series{ID: 1, Name: "S", Volume: 1, YearBegan: 2022},
+		ID:        42,
+		Number:    "1",
+		Issue:     "S #1",
+		CoverDate: time.Date(2022, 9, 1, 0, 0, 0, 0, time.UTC),
+		StoreDate: time.Date(2022, 9, 14, 0, 0, 0, 0, time.UTC),
+		Image:     url.URL{Scheme: "https", Host: "static.metron.cloud", Path: "/media/issue/1000/cover.jpg"},
+		Coverhash: "0123456789abcdef",
+	}
+	if err := db.PutIssue(nil, issue); err != nil {
+		t.Fatal(err)
+	}
+	got := db.Issue(nil, 42)
+	if got.ID != issue.ID || got.Number != issue.Number || got.Issue != issue.Issue {
+		t.Fatalf("mismatch: %+v", got)
+	}
 }
 
 // Cache functions at all

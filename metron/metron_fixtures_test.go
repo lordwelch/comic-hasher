@@ -262,6 +262,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		testAPIKey,
 		true,
 		false,
+		ch.CompressionMinLZ,
 		finished,
 	)
 	if err != nil {

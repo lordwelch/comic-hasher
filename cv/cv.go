@@ -4,6 +4,7 @@ package cv
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,11 +25,13 @@ import (
 	dl "gitea.narnian.us/lordwelch/comic-hasher/download"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"gitea.narnian.us/lordwelch/comic-hasher/metron"
-	minlz "github.com/minio/minlz"
 	bolt "go.etcd.io/bbolt"
 )
 
 var logger = log.NewLogger("comicvine", "downloads")
+
+//go:embed zstd.dict
+var zstdDict []byte
 
 type CVAuth string
 
@@ -138,6 +141,7 @@ type Downloader struct {
 
 	DB        Bolt
 	PageCache Bolt
+	Codec     ch.Codec
 
 	fileList       []string
 	totalResults   int64
@@ -163,6 +167,9 @@ type Key string
 
 type Bolt struct {
 	ch.Bolt
+
+	// Codec is used to compress and decompress cache entries.
+	Codec ch.Codec
 }
 
 // decodeBuf is the static array Issue functions decompress into.
@@ -184,12 +191,8 @@ func (b Bolt) Issue(tx *bolt.Tx, id int64) Issue {
 		return Issue{}
 	}
 	value := bucket.Get(ch.IntToBolt(id))
-	if ok, _, err := minlz.IsMinLZ(value); err == nil && ok {
-		decoded, err := minlz.Decode(decodeBuf[:0], value)
-		if err != nil {
-			return Issue{}
-		}
-		value = decoded
+	if value = b.Codec.Decompress(decodeBuf[:0], value); len(value) == 0 {
+		return Issue{}
 	}
 	if err := json.Unmarshal(value, &issue); err != nil {
 		return Issue{}
@@ -208,7 +211,7 @@ func (b Bolt) PutIssue(tx *bolt.Tx, issue Issue) error {
 	if err != nil {
 		return fmt.Errorf("failed to convert issue to bytes: %w", err)
 	}
-	content, err = minlz.AppendEncoded(nil, content, minlz.LevelFastest)
+	content, err = b.Codec.Compress(content)
 	if err != nil {
 		return fmt.Errorf("failed to compress issue: %w", err)
 	}
@@ -258,9 +261,9 @@ func (b Bolt) PutTotalResults(n int64) error {
 func OpenBolt(path string, version ch.Version, buckets []string) (Bolt, error) {
 	b, err := ch.OpenBolt(path, version, buckets)
 	if err != nil {
-		return Bolt{b}, err
+		return Bolt{Bolt: b}, err
 	}
-	return Bolt{b}, nil
+	return Bolt{Bolt: b}, nil
 }
 
 func getOffset(name string) int {
@@ -298,7 +301,7 @@ func (c *Downloader) GetIssue(id ch.ID) (ch.Issue, error) {
 }
 
 func (c *Downloader) getCachedPage(offset int64, update bool) (*CVResult, error) {
-	data := ch.DecompressMinLZ(c.PageCache.Get(BucketPageCache, ch.IntToBolt(offset)))
+	data := c.PageCache.Codec.Decompress(nil, c.PageCache.Get(BucketPageCache, ch.IntToBolt(offset)))
 	if len(data) == 0 {
 		return nil, ErrMissingPage
 	}
@@ -578,7 +581,7 @@ func (c *Downloader) cleanBadURLs() error {
 				toDelete = append(toDelete, bytes.Clone(k))
 				return nil
 			}
-			if err := json.Unmarshal(ch.DecompressMinLZ(v), &page); err != nil {
+			if err := json.Unmarshal(c.PageCache.Codec.Decompress(nil, v), &page); err != nil {
 				toDelete = append(toDelete, bytes.Clone(k))
 				return nil
 			}
@@ -610,7 +613,7 @@ func (c *Downloader) cleanBadURLs() error {
 var baseURL = metron.MustParseURL("https://comicvine.gamespot.com/api/issues/?sort=date_added,id:asc&format=json&field_list=id,issue_number,image,volume")
 
 func (c *Downloader) getPage(offset int64) ([]byte, error) {
-	if data := ch.DecompressMinLZ(c.PageCache.Get(BucketPageCache, ch.IntToBolt(offset))); len(data) > 0 {
+	if data := c.PageCache.Codec.Decompress(nil, c.PageCache.Get(BucketPageCache, ch.IntToBolt(offset))); len(data) > 0 {
 		return data, nil
 	}
 	URI := *baseURL
@@ -633,7 +636,7 @@ func (c *Downloader) getPage(offset int64) ([]byte, error) {
 	if resp.StatusCode != 200 {
 		return body, fmt.Errorf("response code: %d", resp.StatusCode)
 	}
-	toStore, err := minlz.AppendEncoded(nil, body, minlz.LevelFastestSIMD)
+	toStore, err := c.PageCache.Codec.Compress(body)
 	if err != nil {
 		return body, fmt.Errorf("failed to compress page: %w", err)
 	}
@@ -691,8 +694,13 @@ func NewCVDownloader(
 	basePath, APIKey string,
 	imageTypes Images,
 	keepDownloadedImages, sendExistingImages bool,
+	compression ch.Compression,
 	finishedDownloadQueue chan<- dl.Download,
 ) (*Downloader, error) {
+	codec, err := ch.NewCodec(compression, zstdDict)
+	if err != nil {
+		return nil, err
+	}
 	c := &Downloader{
 		basePath:              basePath,
 		version:               version,
@@ -705,8 +713,8 @@ func NewCVDownloader(
 		chdb:                  chdb,
 		getID:                 getID,
 		onlyHashNewIDs:        onlyHashNewIDs,
+		Codec:                 codec,
 	}
-	var err error
 	_ = os.MkdirAll(c.basePath, 0o777)
 	// Open comicvine bolt
 	c.DB, err = OpenBolt(filepath.Join(c.basePath, "comicvine.bolt"), DBVersion, []string{BucketIssue, BucketMeta})
@@ -714,6 +722,7 @@ func NewCVDownloader(
 		logger.Log(log.Fatal, "failed to open comicvine database: %v", err)
 		return nil, err
 	}
+	c.DB.Codec = codec
 	// JSONPath := filepath.Join(c.basePath, jsonDirectory)
 	// if entries, err := os.ReadDir(JSONPath); err == nil {
 	// 	for _, e := range entries {
@@ -769,6 +778,7 @@ func DownloadCovers(ctx context.Context, c *Downloader) {
 		logger.Log(log.Fatal, "failed to open page cache database: %v", err)
 		return
 	}
+	c.PageCache.Codec = c.Codec
 	defer c.PageCache.Close()
 
 	// Migration from _json files
@@ -797,7 +807,7 @@ func DownloadCovers(ctx context.Context, c *Downloader) {
 					}
 				}
 				off := getOffset(e.Name())
-				if data, err = minlz.AppendEncoded(nil, data, minlz.LevelFastest); err != nil {
+				if data, err = c.PageCache.Codec.Compress(data); err != nil {
 					return fmt.Errorf("failed to compress page %q: %w", e.Name(), err)
 				}
 				err = bucket.Put(ch.IntToBolt(off), data)

@@ -43,8 +43,8 @@ func sampleIssueIDs(db *bolt.DB, bucket string, n int) []int64 {
 }
 
 // writeCompressedDB writes a new bolt database at outPath with every value of
-// bucket from srcPath compressed at level.
-func writeCompressedDB(tb testing.TB, srcPath, outPath, bucket string, level int) error {
+// bucket from srcPath compressed with write.
+func writeCompressedDB(tb testing.TB, srcPath, outPath, bucket string, write func([]byte) ([]byte, error)) error {
 	tb.Helper()
 	src, err := bolt.Open(srcPath, 0o644, &bolt.Options{ReadOnly: true, Timeout: time.Second * 10})
 	if err != nil {
@@ -81,7 +81,7 @@ func writeCompressedDB(tb testing.TB, srcPath, outPath, bucket string, level int
 			if v == nil {
 				return nil
 			}
-			compressed, err := minlz.AppendEncoded(nil, v, level)
+			compressed, err := write(v)
 			if err != nil {
 				return err
 			}
@@ -94,10 +94,10 @@ func writeCompressedDB(tb testing.TB, srcPath, outPath, bucket string, level int
 	return writeTx.Commit()
 }
 
-func setupBenchmark(b *testing.B, dbPath, bucket string, level int) (*bolt.DB, []int64) {
+func setupBenchmark(b *testing.B, dbPath, bucket string, write func([]byte) ([]byte, error)) (*bolt.DB, []int64) {
 	b.Helper()
 	compressedDBPath := filepath.Join(b.TempDir(), filepath.Base(dbPath))
-	if err := writeCompressedDB(b, dbPath, compressedDBPath, bucket, level); err != nil {
+	if err := writeCompressedDB(b, dbPath, compressedDBPath, bucket, write); err != nil {
 		b.Fatalf("failed to write compressed database: %v", err)
 	}
 	db, err := bolt.Open(compressedDBPath, 0o644, &bolt.Options{ReadOnly: true, Timeout: time.Second * 10})
@@ -118,7 +118,7 @@ type issueDBTX[T cv.Issue | metron.Issue] interface {
 	View(func(tx *bolt.Tx) error) error
 }
 
-func benchmarkIssueRetrieval[T cv.Issue | metron.Issue](b *testing.B, boltDB issueDBTX[T], bucket string, level int, ids []int64) {
+func benchmarkIssueRetrieval[T cv.Issue | metron.Issue](b *testing.B, boltDB issueDBTX[T], bucket string, ids []int64) {
 	for range b.N {
 		for _, id := range ids {
 			issue := boltDB.Issue(nil, id)
@@ -137,20 +137,7 @@ func benchmarkIssueRetrieval[T cv.Issue | metron.Issue](b *testing.B, boltDB iss
 	}
 }
 
-var levels = map[string]int{
-	"SuperFast":     minlz.LevelSuperFast,
-	"Uncompressed":  minlz.LevelUncompressed,
-	"Fastest":       minlz.LevelFastest,
-	"Balanced":      minlz.LevelBalanced,
-	"Smallest":      minlz.LevelSmallest,
-	"SuperFastSIMD": minlz.LevelSuperFastSIMD,
-	"FastestSIMD":   minlz.LevelFastestSIMD,
-	"BalancedSIMD":  minlz.LevelBalancedSIMD,
-	"SmallestSIMD":  minlz.LevelSmallestSIMD,
-	// "SIMDDelta":     minlz.LevelSIMDDelta,
-}
-
-func benchmarkIssueRetrievalOneTX[T cv.Issue | metron.Issue](b *testing.B, boltDB issueDBTX[T], bucket string, level int, ids []int64) {
+func benchmarkIssueRetrievalOneTX[T cv.Issue | metron.Issue](b *testing.B, boltDB issueDBTX[T], bucket string, ids []int64) {
 	for range b.N {
 		if err := boltDB.View(func(tx *bolt.Tx) error {
 			for _, id := range ids {
@@ -174,37 +161,87 @@ func benchmarkIssueRetrievalOneTX[T cv.Issue | metron.Issue](b *testing.B, boltD
 	}
 }
 
+var levels = map[string]int{
+	"SuperFast":     minlz.LevelSuperFast,
+	"Uncompressed":  minlz.LevelUncompressed,
+	"Fastest":       minlz.LevelFastest,
+	"Balanced":      minlz.LevelBalanced,
+	"Smallest":      minlz.LevelSmallest,
+	"SuperFastSIMD": minlz.LevelSuperFastSIMD,
+	"FastestSIMD":   minlz.LevelFastestSIMD,
+	"BalancedSIMD":  minlz.LevelBalancedSIMD,
+	"SmallestSIMD":  minlz.LevelSmallestSIMD,
+	// "SIMDDelta":     minlz.LevelSIMDDelta,
+}
+
+// zstdCodec returns the zstd Codec and dictionary used for the given source.
+func zstdCodec(b testing.TB, source string) ch.Codec {
+	var path string
+	switch source {
+	case "metron":
+		path = "metron/zstd.dict"
+	case "comicvine":
+		path = "cv/zstd.dict"
+	default:
+		b.Fatalf("unknown source %q", source)
+	}
+	dict, err := os.ReadFile(path)
+	if err != nil {
+		b.Fatalf("failed to read %s: %v", path, err)
+	}
+	codec, err := ch.NewCodec(ch.CompressionZSTD, dict)
+	if err != nil {
+		b.Fatalf("failed to create zstd codec: %v", err)
+	}
+	return codec
+}
+
+// benchmarkBoth runs the issue retrieval benchmark for both sources. write is
+// used to compress the source databases, and codecFor returns the Codec used
+// to retrieve the issues.
+func benchmarkBoth(b *testing.B, write func(source string, v []byte) ([]byte, error), codecFor func(source string) ch.Codec) {
+	metronDB, metronIDs := setupBenchmark(b, "./metron-hashes/metron/metron.bolt", metron.BucketIssue, func(v []byte) ([]byte, error) {
+		return write("metron", v)
+	})
+	cvDB, cvIDs := setupBenchmark(b, "./comic-hasher/comicvine/comicvine.bolt", cv.BucketIssue, func(v []byte) ([]byte, error) {
+		return write("comicvine", v)
+	})
+	defer metronDB.Close()
+	defer cvDB.Close()
+
+	b.Run("source=Metron", func(b *testing.B) {
+		st, _ := os.Stat(metronDB.Path())
+		b.ReportMetric(float64(st.Size()), "bytes")
+		benchmarkIssueRetrievalOneTX(b, metron.Bolt{Bolt: ch.Bolt{DB: metronDB, Path: metronDB.Path()}, Codec: codecFor("metron")}, metron.BucketIssue, metronIDs)
+	})
+	b.Run("source=ComicVine", func(b *testing.B) {
+		st, _ := os.Stat(cvDB.Path())
+		b.ReportMetric(float64(st.Size()), "bytes")
+		benchmarkIssueRetrievalOneTX(b, cv.Bolt{Bolt: ch.Bolt{DB: cvDB, Path: cvDB.Path()}, Codec: codecFor("comicvine")}, cv.BucketIssue, cvIDs)
+	})
+}
+
 func BenchmarkIssueRetrieval(b *testing.B) {
 	for name, level := range levels {
-		metronDB, metronIDs := setupBenchmark(b, "./metron-hashes/metron/metron.bolt", metron.BucketIssue, level)
-		cvDB, cvIDs := setupBenchmark(b, "./comic-hasher/comicvine/comicvine.bolt", cv.BucketIssue, level)
 		b.Run("compression="+name, func(b *testing.B) {
-			b.Run("TX=Many", func(b *testing.B) {
-				b.Run("Source=Metron", func(b *testing.B) {
-					st,_ :=os.Stat(metronDB.Path())
-					b.ReportMetric(float64(st.Size()), "bytes")
-					benchmarkIssueRetrieval(b, metron.Bolt{Bolt: ch.Bolt{DB: metronDB, Path: metronDB.Path()}}, metron.BucketIssue, level, metronIDs)
-				})
-				b.Run("Source=ComicVine", func(b *testing.B) {
-					st,_ :=os.Stat(cvDB.Path())
-					b.ReportMetric(float64(st.Size()), "bytes")
-					benchmarkIssueRetrieval(b, cv.Bolt{Bolt: ch.Bolt{DB: cvDB, Path: cvDB.Path()}}, cv.BucketIssue, level, cvIDs)
-				})
-			})
-			b.Run("TX=One", func(b *testing.B) {
-				b.Run("Source=Metron", func(b *testing.B) {
-					st,_ :=os.Stat(metronDB.Path())
-					b.ReportMetric(float64(st.Size()), "bytes")
-					benchmarkIssueRetrievalOneTX(b, metron.Bolt{Bolt: ch.Bolt{DB: metronDB, Path: metronDB.Path()}}, metron.BucketIssue, level, metronIDs)
-				})
-				b.Run("Source=ComicVine", func(b *testing.B) {
-					st,_ :=os.Stat(cvDB.Path())
-					b.ReportMetric(float64(st.Size()), "bytes")
-					benchmarkIssueRetrievalOneTX(b, cv.Bolt{Bolt: ch.Bolt{DB: cvDB, Path: cvDB.Path()}}, cv.BucketIssue, level, cvIDs)
-				})
-			})
+			benchmarkBoth(b, func(source string, v []byte) ([]byte, error) {
+				return minlz.AppendEncoded(nil, v, level)
+			}, func(string) ch.Codec { return ch.Codec{Compression: ch.CompressionMinLZ} })
 		})
-		metronDB.Close()
-		cvDB.Close()
 	}
+	b.Run("compression=ZSTD", func(b *testing.B) {
+		metronCodec := zstdCodec(b, "metron")
+		cvCodec := zstdCodec(b, "comicvine")
+		benchmarkBoth(b, func(source string, v []byte) ([]byte, error) {
+			if source == "metron" {
+				return metronCodec.Compress(v)
+			}
+			return cvCodec.Compress(v)
+		}, func(source string) ch.Codec {
+			if source == "metron" {
+				return metronCodec
+			}
+			return cvCodec
+		})
+	})
 }

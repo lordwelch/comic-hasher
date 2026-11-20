@@ -302,7 +302,7 @@ func saveHashes(opts Opts, hashes *ch.SavedHashesV3) error {
 	}
 	defer f.Close()
 	b := bufio.NewWriter(f)
-	gzw := minlz.NewWriter(b, minlz.WriterLevel(minlz.LevelFastest))
+	gzw := minlz.NewWriter(b, minlz.WriterLevel(minlz.LevelSuperFast))
 	err = ch.EncodeHashesV3(hashes, gzw)
 	if err != nil {
 		return fmt.Errorf("unable to encode hashes: %w", err)
@@ -472,6 +472,7 @@ func startServer(opts Opts) error {
 		opts.cv.images,
 		opts.keepDownloaded,
 		opts.hashDownloaded,
+		opts.compression,
 		finishedDownloadQueue,
 	)
 	if opts.cv.enabled {
@@ -504,6 +505,7 @@ func startServer(opts Opts) error {
 		opts.metron.APIKey,
 		opts.keepDownloaded,
 		opts.hashDownloaded,
+		opts.compression,
 		finishedDownloadQueue,
 	)
 	if opts.metron.enabled {

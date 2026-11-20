@@ -31,7 +31,40 @@ func TestIssueRoundTrip(t *testing.T) {
 	if err := db.PutIssue(nil, issue); err != nil {
 		t.Fatal(err)
 	}
-	got := db.Issue(42)
+	got := db.Issue(nil, 42)
+	if got.ID != 42 || got.Image.ThumbURL != "thumb" {
+		t.Fatalf("mismatch: %+v", got)
+	}
+}
+
+func TestIssueRoundTripZSTD(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := OpenBolt(filepath.Join(tmp, "comicvine.bolt"), DBVersion, []string{BucketIssue, BucketMeta})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	codec, err := ch.NewCodec(ch.CompressionZSTD, zstdDict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Codec = codec
+	issue := Issue{ID: 42, IssueNumber: "1", Image: struct {
+		IconURL        string `json:"icon_url,omitempty"`
+		MediumURL      string `json:"medium_url,omitempty"`
+		ScreenURL      string `json:"screen_url,omitempty"`
+		ScreenLargeURL string `json:"screen_large_url,omitempty"`
+		SmallURL       string `json:"small_url,omitempty"`
+		SuperURL       string `json:"super_url,omitempty"`
+		ThumbURL       string `json:"thumb_url"`
+		TinyURL        string `json:"tiny_url,omitempty"`
+		OriginalURL    string `json:"original_url"`
+		ImageTags      string `json:"image_tags"`
+	}{ThumbURL: "thumb", OriginalURL: "orig"}}
+	if err := db.PutIssue(nil, issue); err != nil {
+		t.Fatal(err)
+	}
+	got := db.Issue(nil, 42)
 	if got.ID != 42 || got.Image.ThumbURL != "thumb" {
 		t.Fatalf("mismatch: %+v", got)
 	}
@@ -64,7 +97,7 @@ func TestMigrationFromJSON(t *testing.T) {
 	if len(pc.Get(BucketPageCache, ch.IntToBolt(0))) == 0 {
 		t.Fatal("page not migrated")
 	}
-	if db.Issue(7).ID != 7 {
+	if db.Issue(nil, 7).ID != 7 {
 		t.Fatal("issue not migrated")
 	}
 	if _, err := os.Stat(filepath.Join(jsonDir, "cv-0.json")); !os.IsNotExist(err) {

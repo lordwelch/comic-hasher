@@ -102,6 +102,7 @@ type Opts struct {
 	debugPort          string
 	useAllChecksums    bool
 	upstream           UpstreamOpts
+	compression        ch.Compression
 
 	logLevels log.Flag
 
@@ -229,6 +230,7 @@ func registerOptions(opts *Opts) (*bool, *flag.FlagSet) {
 	fs.StringVar(&opts.cv.APIKey, "cv-api-key", "", "API `Key` to use to access the ComicVine API")
 	fs.Var(&opts.cv.images, "cv-images", "Download the selected `image types` from comicvine\n(Original, Thumb, Icon, Medium, Screen, ScreenLarge, Small, Super, Tiny)")
 
+	fs.Var(&opts.compression, "cache-compression", "Compression algorithm used to cache issues and pages\n(MinLZ, ZSTD)")
 	fs.BoolVar(&opts.metron.enabled, "metron", false, "Enabled automatically downloading covers from metron.cloud to add to the database\n(averages 1 api call per hour once cought up)")
 	fs.StringVar(&opts.metron.APIKey, "metron-api-key", "", "API `Key` to use to access the metron.cloud API")
 
@@ -263,6 +265,7 @@ var (
 		"cv-images":                "comic vine",
 		"metron":                   "metron",
 		"metron-api-key":           "metron",
+		"cache-compression":        "download",
 		"cpuprofile":               "debug",
 		"memprofile":               "debug",
 		"debug-port":               "debug",

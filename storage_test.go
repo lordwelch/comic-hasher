@@ -9,12 +9,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
 	gzip "github.com/klauspost/pgzip"
+	minlz "github.com/minio/minlz"
 
 	gcmp "cmp"
 
@@ -397,6 +399,62 @@ func BenchmarkLoadEmbeddedHashes(b *testing.B) {
 	}
 	for b.Loop() {
 		SeedEmbeddedHashes(hs)
+	}
+}
+
+func BenchmarkLoadCompressedHashes(b *testing.B) {
+	hashes, err := os.ReadFile("./hashes")
+	if err != nil {
+		b.Fatal("failed to read hashes:", err)
+	}
+	for name, level := range levels {
+		b.Run("compression="+name, func(b *testing.B) {
+			var compressed bytes.Buffer
+			w := minlz.NewWriter(&compressed, minlz.WriterLevel(level))
+			if _, err := w.Write(hashes); err != nil {
+				b.Fatal("failed to compress hashes:", err)
+			}
+			if err := w.Close(); err != nil {
+				b.Fatal("failed to compress hashes:", err)
+			}
+
+			benchmarkLoadCompressedHashes(b, compressed.Bytes(), func(src []byte) []byte {
+				hashReader := bytes.NewReader(src)
+				decoded, err := io.ReadAll(minlz.NewReader(hashReader, minlz.ReaderFallback(false)))
+				if err != nil {
+					b.Fatal("failed to decompress hashes:", err)
+				}
+				return decoded
+			})
+		})
+	}
+	b.Run("compression=ZSTD", func(b *testing.B) {
+		dict, err := os.ReadFile("ch/zstd.dict")
+		if err != nil {
+			b.Fatal("failed to read ch/zstd.dict:", err)
+		}
+		codec, err := ch.NewCodec(ch.CompressionZSTD, dict)
+		if err != nil {
+			b.Fatal("failed to create zstd codec:", err)
+		}
+		compressed, err := codec.Compress(hashes)
+		if err != nil {
+			b.Fatal("failed to compress hashes:", err)
+		}
+		benchmarkLoadCompressedHashes(b, compressed, func(src []byte) []byte { return codec.Decompress(nil, src) })
+	})
+}
+
+func benchmarkLoadCompressedHashes(b *testing.B, compressed []byte, decompress func(src []byte) []byte) {
+	hs, err := storage.NewBasic()
+	if err != nil {
+		b.Fatal("failed to create basic map storage:", err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		b.ReportMetric(float64(len(compressed)), "bytes")
+		LoadHashes(hs, decompress(compressed))
 	}
 }
 

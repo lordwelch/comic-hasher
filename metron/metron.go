@@ -4,6 +4,7 @@ package metron
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
@@ -24,11 +25,13 @@ import (
 	dl "gitea.narnian.us/lordwelch/comic-hasher/download"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"github.com/go-json-experiment/json"
-	minlz "github.com/minio/minlz"
 	bolt "go.etcd.io/bbolt"
 )
 
 var logger = log.NewLogger("metron", "downloads")
+
+//go:embed zstd.dict
+var zstdDict []byte
 
 // Buckets
 const (
@@ -141,6 +144,7 @@ type Downloader struct {
 
 	DB        Bolt
 	PageCache Bolt
+	Codec     ch.Codec
 	StartDate time.Time
 
 	totalResults int
@@ -155,6 +159,9 @@ type Key string
 
 type Bolt struct {
 	ch.Bolt
+
+	// Codec is used to compress and decompress cache entries.
+	Codec ch.Codec
 }
 
 // decodeBuf is the static array Issue functions decompress into.
@@ -172,14 +179,10 @@ func (m Bolt) Issue(tx *bolt.Tx, id int64) Issue {
 	}
 	var decodeBuf [2048]byte
 	value := tx.Bucket([]byte(BucketIssue)).Get(ch.IntToBolt(id))
-	if ok, _, err := minlz.IsMinLZ(value); err == nil && ok {
-		decoded, err := minlz.Decode(decodeBuf[:0], value)
-		if err != nil {
-			return Issue{
-				ID: -1,
-			}
+	if value = m.Codec.Decompress(decodeBuf[:0], value); len(value) == 0 {
+		return Issue{
+			ID: -1,
 		}
-		value = decoded
 	}
 	if err := json.Unmarshal(value, &issue, JSONOpts...); err != nil {
 		return Issue{
@@ -205,7 +208,7 @@ func (m Bolt) PutIssue(tx *bolt.Tx, issue Issue) error {
 	if err != nil {
 		return fmt.Errorf("failed to convert issue to bytes: %w", err)
 	}
-	content, err = minlz.AppendEncoded(nil, content, minlz.LevelFastest)
+	content, err = m.Codec.Compress(content)
 	if err != nil {
 		return fmt.Errorf("failed to compress issue: %w", err)
 	}
@@ -262,10 +265,15 @@ func NewDownloader(
 	chdb ch.CHDB,
 	basePath, APIKey string,
 	keepDownloadedImages, sendExistingImages bool,
+	compression ch.Compression,
 	finishDownloadQueue chan<- dl.Download,
 ) (*Downloader, error) {
 	if os.Getenv("METRON_KEEP_IMAGES") == "TRUE" {
 		keepDownloadedImages = true
+	}
+	codec, err := ch.NewCodec(compression, zstdDict)
+	if err != nil {
+		return nil, err
 	}
 	d := &Downloader{
 		basePath:             basePath,
@@ -275,17 +283,18 @@ func NewDownloader(
 		FinishDownloadQueue:  finishDownloadQueue,
 		SendExistingImages:   sendExistingImages,
 		KeepDownloadedImages: keepDownloadedImages,
+		Codec:                codec,
 		chdb:                 chdb,
 		getID:                getID,
 		onlyHashNewIDs:       onlyHashNewIDs,
 	}
 	_ = os.MkdirAll(d.basePath, 0o777)
-	var err error
 	d.DB, err = OpenBolt(filepath.Join(d.basePath, "metron.bolt"), DBVersion, []string{BucketIssue, BucketMeta})
 	if err != nil {
 		logger.Log(log.Fatal, "failed to open metron database: %v", err)
 		return nil, err
 	}
+	d.DB.Codec = codec
 	return d, nil
 }
 
@@ -333,7 +342,7 @@ func MustParseURL(rawURI string) *url.URL {
 }
 
 func (d *Downloader) getPage(pageURL url.URL) ([]byte, time.Time, error) {
-	content := ch.DecompressMinLZ(d.PageCache.Get(BucketPageCache, pageURL.String()))
+	content := d.PageCache.Codec.Decompress(nil, d.PageCache.Get(BucketPageCache, pageURL.String()))
 	if len(content) > 0 {
 		logger.Println(log.Standard, "Checking metron page", pageURL.String())
 		return content, time.Time{}, nil
@@ -352,7 +361,7 @@ func (d *Downloader) getPage(pageURL url.URL) ([]byte, time.Time, error) {
 		return nil, sleepTo, fmt.Errorf("failed to download page: %s: %w: %w", pageURL.String(), err, ErrRetry)
 	}
 	if resp.StatusCode == http.StatusOK {
-		toStore, cerr := minlz.AppendEncoded(nil, content, minlz.LevelFastest)
+		toStore, cerr := d.PageCache.Codec.Compress(content)
 		if cerr != nil {
 			return content, sleepTo, fmt.Errorf("failed to compress metron page: %w", cerr)
 		}
@@ -617,9 +626,9 @@ func OpenBolt(path string, version ch.Version, buckets []string) (Bolt, error) {
 	logger.Println(log.MoreVerbose, "Opening bolt:", path)
 	b, err := ch.OpenBolt(path, version, buckets)
 	if err != nil {
-		return Bolt{b}, err
+		return Bolt{Bolt: b}, err
 	}
-	return Bolt{b}, nil
+	return Bolt{Bolt: b}, nil
 }
 
 func DownloadCovers(ctx context.Context, d *Downloader) {
@@ -645,6 +654,7 @@ func DownloadCovers(ctx context.Context, d *Downloader) {
 		logger.Log(log.Fatal, "failed to open metron page cache database: %v", err)
 		return
 	}
+	d.PageCache.Codec = d.Codec
 	defer d.PageCache.Close()
 	if d.StartDate != d.PageCache.Date(KeyCurrentStartDate) {
 		// Page cache will cycle through a lot of data especially on the initial run
@@ -657,6 +667,7 @@ func DownloadCovers(ctx context.Context, d *Downloader) {
 			logger.Log(log.Fatal, "failed to open metron page cache database: %v", err)
 			return
 		}
+		d.PageCache.Codec = d.Codec
 		defer d.PageCache.Close()
 		err = d.PageCache.PutDate(KeyCurrentStartDate, d.StartDate)
 		if err != nil {
