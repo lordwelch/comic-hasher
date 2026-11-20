@@ -24,6 +24,7 @@ import (
 	dl "gitea.narnian.us/lordwelch/comic-hasher/download"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"github.com/go-json-experiment/json"
+	minlz "github.com/minio/minlz"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -156,12 +157,31 @@ type Bolt struct {
 	ch.Bolt
 }
 
-func (m Bolt) Issue(id int64) Issue {
+// decodeBuf is the static array Issue functions decompress into.
+
+// Issue returns the issue stored under id in tx. Issue data is decoded into
+// the static decodeBuf.
+func (m Bolt) Issue(tx *bolt.Tx, id int64) Issue {
 	var issue Issue
-	err := m.View(func(tx *bolt.Tx) error {
-		return json.Unmarshal(tx.Bucket([]byte(BucketIssue)).Get(ch.IntToBolt(id)), &issue, JSONOpts...)
-	})
-	if err != nil {
+	if tx == nil {
+		m.View(func(tx *bolt.Tx) error {
+			issue = m.Issue(tx, id)
+			return nil
+		})
+		return issue
+	}
+	var decodeBuf [2048]byte
+	value := tx.Bucket([]byte(BucketIssue)).Get(ch.IntToBolt(id))
+	if ok, _, err := minlz.IsMinLZ(value); err == nil && ok {
+		decoded, err := minlz.Decode(decodeBuf[:0], value)
+		if err != nil {
+			return Issue{
+				ID: -1,
+			}
+		}
+		value = decoded
+	}
+	if err := json.Unmarshal(value, &issue, JSONOpts...); err != nil {
 		return Issue{
 			ID: -1,
 		}
@@ -184,6 +204,10 @@ func (m Bolt) PutIssue(tx *bolt.Tx, issue Issue) error {
 	content, err := json.Marshal(issue, JSONOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to convert issue to bytes: %w", err)
+	}
+	content, err = minlz.AppendEncoded(nil, content, minlz.LevelFastest)
+	if err != nil {
+		return fmt.Errorf("failed to compress issue: %w", err)
 	}
 	return tx.Bucket([]byte(BucketIssue)).Put(ch.IntToBolt(issue.ID), content)
 }
@@ -287,7 +311,13 @@ func (d *Downloader) GetIssue(id ch.ID) (ch.Issue, error) {
 	if err != nil {
 		return ch.Issue{}, fmt.Errorf("invalid ID: %w", err)
 	}
-	i := d.DB.Issue(idInt)
+	var i Issue
+	if err := d.DB.DB.View(func(tx *bolt.Tx) error {
+		i = d.DB.Issue(tx, idInt)
+		return nil
+	}); err != nil {
+		return ch.Issue{}, err
+	}
 	if i.Image.String() == "" {
 		return ch.Issue{}, fmt.Errorf("unable to find issue: %v", id)
 	}
@@ -303,7 +333,7 @@ func MustParseURL(rawURI string) *url.URL {
 }
 
 func (d *Downloader) getPage(pageURL url.URL) ([]byte, time.Time, error) {
-	content := d.PageCache.Get(BucketPageCache, pageURL.String())
+	content := ch.DecompressMinLZ(d.PageCache.Get(BucketPageCache, pageURL.String()))
 	if len(content) > 0 {
 		logger.Println(log.Standard, "Checking metron page", pageURL.String())
 		return content, time.Time{}, nil
@@ -322,7 +352,11 @@ func (d *Downloader) getPage(pageURL url.URL) ([]byte, time.Time, error) {
 		return nil, sleepTo, fmt.Errorf("failed to download page: %s: %w: %w", pageURL.String(), err, ErrRetry)
 	}
 	if resp.StatusCode == http.StatusOK {
-		err = d.PageCache.Put(BucketPageCache, pageURL.String(), content)
+		toStore, cerr := minlz.AppendEncoded(nil, content, minlz.LevelFastest)
+		if cerr != nil {
+			return content, sleepTo, fmt.Errorf("failed to compress metron page: %w", cerr)
+		}
+		err = d.PageCache.Put(BucketPageCache, pageURL.String(), toStore)
 		if err != nil {
 			return content, sleepTo, fmt.Errorf("failed to cache metron search page: %v: %w", pageURL, err)
 		}

@@ -26,6 +26,13 @@
         <label>Include A Hash <input type="checkbox" id="include-ahash"/></label>
         <label>Max distance <input type="number" id="max-dist" min="0" max="8" value="8"/></label>
         <label>Exact only <input type="checkbox" id="exact-only" checked/></label>
+        <label title="How to start a drag that groups cards. The grip handle keeps all card text selectable.">Card drag
+          <select id="drag-mode">
+            <option value="grip">Grip handle</option>
+            <option value="cover">Cover image</option>
+            <option value="text">Anywhere but text</option>
+          </select>
+        </label>
         <input type="hidden" id="domains-input" name="domains" value=""/>
         <button id="domains-button" class="form-control combobox-toggle" type="button"
           data-bs-toggle="combobox"

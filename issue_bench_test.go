@@ -2,7 +2,6 @@ package main_test
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -114,39 +113,26 @@ func setupBenchmark(b *testing.B, dbPath, bucket string, level int) (*bolt.DB, [
 	return db, ids
 }
 
-type issueDB[T cv.Issue | metron.Issue] interface {
-	Issue(int64) T
-	View(func(tx *bolt.Tx) error) error
-	Close() error
-}
-
 type issueDBTX[T cv.Issue | metron.Issue] interface {
 	Issue(*bolt.Tx, int64) T
 	View(func(tx *bolt.Tx) error) error
-	Close() error
 }
 
-func benchmarkIssueRetrieval[T cv.Issue | metron.Issue](b *testing.B, boltDB issueDB[T], bucket string, level int, ids []int64) {
+func benchmarkIssueRetrieval[T cv.Issue | metron.Issue](b *testing.B, boltDB issueDBTX[T], bucket string, level int, ids []int64) {
 	for range b.N {
-		if err := boltDB.View(func(tx *bolt.Tx) error {
-			for _, id := range ids {
-				issue := boltDB.Issue(id)
-				fmt.Println(issue)
-				var got int64
-				switch v := any(issue).(type) {
-				case cv.Issue:
-					got = v.ID
-				case metron.Issue:
-					got = v.ID
-				}
-				if got != id {
-					b.Errorf("issue retrieval mismatch: want id %d, got %d", id, got)
-					return nil
-				}
+		for _, id := range ids {
+			issue := boltDB.Issue(nil, id)
+			var got int64
+			switch v := any(issue).(type) {
+			case cv.Issue:
+				got = v.ID
+			case metron.Issue:
+				got = v.ID
 			}
-			return nil
-		}); err != nil {
-			b.Fatal(err)
+			if got != id {
+				b.Errorf("issue retrieval mismatch: want id %d, got %d", id, got)
+				b.FailNow()
+			}
 		}
 	}
 }
@@ -165,12 +151,10 @@ var levels = map[string]int{
 }
 
 func benchmarkIssueRetrievalOneTX[T cv.Issue | metron.Issue](b *testing.B, boltDB issueDBTX[T], bucket string, level int, ids []int64) {
-	defer boltDB.Close()
 	for range b.N {
 		if err := boltDB.View(func(tx *bolt.Tx) error {
 			for _, id := range ids {
 				issue := boltDB.Issue(tx, id)
-				fmt.Println(issue)
 				var got int64
 				switch v := any(issue).(type) {
 				case cv.Issue:
@@ -190,22 +174,37 @@ func benchmarkIssueRetrievalOneTX[T cv.Issue | metron.Issue](b *testing.B, boltD
 	}
 }
 
-func BenchmarkMetronIssueRetrieval(b *testing.B) {
+func BenchmarkIssueRetrieval(b *testing.B) {
 	for name, level := range levels {
-		db, ids := setupBenchmark(b, "./metron-hashes/metron/metron.bolt", metron.BucketIssue, level)
-		boltDB := metron.Bolt{Bolt: ch.Bolt{DB: db, Path: db.Path()}}
-		b.Run(name, func(b *testing.B) {
-			benchmarkIssueRetrieval(b, boltDB, metron.BucketIssue, level, ids)
+		metronDB, metronIDs := setupBenchmark(b, "./metron-hashes/metron/metron.bolt", metron.BucketIssue, level)
+		cvDB, cvIDs := setupBenchmark(b, "./comic-hasher/comicvine/comicvine.bolt", cv.BucketIssue, level)
+		b.Run("compression="+name, func(b *testing.B) {
+			b.Run("TX=Many", func(b *testing.B) {
+				b.Run("Source=Metron", func(b *testing.B) {
+					st,_ :=os.Stat(metronDB.Path())
+					b.ReportMetric(float64(st.Size()), "bytes")
+					benchmarkIssueRetrieval(b, metron.Bolt{Bolt: ch.Bolt{DB: metronDB, Path: metronDB.Path()}}, metron.BucketIssue, level, metronIDs)
+				})
+				b.Run("Source=ComicVine", func(b *testing.B) {
+					st,_ :=os.Stat(cvDB.Path())
+					b.ReportMetric(float64(st.Size()), "bytes")
+					benchmarkIssueRetrieval(b, cv.Bolt{Bolt: ch.Bolt{DB: cvDB, Path: cvDB.Path()}}, cv.BucketIssue, level, cvIDs)
+				})
+			})
+			b.Run("TX=One", func(b *testing.B) {
+				b.Run("Source=Metron", func(b *testing.B) {
+					st,_ :=os.Stat(metronDB.Path())
+					b.ReportMetric(float64(st.Size()), "bytes")
+					benchmarkIssueRetrievalOneTX(b, metron.Bolt{Bolt: ch.Bolt{DB: metronDB, Path: metronDB.Path()}}, metron.BucketIssue, level, metronIDs)
+				})
+				b.Run("Source=ComicVine", func(b *testing.B) {
+					st,_ :=os.Stat(cvDB.Path())
+					b.ReportMetric(float64(st.Size()), "bytes")
+					benchmarkIssueRetrievalOneTX(b, cv.Bolt{Bolt: ch.Bolt{DB: cvDB, Path: cvDB.Path()}}, cv.BucketIssue, level, cvIDs)
+				})
+			})
 		})
-	}
-}
-
-func BenchmarkComicVineIssueRetrieval(b *testing.B) {
-	for name, level := range levels {
-		db, ids := setupBenchmark(b, "./comic-hasher/comicvine/comicvine.bolt", cv.BucketIssue, level)
-		boltDB := cv.Bolt{Bolt: ch.Bolt{DB: db, Path: db.Path()}}
-		b.Run(name, func(b *testing.B) {
-			benchmarkIssueRetrieval(b, boltDB, cv.BucketIssue, level, ids)
-		})
+		metronDB.Close()
+		cvDB.Close()
 	}
 }

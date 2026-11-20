@@ -24,6 +24,7 @@ import (
 	dl "gitea.narnian.us/lordwelch/comic-hasher/download"
 	"gitea.narnian.us/lordwelch/comic-hasher/log"
 	"gitea.narnian.us/lordwelch/comic-hasher/metron"
+	minlz "github.com/minio/minlz"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -82,7 +83,7 @@ func (f *Images) Set(s string) error {
 }
 
 type Issue struct {
-	ID          int64    `json:"id"`
+	ID          int64  `json:"id"`
 	IssueNumber string `json:"issue_number"`
 	Image       struct {
 		IconURL        string `json:"icon_url,omitempty"`
@@ -102,9 +103,9 @@ type Issue struct {
 }
 
 type CVResult struct {
-	Offset               int64     `json:"offset"`
+	Offset               int64   `json:"offset"`
 	NumberOfPageResults  int     `json:"number_of_page_results"`
-	NumberOfTotalResults int64     `json:"number_of_total_results"`
+	NumberOfTotalResults int64   `json:"number_of_total_results"`
 	StatusCode           int     `json:"status_code"`
 	Results              []Issue `json:"results"`
 }
@@ -164,16 +165,33 @@ type Bolt struct {
 	ch.Bolt
 }
 
-func (b Bolt) Issue(id int64) Issue {
+// decodeBuf is the static array Issue functions decompress into.
+
+// Issue returns the issue stored under id in tx. Issue data is decoded into
+// the static decodeBuf.
+func (b Bolt) Issue(tx *bolt.Tx, id int64) Issue {
 	var issue Issue
-	err := b.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket([]byte(BucketIssue))
-		if bucket == nil {
-			return errors.New("missing issues bucket")
+	if tx == nil {
+		b.View(func(tx *bolt.Tx) error {
+			issue = b.Issue(tx, id)
+			return nil
+		})
+		return issue
+	}
+	var decodeBuf [2048]byte
+	bucket := tx.Bucket([]byte(BucketIssue))
+	if bucket == nil {
+		return Issue{}
+	}
+	value := bucket.Get(ch.IntToBolt(id))
+	if ok, _, err := minlz.IsMinLZ(value); err == nil && ok {
+		decoded, err := minlz.Decode(decodeBuf[:0], value)
+		if err != nil {
+			return Issue{}
 		}
-		return json.Unmarshal(bucket.Get(ch.IntToBolt(id)), &issue)
-	})
-	if err != nil {
+		value = decoded
+	}
+	if err := json.Unmarshal(value, &issue); err != nil {
 		return Issue{}
 	}
 	return issue
@@ -189,6 +207,10 @@ func (b Bolt) PutIssue(tx *bolt.Tx, issue Issue) error {
 	content, err := json.Marshal(issue)
 	if err != nil {
 		return fmt.Errorf("failed to convert issue to bytes: %w", err)
+	}
+	content, err = minlz.AppendEncoded(nil, content, minlz.LevelFastest)
+	if err != nil {
+		return fmt.Errorf("failed to compress issue: %w", err)
 	}
 	return tx.Bucket([]byte(BucketIssue)).Put(ch.IntToBolt(issue.ID), content)
 }
@@ -251,7 +273,7 @@ func (c *Downloader) GetIssue(id ch.ID) (ch.Issue, error) {
 	if err != nil {
 		return ch.Issue{}, fmt.Errorf("invalid ID: %w", err)
 	}
-	i := c.DB.Issue(int64(idInt))
+	i := c.DB.Issue(nil, int64(idInt))
 	url := ""
 	for _, issueImage := range []Image{
 		{i.Image.SmallURL, "small"},
@@ -276,7 +298,7 @@ func (c *Downloader) GetIssue(id ch.ID) (ch.Issue, error) {
 }
 
 func (c *Downloader) getCachedPage(offset int64, update bool) (*CVResult, error) {
-	data := c.PageCache.Get(BucketPageCache, ch.IntToBolt(offset))
+	data := ch.DecompressMinLZ(c.PageCache.Get(BucketPageCache, ch.IntToBolt(offset)))
 	if len(data) == 0 {
 		return nil, ErrMissingPage
 	}
@@ -556,7 +578,7 @@ func (c *Downloader) cleanBadURLs() error {
 				toDelete = append(toDelete, bytes.Clone(k))
 				return nil
 			}
-			if err := json.Unmarshal(v, &page); err != nil {
+			if err := json.Unmarshal(ch.DecompressMinLZ(v), &page); err != nil {
 				toDelete = append(toDelete, bytes.Clone(k))
 				return nil
 			}
@@ -588,7 +610,7 @@ func (c *Downloader) cleanBadURLs() error {
 var baseURL = metron.MustParseURL("https://comicvine.gamespot.com/api/issues/?sort=date_added,id:asc&format=json&field_list=id,issue_number,image,volume")
 
 func (c *Downloader) getPage(offset int64) ([]byte, error) {
-	if data := c.PageCache.Get(BucketPageCache, ch.IntToBolt(offset)); len(data) > 0 {
+	if data := ch.DecompressMinLZ(c.PageCache.Get(BucketPageCache, ch.IntToBolt(offset))); len(data) > 0 {
 		return data, nil
 	}
 	URI := *baseURL
@@ -611,7 +633,11 @@ func (c *Downloader) getPage(offset int64) ([]byte, error) {
 	if resp.StatusCode != 200 {
 		return body, fmt.Errorf("response code: %d", resp.StatusCode)
 	}
-	if err := c.PageCache.Put(BucketPageCache, ch.IntToBolt(offset), body); err != nil {
+	toStore, err := minlz.AppendEncoded(nil, body, minlz.LevelFastestSIMD)
+	if err != nil {
+		return body, fmt.Errorf("failed to compress page: %w", err)
+	}
+	if err := c.PageCache.Put(BucketPageCache, ch.IntToBolt(offset), toStore); err != nil {
 		return body, err
 	}
 	var issue CVResult
@@ -771,6 +797,9 @@ func DownloadCovers(ctx context.Context, c *Downloader) {
 					}
 				}
 				off := getOffset(e.Name())
+				if data, err = minlz.AppendEncoded(nil, data, minlz.LevelFastest); err != nil {
+					return fmt.Errorf("failed to compress page %q: %w", e.Name(), err)
+				}
 				err = bucket.Put(ch.IntToBolt(off), data)
 				if err != nil {
 					return err

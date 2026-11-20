@@ -186,7 +186,8 @@ input[type="file"],
 	overflow-wrap: anywhere;
 }
 
-.status:empty {
+.status:empty,
+.status:has(> .selectable-text:empty) {
 	display: none;
 }
 
@@ -272,7 +273,7 @@ input[type="file"],
 }
 
 /* One duplicate issue is a row of IDs that share hashes. It starts collapsed so
-   the summary can list the issue IDs and any available issue details. */
+   the summary can list the issue IDs. */
 .duplicate-issue {
 	border: 1px solid var(--border);
 	border-radius: 0.5rem;
@@ -339,16 +340,6 @@ input[type="file"],
 	flex-wrap: wrap;
 	align-items: baseline;
 	gap: 0.35rem;
-}
-
-.duplicate-issue .issue-info-inline {
-	display: inline;
-	border: none;
-	padding: 0;
-	min-height: 0;
-	font-size: inherit;
-	line-height: inherit;
-	color: inherit;
 }
 
 .duplicate-issue > .duplicate-id-row {
@@ -429,21 +420,6 @@ input[type="file"],
 	gap: 0.35rem;
 	flex: 1;
 	min-width: 0;
-}
-
-.issue-info {
-	border: 1px dashed var(--border);
-	border-radius: 0.25rem;
-	padding: 0.15rem 0.35rem;
-	min-height: 1.8rem;
-	font-size: 0.72rem;
-	line-height: 1.3;
-	color: color-mix(in srgb, var(--fg) 65%, transparent);
-	overflow-wrap: anywhere;
-}
-
-.issue-info:empty::before {
-	content: attr(data-placeholder);
 }
 
 .duplicate-hashes {
@@ -595,6 +571,63 @@ input[type="file"],
 	outline: 2px dashed var(--error);
 	outline-offset: 2px;
 	cursor: not-allowed;
+}
+
+/* Card text is always selectable; only the active drag source shows a grab cursor. */
+.match-card,
+.duplicate-id-card {
+	-webkit-user-select: text;
+	user-select: text;
+}
+
+.drag-handle {
+	-webkit-user-select: none;
+	user-select: none;
+	font-size: 0.8rem;
+	line-height: 1;
+	color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+
+.drag-handle[draggable="true"] {
+	cursor: grab;
+}
+
+.cover-drag-mode .cover-thumb {
+	cursor: grab;
+}
+
+/* In "anywhere but text" mode the card drags, but its text keeps an I-beam. */
+.match-card.text-drag-mode,
+.duplicate-id-card.text-drag-mode {
+	cursor: grab;
+}
+
+.text-drag-mode .selectable-text {
+	cursor: text;
+}
+
+.copy-btn {
+	border: none;
+	background: transparent;
+	color: color-mix(in srgb, var(--fg) 55%, transparent);
+	font-size: 0.8rem;
+	line-height: 1;
+	padding: 0 0.15rem;
+	cursor: pointer;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+.copy-btn:hover,
+.copy-btn.copied {
+	color: var(--accent);
+}
+
+.clipboard-fallback {
+	position: fixed;
+	top: -1000px;
+	left: -1000px;
+	opacity: 0;
 }
 
 .cover-thumb {

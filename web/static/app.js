@@ -11,6 +11,7 @@ const domainFilterItems = document.getElementById("domains");
 const domainFilter = document.getElementById("domains-button");
 const domainFilterClear = document.getElementById("domain-filter-clear");
 const checkDuplicates = document.getElementById("check-duplicates");
+const dragModeInput = document.getElementById("drag-mode");
 const version = document.querySelector('meta[name="static-version"]').content;
 const noImageURL = `static/no-image.svg?v=${version}`;
 const checkURL = `static/check.svg?v=${version}`;
@@ -44,9 +45,25 @@ const resultStates = new Set();
 let cardDrag = null;
 let groupSuggestionSeq = 0;
 
+// Drag behavior is a user setting so each mode can be tried without a redeploy.
+const DRAG_MODE_KEY = "comic-hasher.drag-mode";
+const DRAG_MODES = ["grip", "cover", "text"];
+const DRAG_HANDLE_HINT = "Drag onto another result to group their IDs";
+let dragMode = "grip";
+// Per-card drag sources, kept outside the DOM so mode changes need no re-render.
+const dragCards = new WeakMap();
+
 // Drag state for comparing IDs: the compare button currently being dragged.
 const COMPARE_DRAG_TYPE = "application/x-comic-hasher-compare";
 let compareDrag = null;
+
+function acceptInternalDrag(e) {
+	if (hasFiles(e) || !(cardDrag || compareDrag)) return;
+	// Must agree with effectAllowed ("copy" for both drag kinds), or the cursor
+	// turns into a "no drop" sign even though the drop is accepted.
+	e.dataTransfer.dropEffect = "copy";
+	e.preventDefault();
+}
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -57,6 +74,18 @@ function create(tag, className = "", text) {
 	if (className) node.className = className;
 	if (text != null) node.textContent = text;
 	return node;
+}
+
+// Only the glyphs get the I-beam cursor in "anywhere but text" mode, not the
+// empty space in the box around them.
+function selectableText(text) {
+	return create("span", "selectable-text", text);
+}
+
+function selectableSpan(className, text) {
+	const el = create("span", className);
+	el.appendChild(selectableText(text));
+	return el;
 }
 
 function setAttrs(node, attrs) {
@@ -71,12 +100,57 @@ const getCombobox = () => window.Combobox.getOrCreateInstance(domainFilter);
 // Card-local status lines share markup, one live region and one error convention.
 // setStatusText never assigns className, so a status line keeps its layout class.
 function setStatusText(el, text, isError = false) {
-	el.textContent = text;
+	const textEl = el.firstElementChild?.classList.contains("selectable-text") ? el.firstElementChild : el;
+	textEl.textContent = text;
 	el.classList.toggle("error", isError);
 }
 
 function createStatusLine(className = "", tag = "p") {
-	return create(tag, className ? `status ${className}` : "status");
+	const el = create(tag, className ? `status ${className}` : "status");
+	el.appendChild(selectableText(""));
+	return el;
+}
+
+// The async Clipboard API needs a secure context; the app is often served over
+// plain HTTP on the Pi, so fall back to a hidden textarea and execCommand.
+function copyText(text) {
+	if (window.isSecureContext && navigator.clipboard?.writeText) {
+		return navigator.clipboard.writeText(text).catch(() => legacyCopyText(text));
+	}
+	return Promise.resolve(legacyCopyText(text));
+}
+
+function legacyCopyText(text) {
+	if (typeof document.execCommand !== "function") throw new Error("Clipboard unavailable");
+	const field = create("textarea", "clipboard-fallback");
+	field.value = text;
+	document.body.appendChild(field);
+	field.select();
+	const copied = document.execCommand("copy");
+	field.remove();
+	if (!copied) throw new Error("Copy failed");
+}
+
+function makeCopyButton(text, label) {
+	const btn = create("button", "copy-btn", "⧉");
+	btn.type = "button";
+	btn.draggable = false;
+	btn.title = `Copy ${label}`;
+	btn.setAttribute("aria-label", `Copy ${label}`);
+	btn.addEventListener("click", async () => {
+		try {
+			await copyText(text);
+			btn.textContent = "✓";
+			btn.classList.add("copied");
+			setTimeout(() => {
+				btn.textContent = "⧉";
+				btn.classList.remove("copied");
+			}, 1200);
+		} catch (err) {
+			console.error("Copy failed", err);
+		}
+	});
+	return btn;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +251,7 @@ function currentMaxDistance() {
 function renderBitCompare(top, bottom) {
 	const bytes = create("div", "bit-bytes");
 	if (!top.bits || !bottom.bits) {
-		bytes.textContent = "—";
+		bytes.appendChild(selectableText("—"));
 		return bytes;
 	}
 	const length = Math.max(top.bits.length, bottom.bits.length);
@@ -186,7 +260,7 @@ function renderBitCompare(top, bottom) {
 		for (let i = start; i < Math.min(start + 8, length); i++) {
 			const pair = create("span", "bit-pair");
 			if (top.bits[i] !== bottom.bits[i]) pair.classList.add("bit-diff");
-			pair.append(top.bits[i], create("br"), bottom.bits[i]);
+			pair.append(selectableText(top.bits[i]), create("br"), selectableText(bottom.bits[i]));
 			byte.appendChild(pair);
 		}
 		bytes.appendChild(byte);
@@ -197,8 +271,8 @@ function renderBitCompare(top, bottom) {
 function makeHashCompare(kind, hint, distance, bitCompare) {
 	const block = create("div", "hash-compare");
 	const head = create("div", "hash-compare-head");
-	head.append(create("span", "hash-kind", kind || "—"), create("span", "bit-hint", hint));
-	if (distance != null) head.append(create("span", "hash-distance", distance));
+	head.append(selectableSpan("hash-kind", kind || "—"), selectableSpan("bit-hint", hint));
+	if (distance != null) head.append(selectableSpan("hash-distance", distance));
 	block.appendChild(head);
 	if (bitCompare) block.appendChild(bitCompare);
 	return block;
@@ -317,7 +391,7 @@ function idLink(domain, id) {
 		node.rel = "noopener noreferrer";
 	}
 	if (domain) node.append(makeDomainIcon(domain), " ");
-	node.append(url || !domain ? id : `${domain} ${id}`);
+	node.appendChild(selectableText(url || !domain ? id : `${domain} ${id}`));
 	return node;
 }
 
@@ -478,7 +552,11 @@ function addChip(chipsEl, eid, refreshMatches, statusLine) {
 	if (chipsEl.idKeys.has(key)) return;
 	chipsEl.idKeys.add(key);
 	const chip = create("span", "chip");
-	chip.append(idLink(eid.Domain, eid.ID), makeUngroupButton(eid, refreshMatches, statusLine));
+	chip.append(
+		idLink(eid.Domain, eid.ID),
+		makeCopyButton(eid.ID, "linked ID"),
+		makeUngroupButton(eid, refreshMatches, statusLine),
+	);
 	chipsEl.appendChild(chip);
 }
 
@@ -492,34 +570,118 @@ function groupsConflict(a, b) {
 	return [...a].some((domain) => b.has(domain));
 }
 
-// Dropping one result card onto another groups their IDs. The add-ID form
-// remains as the keyboard-accessible alternative.
+// The drag mode is chosen in the options bar and saved so it survives reloads.
+function loadDragMode() {
+	let saved = null;
+	try {
+		saved = localStorage.getItem(DRAG_MODE_KEY);
+	} catch {
+		// Storage can be disabled; the default still works.
+	}
+	dragMode = DRAG_MODES.includes(saved) ? saved : "grip";
+	dragModeInput.value = dragMode;
+}
+
+function setDragMode(mode) {
+	if (!DRAG_MODES.includes(mode)) return;
+	dragMode = mode;
+	try {
+		localStorage.setItem(DRAG_MODE_KEY, mode);
+	} catch {
+		// Ignore storage failures.
+	}
+	applyDragMode();
+}
+
+function applyDragModeTo(el) {
+	const sources = dragCards.get(el);
+	if (!sources) return;
+	const { grip, cover, coverLink, coverTitle } = sources;
+	grip.hidden = dragMode !== "grip";
+	grip.draggable = dragMode === "grip";
+	if (cover) cover.draggable = dragMode === "cover";
+	if (coverLink) coverLink.draggable = dragMode === "cover";
+	el.draggable = dragMode === "text";
+	el.classList.toggle("cover-drag-mode", dragMode === "cover");
+	el.classList.toggle("text-drag-mode", dragMode === "text");
+	el.title = dragMode === "text" ? DRAG_HANDLE_HINT : "";
+	if (cover) cover.title = dragMode === "cover" ? DRAG_HANDLE_HINT : coverTitle;
+}
+
+function applyDragMode() {
+	for (const el of document.querySelectorAll(".drop-card")) applyDragModeTo(el);
+}
+
+// Dropping one result card onto another groups their IDs. The active drag
+// source depends on the mode; drop handling is identical in every mode.
 function makeCardDraggable(el, match, statusLine, refreshMatches) {
-	el.draggable = true;
 	el.classList.add("drop-card");
-	el.title = "Drag onto another result to group their IDs";
+
+	const grip = create("span", "drag-handle", "⠿");
+	grip.title = DRAG_HANDLE_HINT;
+	grip.setAttribute("aria-label", DRAG_HANDLE_HINT);
+	(el.querySelector(".match-id") ?? el).appendChild(grip);
+	// The thumb is a real box even when its link uses display: contents.
+	const cover = el.querySelector("img.cover-thumb");
+	const coverLink = cover?.closest("a") ?? null;
+	dragCards.set(el, { grip, cover, coverLink, coverTitle: cover?.title ?? "" });
 
 	const canDrop = () => cardDrag && cardDrag.el !== el;
 	const clearDropMarks = () => el.classList.remove("drop-target", "drop-blocked");
+	const restoreDraggable = () => {
+		if (dragMode === "text") el.draggable = true;
+	};
 
-	el.addEventListener("dragstart", (e) => {
-		// Let drags that start on child elements (text selections, links) behave normally.
-		if (e.target !== el) return;
+	const controls = "button, input, select, textarea, summary";
+
+	// One bubbling handler decides which source started the drag. Browsers may
+	// pick the cover's link instead of the image, so accept either as "cover".
+	const dragStart = (e) => {
+		const target = e.target;
+		// Controls such as the compare button own their own drags.
+		if (target.closest?.(controls)) return;
+		// The inline text spans are the only selectable text; leave their
+		// selection and text drags entirely to the browser in every mode.
+		if (target.closest?.(".selectable-text")) return;
+		const fromGrip = target === grip || grip.contains(target);
+		const fromCover = target === cover || !!coverLink?.contains(target);
+		const active =
+			(dragMode === "grip" && fromGrip) ||
+			(dragMode === "cover" && fromCover) ||
+			dragMode === "text";
+		if (!active) {
+			e.preventDefault();
+			return;
+		}
+
 		cardDrag = { el, id: match.ID, domains: groupDomains(match) };
-		const dragImage = el.querySelector("img.cover-thumb");
-		if (dragImage) e.dataTransfer.setDragImage(dragImage, 24, 24);
-		e.dataTransfer.items.add(`${match.ID.Domain}:${match.ID.ID}`, "text/plain");
+		if (cover) e.dataTransfer.setDragImage(cover, 24, 24);
+		e.dataTransfer.setData("text/plain", `${match.ID.Domain}:${match.ID.ID}`);
 		el.classList.add("dragging");
 		e.dataTransfer.effectAllowed = "copy"; // "link" would fit better, but Chrome mishandles it
-	});
+	};
 
-	el.addEventListener("dragend", () => {
+	const endDrag = () => {
 		cardDrag = null;
 		el.classList.remove("dragging");
+		restoreDraggable();
 		for (const card of document.querySelectorAll(".drop-card.drop-target, .drop-card.drop-blocked")) {
 			card.classList.remove("drop-target", "drop-blocked");
 		}
+	};
+
+	el.addEventListener("dragstart", dragStart);
+	// dragend bubbles from whichever source was dragged, so the card catches them all.
+	el.addEventListener("dragend", endDrag);
+
+	// A press on the inline text spans disables dragging just long enough to
+	// make a selection; empty space around them still starts a card drag.
+	el.addEventListener("pointerdown", (e) => {
+		if (dragMode !== "text" || !e.target.closest?.(".selectable-text")) return;
+		el.draggable = false;
 	});
+	el.addEventListener("pointerup", restoreDraggable);
+	el.addEventListener("pointercancel", restoreDraggable);
 
 	el.addEventListener("dragenter", (e) => {
 		e.dataTransfer.effectAllowed = "copy";
@@ -546,14 +708,18 @@ function makeCardDraggable(el, match, statusLine, refreshMatches) {
 		const dragged = cardDrag;
 		cardDrag = null;
 		clearDropMarks();
+		// Reset the source now; the grouping request can take a moment and the
+		// card must not stay stuck in its dragging state while it runs.
+		dragged.el.classList.remove("dragging");
 		if (idKey(dragged.id) === idKey(match.ID)) return;
 		if (groupsConflict(dragged.domains, groupDomains(match))) {
 			setStatusText(statusLine, "Cannot group two IDs from the same source", true);
 			return;
 		}
 		await groupIDs(match.ID, dragged.id, statusLine, refreshMatches);
-		dragged.el.classList.remove("dragging");
 	});
+
+	applyDragModeTo(el);
 }
 
 // Every distinct ID shown in a search, so the group form can suggest them.
@@ -688,9 +854,10 @@ const linkedGroupLabel = (count) => `🔗 Linked group · ${plural(count, "ID")}
 function renderMatch(match, cardState, searchHash, refreshMatches) {
 	const url = sourceURL(match.ID.Domain, match.ID.ID);
 	const el = create("article", "match-card");
+	const cardStatus = createStatusLine("group-status");
 
 	const idWrap = create("div", "match-id");
-	idWrap.appendChild(idLink(match.ID.Domain, match.ID.ID));
+	idWrap.append(idLink(match.ID.Domain, match.ID.ID), makeCopyButton(match.ID.ID, "ID"), makeUngroupButton(match.ID, refreshMatches, cardStatus));
 	el.appendChild(idWrap);
 
 	const thumb = makeCover(match.ImageURL, `${match.ID.ID} ${match.ID.Domain}`);
@@ -705,10 +872,8 @@ function renderMatch(match, cardState, searchHash, refreshMatches) {
 	}
 
 	// One status line per card for grouping, ungrouping and drag feedback.
-	const cardStatus = createStatusLine("group-status");
 	const chips = create("div", "chips");
 	for (const eid of match.EquivalentIDs) addChip(chips, eid, refreshMatches, cardStatus);
-	idWrap.appendChild(makeUngroupButton(match.ID, refreshMatches, cardStatus));
 
 	const compareBtn = create("button", "", "Compare stored");
 	compareBtn.type = "button";
@@ -724,9 +889,9 @@ function renderMatch(match, cardState, searchHash, refreshMatches) {
 		const m = byKind.get(kind);
 		const row = create("div", "match-row");
 		row.append(
-			create("span", "match-distance", `Distance: ${m ? m.Distance : "—"}`),
+			selectableSpan("match-distance", `Distance: ${m ? m.Distance : "—"}`),
 			" ",
-			create("span", "match-kind", kind),
+			selectableSpan("match-kind", kind),
 		);
 		details.appendChild(row);
 	}
@@ -1079,6 +1244,7 @@ async function processFile(file, pendingHash, signal) {
 	DISPLAY_HASH_KINDS.forEach((kind, i) => {
 		if (i > 0) hashesEl.appendChild(create("br"));
 		hashesEl.append(`${kind} ${searchHash[kind]}`);
+		if (searchHash[kind] != null) hashesEl.appendChild(makeCopyButton(String(searchHash[kind]), `${kind} hash`));
 	});
 	const metaContainer = create("div", "meta-info");
 	metaContainer.append(
@@ -1132,7 +1298,7 @@ function duplicateIssueInfoText(entry) {
 function makeIssueInfo(entry, tag = "div", className = "issue-info") {
 	const node = create(tag, className);
 	const text = duplicateIssueInfoText(entry);
-	if (text) node.textContent = text;
+	if (text) node.appendChild(selectableText(text));
 	else node.dataset.placeholder = "Issue information";
 	return node;
 }
@@ -1335,7 +1501,8 @@ function renderDuplicateIDCard(ctx, entry) {
 
 	const body = create("div", "duplicate-id-body");
 	const idWrap = create("div", "match-id");
-	idWrap.appendChild(idLink(entry.ID.Domain, entry.ID.ID));
+	console.log(entry);
+	idWrap.append(idLink(entry.ID.Domain, entry.ID.ID), makeUngroupButton(entry.ID, ctx.refresh, cardStatus), makeCopyButton(entry.ID.ID, "ID"), );
 
 	// The compare button sits on the ID line, next to the link.
 	const compareBtn = create("button", "compare-toggle");
@@ -1366,23 +1533,23 @@ function renderDuplicateIDCard(ctx, entry) {
 	const hashes = create("dl", "duplicate-hashes");
 	for (const kind of DISPLAY_HASH_KINDS) {
 		const value = entry.hashes.get(kind);
-		const hash = create("dd", "", formatHash(value));
+		const hash = create("dd");
+		hash.appendChild(selectableText(formatHash(value)));
 		if (value != null) hash.title = `decimal ${value}`;
 		const row = create("div", "duplicate-hash");
-		row.append(create("dt", "", kind), hash);
+		const kindEl = create("dt");
+		kindEl.appendChild(selectableText(kind));
+		row.append(kindEl, hash);
+		if (value != null) row.appendChild(makeCopyButton(formatHash(value), `${kind} hash`));
 		hashes.appendChild(row);
 	}
 	body.appendChild(hashes);
 
 	if (entry.EquivalentIDs.length > 0) {
-		const actions = create("div", "duplicate-actions");
-		actions.appendChild(makeUngroupButton(entry.ID, ctx.refresh, cardStatus));
-		body.appendChild(actions);
-
 		const linkedChips = create("div", "chips");
 		for (const eid of entry.EquivalentIDs) addChip(linkedChips, eid, ctx.refresh, cardStatus);
 		const linked = create("div", "duplicate-linked");
-		linked.append(create("span", "duplicate-linked-label", "Linked IDs"), linkedChips);
+		linked.append(selectableSpan("duplicate-linked-label", "Linked IDs"), linkedChips);
 		body.appendChild(linked);
 	}
 
@@ -1888,6 +2055,9 @@ function finishRun(run) {
 function init() {
 	fileInput.disabled = false;
 
+	loadDragMode();
+	dragModeInput.addEventListener("change", () => setDragMode(dragModeInput.value));
+
 	dropZone.addEventListener("dragover", (e) => {
 		e.preventDefault();
 		dropZone.classList.add("dragover");
@@ -1910,20 +2080,29 @@ function init() {
 		if (e.key === "Escape") cancelAll();
 	});
 
+	document.addEventListener("dragenter", acceptInternalDrag);
 	document.addEventListener("dragover", (e) => {
-		if (!hasFiles(e)) return;
-		e.preventDefault();
-		document.body.classList.add("dragging");
+		if (hasFiles(e)) {
+			e.preventDefault();
+			document.body.classList.add("dragging");
+			return;
+		}
+		acceptInternalDrag(e);
 	});
 	document.addEventListener("dragleave", (e) => {
 		// only remove when leaving window
 		if (hasFiles(e) && e.clientX === 0 && e.clientY === 0) document.body.classList.remove("dragging");
 	});
 	document.addEventListener("drop", (e) => {
-		if (!hasFiles(e)) return;
-		e.preventDefault();
-		document.body.classList.remove("dragging");
-		enqueue(dropItems(e.dataTransfer));
+		if (hasFiles(e)) {
+			e.preventDefault();
+			document.body.classList.remove("dragging");
+			enqueue(dropItems(e.dataTransfer));
+		} else {
+			// A drop on a card stops propagation; anything else is a no-op drop
+			// of our own drag data, which must be handled to skip the cancel animation.
+			if (cardDrag || compareDrag) e.preventDefault();
+		}
 	});
 }
 
