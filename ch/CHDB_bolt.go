@@ -245,7 +245,7 @@ func (c CHDBBolt) PathHashed(path string) bool {
 	return false
 }
 
-func IntToBolt[T int64 | int](v T) []byte {
+func IntToBolt[T int64 | uint64 | int](v T) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, uint64(v))
 	return b

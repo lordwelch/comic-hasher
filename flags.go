@@ -26,8 +26,8 @@ const (
 )
 
 var storageNames = map[Storage]string{
-	Map:     "Map",
-	Basic:   "Basic",
+	Map:   "Map",
+	Basic: "Basic",
 }
 
 var storageValues = map[string]Storage{

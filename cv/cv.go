@@ -82,7 +82,7 @@ func (f *Images) Set(s string) error {
 }
 
 type Issue struct {
-	ID          int    `json:"id"`
+	ID          int64    `json:"id"`
 	IssueNumber string `json:"issue_number"`
 	Image       struct {
 		IconURL        string `json:"icon_url,omitempty"`
@@ -97,14 +97,14 @@ type Issue struct {
 		ImageTags      string `json:"image_tags"`
 	} `json:"image"`
 	Volume struct {
-		ID int `json:"id"`
+		ID int64 `json:"id"`
 	} `json:"volume"`
 }
 
 type CVResult struct {
-	Offset               int     `json:"offset"`
+	Offset               int64     `json:"offset"`
 	NumberOfPageResults  int     `json:"number_of_page_results"`
-	NumberOfTotalResults int     `json:"number_of_total_results"`
+	NumberOfTotalResults int64     `json:"number_of_total_results"`
 	StatusCode           int     `json:"status_code"`
 	Results              []Issue `json:"results"`
 }
@@ -139,7 +139,7 @@ type Downloader struct {
 	PageCache Bolt
 
 	fileList       []string
-	totalResults   int
+	totalResults   int64
 	imageWG        sync.WaitGroup
 	cvIssueQueue   chan *CVResult
 	notFound       chan failedDownload
@@ -164,7 +164,7 @@ type Bolt struct {
 	ch.Bolt
 }
 
-func (b Bolt) Issue(id int) Issue {
+func (b Bolt) Issue(id int64) Issue {
 	var issue Issue
 	err := b.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(BucketIssue))
@@ -221,17 +221,16 @@ func (b Bolt) Delete(bucket, key string) error {
 	})
 }
 
-func (b Bolt) TotalResults() int {
+func (b Bolt) TotalResults() int64 {
 	data := b.Get(BucketMeta, []byte(KeyTotalResults))
 	if len(data) == 0 {
 		return 0
 	}
-	n, _ := strconv.Atoi(string(data))
-	return n
+	return int64(ch.BoltToInt(data))
 }
 
-func (b Bolt) PutTotalResults(n int) error {
-	return b.Put(BucketMeta, []byte(KeyTotalResults), []byte(strconv.Itoa(n)))
+func (b Bolt) PutTotalResults(n int64) error {
+	return b.Put(BucketMeta, []byte(KeyTotalResults), ch.IntToBolt(n))
 }
 
 func OpenBolt(path string, version ch.Version, buckets []string) (Bolt, error) {
@@ -252,7 +251,7 @@ func (c *Downloader) GetIssue(id ch.ID) (ch.Issue, error) {
 	if err != nil {
 		return ch.Issue{}, fmt.Errorf("invalid ID: %w", err)
 	}
-	i := c.DB.Issue(idInt)
+	i := c.DB.Issue(int64(idInt))
 	url := ""
 	for _, issueImage := range []Image{
 		{i.Image.SmallURL, "small"},
@@ -276,18 +275,18 @@ func (c *Downloader) GetIssue(id ch.ID) (ch.Issue, error) {
 	return ch.Issue{id, url}, nil
 }
 
-func (c *Downloader) getCachedPage(offset int, update bool) (*CVResult, error) {
+func (c *Downloader) getCachedPage(offset int64, update bool) (*CVResult, error) {
 	data := c.PageCache.Get(BucketPageCache, ch.IntToBolt(offset))
 	if len(data) == 0 {
 		return nil, ErrMissingPage
 	}
 	issue := &CVResult{Results: make([]Issue, 0, 100)}
 	if err := json.Unmarshal(data, issue); err != nil {
-		c.PageCache.Delete(BucketPageCache, "cv-"+strconv.Itoa(offset))
+		c.PageCache.Delete(BucketPageCache, "cv-"+strconv.FormatInt(offset, 10))
 		return nil, fmt.Errorf("failed to read page at offset %d: %w", offset, err)
 	}
 	if issue.Offset != offset {
-		c.PageCache.Delete(BucketPageCache, "cv-"+strconv.Itoa(offset))
+		c.PageCache.Delete(BucketPageCache, "cv-"+strconv.FormatInt(offset, 10))
 		return nil, ErrInvalidPage
 	}
 
@@ -295,22 +294,22 @@ func (c *Downloader) getCachedPage(offset int, update bool) (*CVResult, error) {
 	c.totalResults = max(c.totalResults, c.PageCache.TotalResults())
 
 	if update && (len(issue.Results) == 0 || (len(issue.Results) > 0 && issue.Results[0].IssueNumber == "")) {
-		c.PageCache.Delete(BucketPageCache, "cv-"+strconv.Itoa(offset))
+		c.PageCache.Delete(BucketPageCache, "cv-"+strconv.FormatInt(offset, 10))
 	}
 
 	if c.totalResults-offset <= 100 {
-		c.PageCache.Delete(BucketPageCache, "cv-"+strconv.Itoa(offset))
+		c.PageCache.Delete(BucketPageCache, "cv-"+strconv.FormatInt(offset, 10))
 	}
 
 	return issue, nil
 }
 
 // downloadIssues  c.downloadQueue must not be closed before this function has returned
-func (c *Downloader) downloadIssues() (int, error) {
+func (c *Downloader) downloadIssues() (int64, error) {
 	c.totalResults = max(c.totalResults, 1)
-	failCount := 0
-	prev := -1
-	offset := 0
+	var failCount int64 = 0
+	var prev int64 = -1
+	var offset int64 = 0
 	retry := func(url string, err error) bool {
 		if errors.Is(err, context.Canceled) {
 			logger.Println(log.MoreVerbose, "Server closed")
@@ -365,15 +364,15 @@ func (c *Downloader) downloadIssues() (int, error) {
 		}
 		body, err := c.getPage(offset)
 		if err != nil {
-			if retry("cv-"+strconv.Itoa(offset), err) {
+			if retry("cv-"+strconv.FormatInt(offset, 10), err) {
 				continue
 			}
 			return offset - 100, fmt.Errorf("%w: %w", ErrDownloadFail, err)
 		}
 		issue = &CVResult{}
 		if err := json.Unmarshal(body, issue); err != nil || issue.Offset != offset {
-			c.PageCache.Delete(BucketPageCache, "cv-"+strconv.Itoa(offset))
-			if retry("cv-"+strconv.Itoa(offset), err) {
+			c.PageCache.Delete(BucketPageCache, "cv-"+strconv.FormatInt(offset, 10))
+			if retry("cv-"+strconv.FormatInt(offset, 10), err) {
 				continue
 			}
 			return offset - 100, fmt.Errorf("%w: %w", ErrDownloadFail, err)
@@ -393,9 +392,9 @@ func (c *Downloader) downloadIssues() (int, error) {
 
 type failedDownload struct {
 	url      string
-	offset   int
-	volumeID int
-	issueID  int
+	offset   int64
+	volumeID int64
+	issueID  int64
 }
 
 func (c *Downloader) handleNotFound() {
@@ -498,11 +497,11 @@ func (c *Downloader) startCoverDownload(list *CVResult, issue Issue, image Image
 	}
 	// Construct the relative path for the file
 	// This is relative to to comic-hasher path. eg filepath.Join(c.basePath, "../")
-	imagePath := filepath.Join(imageDirectory, strconv.Itoa(issue.Volume.ID), strconv.Itoa(issue.ID), image.name+ext)
+	imagePath := filepath.Join(imageDirectory, strconv.FormatInt(issue.Volume.ID, 10), strconv.FormatInt(issue.ID, 10), image.name+ext)
 
 	existingIDs := c.getID(ch.ID{
 		Domain: ch.NewSource(ch.ComicVine),
-		ID:     strconv.Itoa(issue.ID),
+		ID:     strconv.FormatInt(issue.ID, 10),
 	})
 	buf := c.bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
@@ -526,7 +525,7 @@ func (c *Downloader) startCoverDownload(list *CVResult, issue Issue, image Image
 		c.StartDownloadQueue <- dl.Download{
 			Request: req,
 			Dest:    filepath.Join(WorkDirectory, imagePath),
-			IssueID: ch.ID{Domain: ch.NewSource("comicvine.gamespot.com"), ID: strconv.Itoa(issue.ID)},
+			IssueID: ch.ID{Domain: ch.NewSource("comicvine.gamespot.com"), ID: strconv.FormatInt(issue.ID, 10)},
 			Image:   buf,
 			Done:    func(*http.Response) { c.imageWG.Done() },
 		}
@@ -538,7 +537,7 @@ func (c *Downloader) startCoverDownload(list *CVResult, issue Issue, image Image
 	c.StartDownloadQueue <- dl.Download{
 		Request: req,
 		Dest:    filepath.Join(WorkDirectory, imagePath), // TODO: somehow put in a check for this. It's too easy to forget WorkDirectory. Maybe always make it relative to basePath
-		IssueID: ch.ID{Domain: ch.NewSource(ch.ComicVine), ID: strconv.Itoa(issue.ID)},
+		IssueID: ch.ID{Domain: ch.NewSource(ch.ComicVine), ID: strconv.FormatInt(issue.ID, 10)},
 		Image:   buf,
 		Done:    func(*http.Response) { c.imageWG.Done() },
 	}
@@ -588,13 +587,13 @@ func (c *Downloader) cleanBadURLs() error {
 
 var baseURL = metron.MustParseURL("https://comicvine.gamespot.com/api/issues/?sort=date_added,id:asc&format=json&field_list=id,issue_number,image,volume")
 
-func (c *Downloader) getPage(offset int) ([]byte, error) {
+func (c *Downloader) getPage(offset int64) ([]byte, error) {
 	if data := c.PageCache.Get(BucketPageCache, ch.IntToBolt(offset)); len(data) > 0 {
 		return data, nil
 	}
 	URI := *baseURL
 	q := baseURL.Query()
-	q.Add("offset", strconv.Itoa(offset))
+	q.Add("offset", strconv.FormatInt(offset, 10))
 	URI.RawQuery = q.Encode()
 	req, _ := http.NewRequest("GET", URI.String(), nil)
 	c.APIKey.Apply(req)
